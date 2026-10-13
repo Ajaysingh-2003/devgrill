@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { expect, userEvent, within } from "storybook/test";
+import { expect, userEvent, waitFor, within } from "storybook/test";
 import { Badge } from "./badge";
 import { Button } from "./button";
 import { Checkbox } from "./checkbox";
@@ -97,7 +97,8 @@ export const Light: Story = {
     await expect(canvas.getByText("Alerts and actions in order.")).toBeVisible();
     await userEvent.click(canvas.getByRole("button", { name: "Abandon incident…" }));
     const dialog = await within(canvasElement.ownerDocument.body).findByRole("dialog");
-    await expect(within(dialog).getByText("Abandon this incident?")).toBeVisible();
+    // The dialog fades in (opacity 0 on its first frame): wait for it rather than racing it.
+    await waitFor(() => expect(within(dialog).getByText("Abandon this incident?")).toBeVisible());
     await userEvent.keyboard("{Escape}");
   },
 };

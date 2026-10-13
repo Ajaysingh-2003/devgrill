@@ -56,6 +56,8 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # Generated tokens first: Prettier's Tailwind plugin loads globals.css, which imports them.
+      - run: pnpm --filter @devgrill/tokens build
       - run: pnpm format:check
       - run: pnpm colors:check
       - run: pnpm lint
