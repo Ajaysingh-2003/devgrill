@@ -72,8 +72,15 @@ def main() -> int:
     env = {**os.environ, "PYTHONUNBUFFERED": "1"}
     if "NO_COLOR" not in env:
         env["FORCE_COLOR"] = "1"
+    procs = _procs(only)
+    if any(p.name == "web" for p in procs):
+        # The web app imports generated token CSS (packages/tokens/dist is git-ignored);
+        # `next dev` does not run turbo builds, so generate it first (takes well under a second).
+        build = [shutil.which("node") or "node", "packages/tokens/src/build.ts"]
+        if subprocess.run(build, cwd=ROOT, check=False).returncode != 0:  # noqa: S603
+            return 1
     running: list[tuple[Proc, subprocess.Popen[bytes]]] = []
-    for spec in _procs(only):
+    for spec in procs:
         proc = subprocess.Popen(  # noqa: S603
             spec.argv,
             cwd=spec.cwd,
