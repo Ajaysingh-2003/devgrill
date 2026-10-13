@@ -1,20 +1,49 @@
+# Dependency update bot. Calm by design: monthly, grouped, and no surprise major jumps
+# for toolchain pieces we upgrade deliberately (TypeScript, @types/node, ESLint, Next).
 version: 2
 updates:
   - package-ecosystem: uv
     directory: "/"
-    schedule: { interval: weekly }
+    schedule: { interval: monthly }
+    open-pull-requests-limit: 2
     groups:
-      python-minor:
+      python:
+        patterns: ["*"]
         update-types: [minor, patch]
+
   - package-ecosystem: npm
     directory: "/"
-    schedule: { interval: weekly }
+    schedule: { interval: monthly }
+    open-pull-requests-limit: 2
     groups:
-      js-minor:
+      javascript:
+        patterns: ["*"]
         update-types: [minor, patch]
+    ignore:
+      # Majors are planned upgrades (see docs/adr), not bot PRs.
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@types/node" # must match the Node runtime (24)
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "eslint"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "next"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "eslint-config-next"
+        update-types: ["version-update:semver-major"]
+
   - package-ecosystem: github-actions
     directory: "/"
     schedule: { interval: monthly }
+    open-pull-requests-limit: 1
+    groups:
+      actions:
+        patterns: ["*"]
+
   - package-ecosystem: docker-compose
     directory: "/infra/compose"
     schedule: { interval: monthly }
+    open-pull-requests-limit: 1
+    groups:
+      images:
+        patterns: ["*"]
