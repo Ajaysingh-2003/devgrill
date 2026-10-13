@@ -4,10 +4,13 @@ Revision ID: ${up_revision}
 Revises: ${down_revision | comma,n}
 Create Date: ${create_date}
 
-Safe-migration checklist (docs/PLAN.md §9.3):
-- [ ] no long locks on hot tables; new columns nullable, then backfill
-- [ ] indexes on large tables created CONCURRENTLY (outside a transaction)
-- [ ] downgrade works in dev
+Safe-migration checklist (docs/runbooks/safe-migrations.md):
+- [ ] no long locks on tables that hold data; new columns nullable (or constant default), backfill later
+- [ ] indexes on tables that hold data are CONCURRENTLY, in their own migration (autocommit_block)
+- [ ] no rename/retype in one step (add, dual-write, backfill, switch, drop)
+- [ ] circular foreign keys added after both tables exist; enum types dropped in downgrade
+- [ ] every new foreign key has an index
+- [ ] upgrade -> downgrade -> upgrade works locally; `alembic check` is clean
 """
 from collections.abc import Sequence
 

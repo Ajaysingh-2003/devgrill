@@ -1,6 +1,453 @@
 {
   "components": {
     "schemas": {
+      "AdminScenario": {
+        "properties": {
+          "attempts": {
+            "title": "Attempts",
+            "type": "integer"
+          },
+          "difficulty": {
+            "$ref": "#/components/schemas/Difficulty"
+          },
+          "resolved": {
+            "title": "Resolved",
+            "type": "integer"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ScenarioStatus"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "track_slug": {
+            "title": "Track Slug",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version"
+          }
+        },
+        "required": [
+          "slug",
+          "title",
+          "track_slug",
+          "difficulty",
+          "status",
+          "version",
+          "attempts",
+          "resolved",
+          "updated_at"
+        ],
+        "title": "AdminScenario",
+        "type": "object"
+      },
+      "AdminScenarioPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AdminScenario"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "title": "AdminScenarioPage",
+        "type": "object"
+      },
+      "ApproachOut": {
+        "properties": {
+          "cons": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Cons",
+            "type": "array"
+          },
+          "idea_md": {
+            "title": "Idea Md",
+            "type": "string"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/ApproachOutcome"
+          },
+          "pros": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Pros",
+            "type": "array"
+          }
+        },
+        "required": [
+          "key",
+          "name",
+          "outcome",
+          "idea_md",
+          "pros",
+          "cons"
+        ],
+        "title": "ApproachOut",
+        "type": "object"
+      },
+      "ApproachOutcome": {
+        "enum": [
+          "full",
+          "partial",
+          "fails"
+        ],
+        "title": "ApproachOutcome",
+        "type": "string"
+      },
+      "AttemptMode": {
+        "enum": [
+          "tutorial",
+          "guided",
+          "oncall",
+          "daily",
+          "weekly"
+        ],
+        "title": "AttemptMode",
+        "type": "string"
+      },
+      "AttemptPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AttemptSummary"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "title": "AttemptPage",
+        "type": "object"
+      },
+      "AttemptState": {
+        "enum": [
+          "provisioning",
+          "active",
+          "mitigated",
+          "verifying",
+          "resolved",
+          "abandoned",
+          "expired",
+          "failed"
+        ],
+        "title": "AttemptState",
+        "type": "string"
+      },
+      "AttemptSummary": {
+        "properties": {
+          "difficulty": {
+            "$ref": "#/components/schemas/Difficulty"
+          },
+          "ended_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ended At"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/AttemptMode"
+          },
+          "scenario_slug": {
+            "title": "Scenario Slug",
+            "type": "string"
+          },
+          "scenario_title": {
+            "title": "Scenario Title",
+            "type": "string"
+          },
+          "started_at": {
+            "format": "date-time",
+            "title": "Started At",
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/AttemptState"
+          },
+          "track_slug": {
+            "title": "Track Slug",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "track_slug",
+          "scenario_slug",
+          "scenario_title",
+          "difficulty",
+          "mode",
+          "state",
+          "started_at",
+          "ended_at"
+        ],
+        "title": "AttemptSummary",
+        "type": "object"
+      },
+      "Briefing": {
+        "properties": {
+          "briefing": {
+            "$ref": "#/components/schemas/BriefingSpec"
+          },
+          "difficulty": {
+            "$ref": "#/components/schemas/Difficulty"
+          },
+          "est_minutes": {
+            "title": "Est Minutes",
+            "type": "integer"
+          },
+          "modes": {
+            "items": {
+              "$ref": "#/components/schemas/AttemptMode"
+            },
+            "title": "Modes",
+            "type": "array"
+          },
+          "progress": {
+            "anyOf": [
+              {
+                "enum": [
+                  "solved",
+                  "attempted",
+                  "new"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Only for signed-in callers.",
+            "title": "Progress"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          },
+          "stats": {
+            "$ref": "#/components/schemas/ScenarioStats"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Tags",
+            "type": "array"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "topic_slug": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Topic Slug"
+          },
+          "topic_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Topic Title"
+          },
+          "track_slug": {
+            "title": "Track Slug",
+            "type": "string"
+          },
+          "track_title": {
+            "title": "Track Title",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          },
+          "warmup": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ScenarioCard"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "An easier scenario from the same track, if any."
+          }
+        },
+        "required": [
+          "slug",
+          "title",
+          "summary",
+          "difficulty",
+          "est_minutes",
+          "tags",
+          "track_slug",
+          "topic_slug",
+          "topic_title",
+          "version",
+          "track_title",
+          "briefing",
+          "stats",
+          "modes"
+        ],
+        "title": "Briefing",
+        "type": "object"
+      },
+      "BriefingSpec": {
+        "additionalProperties": false,
+        "properties": {
+          "goals": {
+            "items": {
+              "$ref": "#/components/schemas/Goal"
+            },
+            "maxItems": 6,
+            "title": "Goals",
+            "type": "array"
+          },
+          "story": {
+            "maxLength": 600,
+            "title": "Story",
+            "type": "string"
+          },
+          "system": {
+            "items": {
+              "$ref": "#/components/schemas/SystemNode"
+            },
+            "maxItems": 12,
+            "title": "System",
+            "type": "array"
+          }
+        },
+        "required": [
+          "story"
+        ],
+        "title": "BriefingSpec",
+        "type": "object"
+      },
+      "ChallengeKind": {
+        "enum": [
+          "daily",
+          "weekly"
+        ],
+        "title": "ChallengeKind",
+        "type": "string"
+      },
+      "ChallengeOut": {
+        "properties": {
+          "ends_at": {
+            "format": "date-time",
+            "title": "Ends At",
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ChallengeKind"
+          },
+          "players": {
+            "title": "Players",
+            "type": "integer"
+          },
+          "scenario": {
+            "$ref": "#/components/schemas/ScenarioCard"
+          },
+          "starts_at": {
+            "format": "date-time",
+            "title": "Starts At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "starts_at",
+          "ends_at",
+          "scenario",
+          "players"
+        ],
+        "title": "ChallengeOut",
+        "type": "object"
+      },
       "CheckResult": {
         "properties": {
           "error": {
@@ -30,6 +477,129 @@
         "title": "CheckResult",
         "type": "object"
       },
+      "ClaimGuestIn": {
+        "additionalProperties": false,
+        "properties": {
+          "guest_token": {
+            "maxLength": 2000,
+            "minLength": 20,
+            "title": "Guest Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "guest_token"
+        ],
+        "title": "ClaimGuestIn",
+        "type": "object"
+      },
+      "ClaimGuestOut": {
+        "properties": {
+          "claimed": {
+            "title": "Claimed",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "claimed"
+        ],
+        "title": "ClaimGuestOut",
+        "type": "object"
+      },
+      "Difficulty": {
+        "description": "Severity of an incident. SEV1 is the hardest.",
+        "enum": [
+          "sev4",
+          "sev3",
+          "sev2",
+          "sev1"
+        ],
+        "title": "Difficulty",
+        "type": "string"
+      },
+      "ExperienceLevel": {
+        "enum": [
+          "student",
+          "0-2",
+          "2-5",
+          "5+"
+        ],
+        "title": "ExperienceLevel",
+        "type": "string"
+      },
+      "FieldError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Loc",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Msg",
+            "type": "string"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "FieldError",
+        "type": "object"
+      },
+      "Goal": {
+        "additionalProperties": false,
+        "properties": {
+          "detail": {
+            "maxLength": 200,
+            "title": "Detail",
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 60,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "detail"
+        ],
+        "title": "Goal",
+        "type": "object"
+      },
+      "GuestTokenOut": {
+        "properties": {
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "token": {
+            "title": "Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "token",
+          "expires_at"
+        ],
+        "title": "GuestTokenOut",
+        "type": "object"
+      },
       "Health": {
         "properties": {
           "status": {
@@ -45,6 +615,399 @@
           }
         },
         "title": "Health",
+        "type": "object"
+      },
+      "Me": {
+        "properties": {
+          "avatar_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avatar Url"
+          },
+          "country": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Country"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "experience_level": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExperienceLevel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "handle": {
+            "title": "Handle",
+            "type": "string"
+          },
+          "is_public": {
+            "title": "Is Public",
+            "type": "boolean"
+          },
+          "prefs": {
+            "$ref": "#/components/schemas/Prefs"
+          },
+          "roles": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Roles",
+            "type": "array"
+          },
+          "user_id": {
+            "format": "uuid",
+            "title": "User Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id",
+          "handle",
+          "display_name",
+          "avatar_url",
+          "country",
+          "experience_level",
+          "roles",
+          "prefs",
+          "is_public",
+          "created_at"
+        ],
+        "title": "Me",
+        "type": "object"
+      },
+      "MePatch": {
+        "additionalProperties": false,
+        "description": "Omit a field to keep it. `country` and `experience_level` accept null to clear them;\nthe others can't be null (the schema shows them as non-nullable).",
+        "properties": {
+          "country": {
+            "anyOf": [
+              {
+                "pattern": "^[A-Z]{2}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Country"
+          },
+          "display_name": {
+            "maxLength": 60,
+            "minLength": 1,
+            "title": "Display Name",
+            "type": "string"
+          },
+          "experience_level": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExperienceLevel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "is_public": {
+            "title": "Is Public",
+            "type": "boolean"
+          },
+          "prefs": {
+            "$ref": "#/components/schemas/PrefsPatch",
+            "title": "Prefs"
+          }
+        },
+        "title": "MePatch",
+        "type": "object"
+      },
+      "Prefs": {
+        "properties": {
+          "motion": {
+            "default": "system",
+            "enum": [
+              "system",
+              "reduce",
+              "full"
+            ],
+            "title": "Motion",
+            "type": "string"
+          },
+          "pro_mode": {
+            "default": false,
+            "title": "Pro Mode",
+            "type": "boolean"
+          },
+          "sounds": {
+            "default": false,
+            "title": "Sounds",
+            "type": "boolean"
+          },
+          "streak_mode": {
+            "$ref": "#/components/schemas/StreakMode",
+            "default": "daily"
+          },
+          "theme": {
+            "default": "system",
+            "enum": [
+              "system",
+              "light",
+              "dark"
+            ],
+            "title": "Theme",
+            "type": "string"
+          },
+          "timezone": {
+            "$ref": "#/components/schemas/Timezone",
+            "default": "Asia/Kolkata"
+          }
+        },
+        "title": "Prefs",
+        "type": "object"
+      },
+      "PrefsPatch": {
+        "additionalProperties": false,
+        "properties": {
+          "motion": {
+            "anyOf": [
+              {
+                "enum": [
+                  "system",
+                  "reduce",
+                  "full"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Motion"
+          },
+          "pro_mode": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pro Mode"
+          },
+          "sounds": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sounds"
+          },
+          "streak_mode": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StreakMode"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "theme": {
+            "anyOf": [
+              {
+                "enum": [
+                  "system",
+                  "light",
+                  "dark"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Theme"
+          },
+          "timezone": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Timezone"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "title": "PrefsPatch",
+        "type": "object"
+      },
+      "Problem": {
+        "properties": {
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Code"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Detail"
+          },
+          "errors": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/FieldError"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Errors"
+          },
+          "instance": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Instance"
+          },
+          "status": {
+            "title": "Status",
+            "type": "integer"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "type": {
+            "default": "about:blank",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "status"
+        ],
+        "title": "Problem",
+        "type": "object"
+      },
+      "PublicProfile": {
+        "properties": {
+          "avatar_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avatar Url"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "handle": {
+            "title": "Handle",
+            "type": "string"
+          },
+          "ratings": {
+            "items": {
+              "$ref": "#/components/schemas/TrackRating"
+            },
+            "title": "Ratings",
+            "type": "array"
+          },
+          "resolved": {
+            "title": "Resolved",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "handle",
+          "display_name",
+          "avatar_url",
+          "created_at",
+          "resolved",
+          "ratings"
+        ],
+        "title": "PublicProfile",
+        "type": "object"
+      },
+      "RatingPoint": {
+        "properties": {
+          "rating": {
+            "title": "Rating",
+            "type": "number"
+          },
+          "ts": {
+            "format": "date-time",
+            "title": "Ts",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ts",
+          "rating"
+        ],
+        "title": "RatingPoint",
         "type": "object"
       },
       "Readiness": {
@@ -71,6 +1034,1199 @@
         ],
         "title": "Readiness",
         "type": "object"
+      },
+      "ScenarioCard": {
+        "properties": {
+          "difficulty": {
+            "$ref": "#/components/schemas/Difficulty"
+          },
+          "est_minutes": {
+            "title": "Est Minutes",
+            "type": "integer"
+          },
+          "progress": {
+            "anyOf": [
+              {
+                "enum": [
+                  "solved",
+                  "attempted",
+                  "new"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Only for signed-in callers.",
+            "title": "Progress"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Tags",
+            "type": "array"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "topic_slug": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Topic Slug"
+          },
+          "topic_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Topic Title"
+          },
+          "track_slug": {
+            "title": "Track Slug",
+            "type": "string"
+          }
+        },
+        "required": [
+          "slug",
+          "title",
+          "summary",
+          "difficulty",
+          "est_minutes",
+          "tags",
+          "track_slug",
+          "topic_slug",
+          "topic_title"
+        ],
+        "title": "ScenarioCard",
+        "type": "object"
+      },
+      "ScenarioPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ScenarioCard"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "title": "ScenarioPage",
+        "type": "object"
+      },
+      "ScenarioStats": {
+        "properties": {
+          "median_minutes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Median Minutes"
+          },
+          "players": {
+            "title": "Players",
+            "type": "integer"
+          },
+          "solve_rate_pct": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Null until enough attempts have ended.",
+            "title": "Solve Rate Pct"
+          }
+        },
+        "required": [
+          "players",
+          "solve_rate_pct",
+          "median_minutes"
+        ],
+        "title": "ScenarioStats",
+        "type": "object"
+      },
+      "ScenarioStatus": {
+        "enum": [
+          "draft",
+          "review",
+          "published",
+          "retired"
+        ],
+        "title": "ScenarioStatus",
+        "type": "string"
+      },
+      "StreakMode": {
+        "enum": [
+          "daily",
+          "weekly"
+        ],
+        "title": "StreakMode",
+        "type": "string"
+      },
+      "StreakOut": {
+        "properties": {
+          "current": {
+            "title": "Current",
+            "type": "integer"
+          },
+          "days": {
+            "items": {
+              "format": "date",
+              "type": "string"
+            },
+            "title": "Days",
+            "type": "array"
+          },
+          "freezes": {
+            "title": "Freezes",
+            "type": "integer"
+          },
+          "last_day": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Day"
+          },
+          "longest": {
+            "title": "Longest",
+            "type": "integer"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/StreakMode"
+          },
+          "window_start": {
+            "format": "date",
+            "title": "Window Start",
+            "type": "string"
+          }
+        },
+        "required": [
+          "mode",
+          "current",
+          "longest",
+          "freezes",
+          "last_day",
+          "days",
+          "window_start"
+        ],
+        "title": "StreakOut",
+        "type": "object"
+      },
+      "SystemNode": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "enum": [
+              "api",
+              "worker",
+              "db",
+              "cache",
+              "queue",
+              "lb"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 40,
+            "title": "Name",
+            "type": "string"
+          },
+          "note": {
+            "maxLength": 80,
+            "title": "Note",
+            "type": "string"
+          },
+          "role": {
+            "default": "path",
+            "enum": [
+              "path",
+              "side"
+            ],
+            "title": "Role",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "name",
+          "note"
+        ],
+        "title": "SystemNode",
+        "type": "object"
+      },
+      "Timezone": {
+        "enum": [
+          "Africa/Abidjan",
+          "Africa/Accra",
+          "Africa/Addis_Ababa",
+          "Africa/Algiers",
+          "Africa/Asmara",
+          "Africa/Asmera",
+          "Africa/Bamako",
+          "Africa/Bangui",
+          "Africa/Banjul",
+          "Africa/Bissau",
+          "Africa/Blantyre",
+          "Africa/Brazzaville",
+          "Africa/Bujumbura",
+          "Africa/Cairo",
+          "Africa/Casablanca",
+          "Africa/Ceuta",
+          "Africa/Conakry",
+          "Africa/Dakar",
+          "Africa/Dar_es_Salaam",
+          "Africa/Djibouti",
+          "Africa/Douala",
+          "Africa/El_Aaiun",
+          "Africa/Freetown",
+          "Africa/Gaborone",
+          "Africa/Harare",
+          "Africa/Johannesburg",
+          "Africa/Juba",
+          "Africa/Kampala",
+          "Africa/Khartoum",
+          "Africa/Kigali",
+          "Africa/Kinshasa",
+          "Africa/Lagos",
+          "Africa/Libreville",
+          "Africa/Lome",
+          "Africa/Luanda",
+          "Africa/Lubumbashi",
+          "Africa/Lusaka",
+          "Africa/Malabo",
+          "Africa/Maputo",
+          "Africa/Maseru",
+          "Africa/Mbabane",
+          "Africa/Mogadishu",
+          "Africa/Monrovia",
+          "Africa/Nairobi",
+          "Africa/Ndjamena",
+          "Africa/Niamey",
+          "Africa/Nouakchott",
+          "Africa/Ouagadougou",
+          "Africa/Porto-Novo",
+          "Africa/Sao_Tome",
+          "Africa/Timbuktu",
+          "Africa/Tripoli",
+          "Africa/Tunis",
+          "Africa/Windhoek",
+          "America/Adak",
+          "America/Anchorage",
+          "America/Anguilla",
+          "America/Antigua",
+          "America/Araguaina",
+          "America/Argentina/Buenos_Aires",
+          "America/Argentina/Catamarca",
+          "America/Argentina/ComodRivadavia",
+          "America/Argentina/Cordoba",
+          "America/Argentina/Jujuy",
+          "America/Argentina/La_Rioja",
+          "America/Argentina/Mendoza",
+          "America/Argentina/Rio_Gallegos",
+          "America/Argentina/Salta",
+          "America/Argentina/San_Juan",
+          "America/Argentina/San_Luis",
+          "America/Argentina/Tucuman",
+          "America/Argentina/Ushuaia",
+          "America/Aruba",
+          "America/Asuncion",
+          "America/Atikokan",
+          "America/Atka",
+          "America/Bahia",
+          "America/Bahia_Banderas",
+          "America/Barbados",
+          "America/Belem",
+          "America/Belize",
+          "America/Blanc-Sablon",
+          "America/Boa_Vista",
+          "America/Bogota",
+          "America/Boise",
+          "America/Buenos_Aires",
+          "America/Cambridge_Bay",
+          "America/Campo_Grande",
+          "America/Cancun",
+          "America/Caracas",
+          "America/Catamarca",
+          "America/Cayenne",
+          "America/Cayman",
+          "America/Chicago",
+          "America/Chihuahua",
+          "America/Ciudad_Juarez",
+          "America/Coral_Harbour",
+          "America/Cordoba",
+          "America/Costa_Rica",
+          "America/Coyhaique",
+          "America/Creston",
+          "America/Cuiaba",
+          "America/Curacao",
+          "America/Danmarkshavn",
+          "America/Dawson",
+          "America/Dawson_Creek",
+          "America/Denver",
+          "America/Detroit",
+          "America/Dominica",
+          "America/Edmonton",
+          "America/Eirunepe",
+          "America/El_Salvador",
+          "America/Ensenada",
+          "America/Fort_Nelson",
+          "America/Fort_Wayne",
+          "America/Fortaleza",
+          "America/Glace_Bay",
+          "America/Godthab",
+          "America/Goose_Bay",
+          "America/Grand_Turk",
+          "America/Grenada",
+          "America/Guadeloupe",
+          "America/Guatemala",
+          "America/Guayaquil",
+          "America/Guyana",
+          "America/Halifax",
+          "America/Havana",
+          "America/Hermosillo",
+          "America/Indiana/Indianapolis",
+          "America/Indiana/Knox",
+          "America/Indiana/Marengo",
+          "America/Indiana/Petersburg",
+          "America/Indiana/Tell_City",
+          "America/Indiana/Vevay",
+          "America/Indiana/Vincennes",
+          "America/Indiana/Winamac",
+          "America/Indianapolis",
+          "America/Inuvik",
+          "America/Iqaluit",
+          "America/Jamaica",
+          "America/Jujuy",
+          "America/Juneau",
+          "America/Kentucky/Louisville",
+          "America/Kentucky/Monticello",
+          "America/Knox_IN",
+          "America/Kralendijk",
+          "America/La_Paz",
+          "America/Lima",
+          "America/Los_Angeles",
+          "America/Louisville",
+          "America/Lower_Princes",
+          "America/Maceio",
+          "America/Managua",
+          "America/Manaus",
+          "America/Marigot",
+          "America/Martinique",
+          "America/Matamoros",
+          "America/Mazatlan",
+          "America/Mendoza",
+          "America/Menominee",
+          "America/Merida",
+          "America/Metlakatla",
+          "America/Mexico_City",
+          "America/Miquelon",
+          "America/Moncton",
+          "America/Monterrey",
+          "America/Montevideo",
+          "America/Montreal",
+          "America/Montserrat",
+          "America/Nassau",
+          "America/New_York",
+          "America/Nipigon",
+          "America/Nome",
+          "America/Noronha",
+          "America/North_Dakota/Beulah",
+          "America/North_Dakota/Center",
+          "America/North_Dakota/New_Salem",
+          "America/Nuuk",
+          "America/Ojinaga",
+          "America/Panama",
+          "America/Pangnirtung",
+          "America/Paramaribo",
+          "America/Phoenix",
+          "America/Port-au-Prince",
+          "America/Port_of_Spain",
+          "America/Porto_Acre",
+          "America/Porto_Velho",
+          "America/Puerto_Rico",
+          "America/Punta_Arenas",
+          "America/Rainy_River",
+          "America/Rankin_Inlet",
+          "America/Recife",
+          "America/Regina",
+          "America/Resolute",
+          "America/Rio_Branco",
+          "America/Rosario",
+          "America/Santa_Isabel",
+          "America/Santarem",
+          "America/Santiago",
+          "America/Santo_Domingo",
+          "America/Sao_Paulo",
+          "America/Scoresbysund",
+          "America/Shiprock",
+          "America/Sitka",
+          "America/St_Barthelemy",
+          "America/St_Johns",
+          "America/St_Kitts",
+          "America/St_Lucia",
+          "America/St_Thomas",
+          "America/St_Vincent",
+          "America/Swift_Current",
+          "America/Tegucigalpa",
+          "America/Thule",
+          "America/Thunder_Bay",
+          "America/Tijuana",
+          "America/Toronto",
+          "America/Tortola",
+          "America/Vancouver",
+          "America/Virgin",
+          "America/Whitehorse",
+          "America/Winnipeg",
+          "America/Yakutat",
+          "America/Yellowknife",
+          "Antarctica/Casey",
+          "Antarctica/Davis",
+          "Antarctica/DumontDUrville",
+          "Antarctica/Macquarie",
+          "Antarctica/Mawson",
+          "Antarctica/McMurdo",
+          "Antarctica/Palmer",
+          "Antarctica/Rothera",
+          "Antarctica/South_Pole",
+          "Antarctica/Syowa",
+          "Antarctica/Troll",
+          "Antarctica/Vostok",
+          "Arctic/Longyearbyen",
+          "Asia/Aden",
+          "Asia/Almaty",
+          "Asia/Amman",
+          "Asia/Anadyr",
+          "Asia/Aqtau",
+          "Asia/Aqtobe",
+          "Asia/Ashgabat",
+          "Asia/Ashkhabad",
+          "Asia/Atyrau",
+          "Asia/Baghdad",
+          "Asia/Bahrain",
+          "Asia/Baku",
+          "Asia/Bangkok",
+          "Asia/Barnaul",
+          "Asia/Beirut",
+          "Asia/Bishkek",
+          "Asia/Brunei",
+          "Asia/Calcutta",
+          "Asia/Chita",
+          "Asia/Choibalsan",
+          "Asia/Chongqing",
+          "Asia/Chungking",
+          "Asia/Colombo",
+          "Asia/Dacca",
+          "Asia/Damascus",
+          "Asia/Dhaka",
+          "Asia/Dili",
+          "Asia/Dubai",
+          "Asia/Dushanbe",
+          "Asia/Famagusta",
+          "Asia/Gaza",
+          "Asia/Harbin",
+          "Asia/Hebron",
+          "Asia/Ho_Chi_Minh",
+          "Asia/Hong_Kong",
+          "Asia/Hovd",
+          "Asia/Irkutsk",
+          "Asia/Istanbul",
+          "Asia/Jakarta",
+          "Asia/Jayapura",
+          "Asia/Jerusalem",
+          "Asia/Kabul",
+          "Asia/Kamchatka",
+          "Asia/Karachi",
+          "Asia/Kashgar",
+          "Asia/Kathmandu",
+          "Asia/Katmandu",
+          "Asia/Khandyga",
+          "Asia/Kolkata",
+          "Asia/Krasnoyarsk",
+          "Asia/Kuala_Lumpur",
+          "Asia/Kuching",
+          "Asia/Kuwait",
+          "Asia/Macao",
+          "Asia/Macau",
+          "Asia/Magadan",
+          "Asia/Makassar",
+          "Asia/Manila",
+          "Asia/Muscat",
+          "Asia/Nicosia",
+          "Asia/Novokuznetsk",
+          "Asia/Novosibirsk",
+          "Asia/Omsk",
+          "Asia/Oral",
+          "Asia/Phnom_Penh",
+          "Asia/Pontianak",
+          "Asia/Pyongyang",
+          "Asia/Qatar",
+          "Asia/Qostanay",
+          "Asia/Qyzylorda",
+          "Asia/Rangoon",
+          "Asia/Riyadh",
+          "Asia/Saigon",
+          "Asia/Sakhalin",
+          "Asia/Samarkand",
+          "Asia/Seoul",
+          "Asia/Shanghai",
+          "Asia/Singapore",
+          "Asia/Srednekolymsk",
+          "Asia/Taipei",
+          "Asia/Tashkent",
+          "Asia/Tbilisi",
+          "Asia/Tehran",
+          "Asia/Tel_Aviv",
+          "Asia/Thimbu",
+          "Asia/Thimphu",
+          "Asia/Tokyo",
+          "Asia/Tomsk",
+          "Asia/Ujung_Pandang",
+          "Asia/Ulaanbaatar",
+          "Asia/Ulan_Bator",
+          "Asia/Urumqi",
+          "Asia/Ust-Nera",
+          "Asia/Vientiane",
+          "Asia/Vladivostok",
+          "Asia/Yakutsk",
+          "Asia/Yangon",
+          "Asia/Yekaterinburg",
+          "Asia/Yerevan",
+          "Atlantic/Azores",
+          "Atlantic/Bermuda",
+          "Atlantic/Canary",
+          "Atlantic/Cape_Verde",
+          "Atlantic/Faeroe",
+          "Atlantic/Faroe",
+          "Atlantic/Jan_Mayen",
+          "Atlantic/Madeira",
+          "Atlantic/Reykjavik",
+          "Atlantic/South_Georgia",
+          "Atlantic/St_Helena",
+          "Atlantic/Stanley",
+          "Australia/ACT",
+          "Australia/Adelaide",
+          "Australia/Brisbane",
+          "Australia/Broken_Hill",
+          "Australia/Canberra",
+          "Australia/Currie",
+          "Australia/Darwin",
+          "Australia/Eucla",
+          "Australia/Hobart",
+          "Australia/LHI",
+          "Australia/Lindeman",
+          "Australia/Lord_Howe",
+          "Australia/Melbourne",
+          "Australia/NSW",
+          "Australia/North",
+          "Australia/Perth",
+          "Australia/Queensland",
+          "Australia/South",
+          "Australia/Sydney",
+          "Australia/Tasmania",
+          "Australia/Victoria",
+          "Australia/West",
+          "Australia/Yancowinna",
+          "Brazil/Acre",
+          "Brazil/DeNoronha",
+          "Brazil/East",
+          "Brazil/West",
+          "CET",
+          "CST6CDT",
+          "Canada/Atlantic",
+          "Canada/Central",
+          "Canada/Eastern",
+          "Canada/Mountain",
+          "Canada/Newfoundland",
+          "Canada/Pacific",
+          "Canada/Saskatchewan",
+          "Canada/Yukon",
+          "Chile/Continental",
+          "Chile/EasterIsland",
+          "Cuba",
+          "EET",
+          "EST",
+          "EST5EDT",
+          "Egypt",
+          "Eire",
+          "Etc/GMT",
+          "Etc/GMT+0",
+          "Etc/GMT+1",
+          "Etc/GMT+10",
+          "Etc/GMT+11",
+          "Etc/GMT+12",
+          "Etc/GMT+2",
+          "Etc/GMT+3",
+          "Etc/GMT+4",
+          "Etc/GMT+5",
+          "Etc/GMT+6",
+          "Etc/GMT+7",
+          "Etc/GMT+8",
+          "Etc/GMT+9",
+          "Etc/GMT-0",
+          "Etc/GMT-1",
+          "Etc/GMT-10",
+          "Etc/GMT-11",
+          "Etc/GMT-12",
+          "Etc/GMT-13",
+          "Etc/GMT-14",
+          "Etc/GMT-2",
+          "Etc/GMT-3",
+          "Etc/GMT-4",
+          "Etc/GMT-5",
+          "Etc/GMT-6",
+          "Etc/GMT-7",
+          "Etc/GMT-8",
+          "Etc/GMT-9",
+          "Etc/GMT0",
+          "Etc/Greenwich",
+          "Etc/UCT",
+          "Etc/UTC",
+          "Etc/Universal",
+          "Etc/Zulu",
+          "Europe/Amsterdam",
+          "Europe/Andorra",
+          "Europe/Astrakhan",
+          "Europe/Athens",
+          "Europe/Belfast",
+          "Europe/Belgrade",
+          "Europe/Berlin",
+          "Europe/Bratislava",
+          "Europe/Brussels",
+          "Europe/Bucharest",
+          "Europe/Budapest",
+          "Europe/Busingen",
+          "Europe/Chisinau",
+          "Europe/Copenhagen",
+          "Europe/Dublin",
+          "Europe/Gibraltar",
+          "Europe/Guernsey",
+          "Europe/Helsinki",
+          "Europe/Isle_of_Man",
+          "Europe/Istanbul",
+          "Europe/Jersey",
+          "Europe/Kaliningrad",
+          "Europe/Kiev",
+          "Europe/Kirov",
+          "Europe/Kyiv",
+          "Europe/Lisbon",
+          "Europe/Ljubljana",
+          "Europe/London",
+          "Europe/Luxembourg",
+          "Europe/Madrid",
+          "Europe/Malta",
+          "Europe/Mariehamn",
+          "Europe/Minsk",
+          "Europe/Monaco",
+          "Europe/Moscow",
+          "Europe/Nicosia",
+          "Europe/Oslo",
+          "Europe/Paris",
+          "Europe/Podgorica",
+          "Europe/Prague",
+          "Europe/Riga",
+          "Europe/Rome",
+          "Europe/Samara",
+          "Europe/San_Marino",
+          "Europe/Sarajevo",
+          "Europe/Saratov",
+          "Europe/Simferopol",
+          "Europe/Skopje",
+          "Europe/Sofia",
+          "Europe/Stockholm",
+          "Europe/Tallinn",
+          "Europe/Tirane",
+          "Europe/Tiraspol",
+          "Europe/Ulyanovsk",
+          "Europe/Uzhgorod",
+          "Europe/Vaduz",
+          "Europe/Vatican",
+          "Europe/Vienna",
+          "Europe/Vilnius",
+          "Europe/Volgograd",
+          "Europe/Warsaw",
+          "Europe/Zagreb",
+          "Europe/Zaporozhye",
+          "Europe/Zurich",
+          "Factory",
+          "GB",
+          "GB-Eire",
+          "GMT",
+          "GMT+0",
+          "GMT-0",
+          "GMT0",
+          "Greenwich",
+          "HST",
+          "Hongkong",
+          "Iceland",
+          "Indian/Antananarivo",
+          "Indian/Chagos",
+          "Indian/Christmas",
+          "Indian/Cocos",
+          "Indian/Comoro",
+          "Indian/Kerguelen",
+          "Indian/Mahe",
+          "Indian/Maldives",
+          "Indian/Mauritius",
+          "Indian/Mayotte",
+          "Indian/Reunion",
+          "Iran",
+          "Israel",
+          "Jamaica",
+          "Japan",
+          "Kwajalein",
+          "Libya",
+          "MET",
+          "MST",
+          "MST7MDT",
+          "Mexico/BajaNorte",
+          "Mexico/BajaSur",
+          "Mexico/General",
+          "NZ",
+          "NZ-CHAT",
+          "Navajo",
+          "PRC",
+          "PST8PDT",
+          "Pacific/Apia",
+          "Pacific/Auckland",
+          "Pacific/Bougainville",
+          "Pacific/Chatham",
+          "Pacific/Chuuk",
+          "Pacific/Easter",
+          "Pacific/Efate",
+          "Pacific/Enderbury",
+          "Pacific/Fakaofo",
+          "Pacific/Fiji",
+          "Pacific/Funafuti",
+          "Pacific/Galapagos",
+          "Pacific/Gambier",
+          "Pacific/Guadalcanal",
+          "Pacific/Guam",
+          "Pacific/Honolulu",
+          "Pacific/Johnston",
+          "Pacific/Kanton",
+          "Pacific/Kiritimati",
+          "Pacific/Kosrae",
+          "Pacific/Kwajalein",
+          "Pacific/Majuro",
+          "Pacific/Marquesas",
+          "Pacific/Midway",
+          "Pacific/Nauru",
+          "Pacific/Niue",
+          "Pacific/Norfolk",
+          "Pacific/Noumea",
+          "Pacific/Pago_Pago",
+          "Pacific/Palau",
+          "Pacific/Pitcairn",
+          "Pacific/Pohnpei",
+          "Pacific/Ponape",
+          "Pacific/Port_Moresby",
+          "Pacific/Rarotonga",
+          "Pacific/Saipan",
+          "Pacific/Samoa",
+          "Pacific/Tahiti",
+          "Pacific/Tarawa",
+          "Pacific/Tongatapu",
+          "Pacific/Truk",
+          "Pacific/Wake",
+          "Pacific/Wallis",
+          "Pacific/Yap",
+          "Poland",
+          "Portugal",
+          "ROC",
+          "ROK",
+          "Singapore",
+          "Turkey",
+          "UCT",
+          "US/Alaska",
+          "US/Aleutian",
+          "US/Arizona",
+          "US/Central",
+          "US/East-Indiana",
+          "US/Eastern",
+          "US/Hawaii",
+          "US/Indiana-Starke",
+          "US/Michigan",
+          "US/Mountain",
+          "US/Pacific",
+          "US/Samoa",
+          "UTC",
+          "Universal",
+          "W-SU",
+          "WET",
+          "Zulu"
+        ],
+        "title": "Timezone",
+        "type": "string"
+      },
+      "TopicOut": {
+        "properties": {
+          "has_primer": {
+            "title": "Has Primer",
+            "type": "boolean"
+          },
+          "scenarios": {
+            "items": {
+              "$ref": "#/components/schemas/ScenarioCard"
+            },
+            "title": "Scenarios",
+            "type": "array"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "slug",
+          "title",
+          "has_primer",
+          "scenarios"
+        ],
+        "title": "TopicOut",
+        "type": "object"
+      },
+      "TopicProgress": {
+        "properties": {
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          },
+          "solved": {
+            "title": "Solved",
+            "type": "integer"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "slug",
+          "title",
+          "solved",
+          "total"
+        ],
+        "title": "TopicProgress",
+        "type": "object"
+      },
+      "TrackDetail": {
+        "properties": {
+          "icon": {
+            "enum": [
+              "api",
+              "worker",
+              "db",
+              "cache",
+              "queue",
+              "lb"
+            ],
+            "title": "Icon",
+            "type": "string"
+          },
+          "position": {
+            "title": "Position",
+            "type": "integer"
+          },
+          "progress": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TrackProgress"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Only for signed-in callers."
+          },
+          "scenario_count": {
+            "title": "Scenario Count",
+            "type": "integer"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "topics": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Topics",
+            "type": "array"
+          },
+          "topics_detail": {
+            "items": {
+              "$ref": "#/components/schemas/TopicOut"
+            },
+            "title": "Topics Detail",
+            "type": "array"
+          }
+        },
+        "required": [
+          "slug",
+          "title",
+          "summary",
+          "icon",
+          "position",
+          "scenario_count",
+          "topics",
+          "topics_detail"
+        ],
+        "title": "TrackDetail",
+        "type": "object"
+      },
+      "TrackProgress": {
+        "properties": {
+          "attempted": {
+            "title": "Attempted",
+            "type": "integer"
+          },
+          "mastery_pct": {
+            "maximum": 100.0,
+            "minimum": 0.0,
+            "title": "Mastery Pct",
+            "type": "integer"
+          },
+          "rating": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rating"
+          },
+          "solved": {
+            "title": "Solved",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "solved",
+          "attempted",
+          "mastery_pct",
+          "rating"
+        ],
+        "title": "TrackProgress",
+        "type": "object"
+      },
+      "TrackProgressDetail": {
+        "properties": {
+          "attempted": {
+            "title": "Attempted",
+            "type": "integer"
+          },
+          "mastery_pct": {
+            "title": "Mastery Pct",
+            "type": "integer"
+          },
+          "solved": {
+            "title": "Solved",
+            "type": "integer"
+          },
+          "topics": {
+            "items": {
+              "$ref": "#/components/schemas/TopicProgress"
+            },
+            "title": "Topics",
+            "type": "array"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          },
+          "track_slug": {
+            "title": "Track Slug",
+            "type": "string"
+          },
+          "track_title": {
+            "title": "Track Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "track_slug",
+          "track_title",
+          "solved",
+          "attempted",
+          "total",
+          "mastery_pct",
+          "topics"
+        ],
+        "title": "TrackProgressDetail",
+        "type": "object"
+      },
+      "TrackRating": {
+        "properties": {
+          "games": {
+            "title": "Games",
+            "type": "integer"
+          },
+          "history": {
+            "items": {
+              "$ref": "#/components/schemas/RatingPoint"
+            },
+            "title": "History",
+            "type": "array"
+          },
+          "rating": {
+            "title": "Rating",
+            "type": "number"
+          },
+          "rd": {
+            "title": "Rd",
+            "type": "number"
+          },
+          "track_slug": {
+            "title": "Track Slug",
+            "type": "string"
+          },
+          "track_title": {
+            "title": "Track Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "track_slug",
+          "track_title",
+          "rating",
+          "rd",
+          "games",
+          "history"
+        ],
+        "title": "TrackRating",
+        "type": "object"
+      },
+      "TrackSummary": {
+        "properties": {
+          "icon": {
+            "enum": [
+              "api",
+              "worker",
+              "db",
+              "cache",
+              "queue",
+              "lb"
+            ],
+            "title": "Icon",
+            "type": "string"
+          },
+          "position": {
+            "title": "Position",
+            "type": "integer"
+          },
+          "progress": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TrackProgress"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Only for signed-in callers."
+          },
+          "scenario_count": {
+            "title": "Scenario Count",
+            "type": "integer"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "topics": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Topics",
+            "type": "array"
+          }
+        },
+        "required": [
+          "slug",
+          "title",
+          "summary",
+          "icon",
+          "position",
+          "scenario_count",
+          "topics"
+        ],
+        "title": "TrackSummary",
+        "type": "object"
       }
     }
   },
@@ -83,7 +2239,7 @@
   "paths": {
     "/healthz": {
       "get": {
-        "operationId": "healthz_healthz_get",
+        "operationId": "healthz",
         "responses": {
           "200": {
             "content": {
@@ -104,7 +2260,7 @@
     },
     "/readyz": {
       "get": {
-        "operationId": "readyz_readyz_get",
+        "operationId": "readyz",
         "responses": {
           "200": {
             "content": {
@@ -130,6 +2286,2419 @@
         "summary": "Readiness probe (database, Valkey, Temporal)",
         "tags": [
           "health"
+        ]
+      }
+    },
+    "/v1/admin/scenarios": {
+      "get": {
+        "description": "Every scenario in any status, with attempt counts.",
+        "operationId": "admin_scenarios",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/ScenarioStatus"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "track",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Track"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 512,
+                  "pattern": "^[A-Za-z0-9_-]+$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminScenarioPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad request (e.g. an invalid cursor)."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing or invalid credentials."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Signed in, but not allowed."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not found."
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict (e.g. a request with this Idempotency-Key is still running)."
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "The request is invalid; see `errors`."
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Rate limited; see Retry-After."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Server error."
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Temporarily unavailable."
+          }
+        },
+        "summary": "Admin Scenarios",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/v1/challenges/daily": {
+      "get": {
+        "description": "Today's incident (IST day), the same for everyone.",
+        "operationId": "daily_challenge",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChallengeOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad request (e.g. an invalid cursor)."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing or invalid credentials."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Signed in, but not allowed."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not found."
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict (e.g. a request with this Idempotency-Key is still running)."
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "The request is invalid; see `errors`."
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Rate limited; see Retry-After."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Server error."
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Temporarily unavailable."
+          }
+        },
+        "summary": "Daily Challenge",
+        "tags": [
+          "catalog"
+        ]
+      }
+    },
+    "/v1/challenges/weekly": {
+      "get": {
+        "description": "This week's incident (from Monday 00:00 IST).",
+        "operationId": "weekly_challenge",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChallengeOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad request (e.g. an invalid cursor)."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing or invalid credentials."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Signed in, but not allowed."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not found."
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict (e.g. a request with this Idempotency-Key is still running)."
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "The request is invalid; see `errors`."
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Rate limited; see Retry-After."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Server error."
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Temporarily unavailable."
+          }
+        },
+        "summary": "Weekly Challenge",
+        "tags": [
+          "catalog"
+        ]
+      }
+    },
+    "/v1/guest-tokens": {
+      "post": {
+        "description": "A signed token for playing /try without an account. Keep it in an httpOnly cookie.",
+        "operationId": "create_guest_token",
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GuestTokenOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad request (e.g. an invalid cursor)."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing or invalid credentials."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Signed in, but not allowed."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not found."
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict (e.g. a request with this Idempotency-Key is still running)."
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "The request is invalid; see `errors`."
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Rate limited; see Retry-After."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Server error."
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Temporarily unavailable."
+          }
+        },
+        "summary": "Create Guest Token",
+        "tags": [
+          "me"
+        ]
+      }
+    },
+    "/v1/me": {
+      "get": {
+        "operationId": "get_me",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Me"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad request (e.g. an invalid cursor)."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing or invalid credentials."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Signed in, but not allowed."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not found."
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict (e.g. a request with this Idempotency-Key is still running)."
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "The request is invalid; see `errors`."
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Rate limited; see Retry-After."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Server error."
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Temporarily unavailable."
+          }
+        },
+        "summary": "Get Me",
+        "tags": [
+          "me"
+        ]
+      },
+      "patch": {
+        "description": "Update profile fields and merge preference changes (omitted fields are kept).",
+        "operationId": "patch_me",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MePatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Me"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad request (e.g. an invalid cursor)."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing or invalid credentials."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Signed in, but not allowed."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not found."
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict (e.g. a request with this Idempotency-Key is still running)."
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "The request is invalid; see `errors`."
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Rate limited; see Retry-After."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Server error."
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Temporarily unavailable."
+          }
+        },
+        "summary": "Patch Me",
+        "tags": [
+          "me"
+        ]
+      }
+    },
+    "/v1/me/attempts": {
+      "get": {
+        "description": "Attempt history, newest first.",
+        "operationId": "my_attempts",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 512,
+                  "pattern": "^[A-Za-z0-9_-]+$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AttemptPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad request (e.g. an invalid cursor)."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing or invalid credentials."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Signed in, but not allowed."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not found."
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict (e.g. a request with this Idempotency-Key is still running)."
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "The request is invalid; see `errors`."
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Rate limited; see Retry-After."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Server error."
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Temporarily unavailable."
+          }
+        },
+        "summary": "My Attempts",
+        "tags": [
+          "me"
+        ]
+      }
+    },
+    "/v1/me/claim-guest": {
+      "post": {
+        "description": "Attach attempts played as a guest to this account (after signing up).",
+        "operationId": "claim_guest",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClaimGuestIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClaimGuestOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad request (e.g. an invalid cursor)."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing or invalid credentials."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Signed in, but not allowed."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not found."
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict (e.g. a request with this Idempotency-Key is still running)."
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "The request is invalid; see `errors`."
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Rate limited; see Retry-After."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Server error."
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Temporarily unavailable."
+          }
+        },
+        "summary": "Claim Guest",
+        "tags": [
+          "me"
+        ]
+      }
+    },
+    "/v1/me/progress": {
+      "get": {
+        "description": "Solved and attempted counts and mastery per track and topic.",
+        "operationId": "my_progress",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/TrackProgressDetail"
+                  },
+                  "title": "Response My Progress",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad request (e.g. an invalid cursor)."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing or invalid credentials."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Signed in, but not allowed."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not found."
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict (e.g. a request with this Idempotency-Key is still running)."
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "The request is invalid; see `errors`."
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Rate limited; see Retry-After."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Server error."
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Temporarily unavailable."
+          }
+        },
+        "summary": "My Progress",
+        "tags": [
+          "me"
+        ]
+      }
+    },
+    "/v1/me/ratings": {
+      "get": {
+        "description": "Per-track Glicko-2 rating with recent history (tracks played at least once).",
+        "operationId": "my_ratings",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/TrackRating"
+                  },
+                  "title": "Response My Ratings",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad request (e.g. an invalid cursor)."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing or invalid credentials."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Signed in, but not allowed."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not found."
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict (e.g. a request with this Idempotency-Key is still running)."
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "The request is invalid; see `errors`."
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Rate limited; see Retry-After."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Server error."
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Temporarily unavailable."
+          }
+        },
+        "summary": "My Ratings",
+        "tags": [
+          "me"
+        ]
+      }
+    },
+    "/v1/me/streak": {
+      "get": {
+        "description": "Current and longest streak (recomputed from activity days) and the activity grid.",
+        "operationId": "my_streak",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StreakOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad request (e.g. an invalid cursor)."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing or invalid credentials."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Signed in, but not allowed."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not found."
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict (e.g. a request with this Idempotency-Key is still running)."
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "The request is invalid; see `errors`."
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Rate limited; see Retry-After."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Server error."
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Temporarily unavailable."
+          }
+        },
+        "summary": "My Streak",
+        "tags": [
+          "me"
+        ]
+      }
+    },
+    "/v1/scenarios": {
+      "get": {
+        "description": "Published scenarios, filterable, ordered by slug with cursor pagination.",
+        "operationId": "list_scenarios",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "track",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Track"
+            }
+          },
+          {
+            "in": "query",
+            "name": "topic",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Topic"
+            }
+          },
+          {
+            "in": "query",
+            "name": "difficulty",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/Difficulty"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Difficulty"
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 80,
+                  "minLength": 2,
+                  "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Q"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 512,
+                  "pattern": "^[A-Za-z0-9_-]+$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScenarioPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad request (e.g. an invalid cursor)."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing or invalid credentials."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Signed in, but not allowed."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not found."
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict (e.g. a request with this Idempotency-Key is still running)."
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "The request is invalid; see `errors`."
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Rate limited; see Retry-After."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Server error."
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Temporarily unavailable."
+          }
+        },
+        "summary": "List Scenarios",
+        "tags": [
+          "catalog"
+        ]
+      }
+    },
+    "/v1/scenarios/{slug}": {
+      "get": {
+        "description": "The briefing: story, system, goals and stats. Never contains solution data.",
+        "operationId": "get_scenario",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+              "title": "Slug",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Briefing"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad request (e.g. an invalid cursor)."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing or invalid credentials."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Signed in, but not allowed."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not found."
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict (e.g. a request with this Idempotency-Key is still running)."
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "The request is invalid; see `errors`."
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Rate limited; see Retry-After."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Server error."
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Temporarily unavailable."
+          }
+        },
+        "summary": "Get Scenario",
+        "tags": [
+          "catalog"
+        ]
+      }
+    },
+    "/v1/scenarios/{slug}/approaches": {
+      "get": {
+        "description": "Known fixes. Spoilers, so only for players who have resolved the scenario (else 403).",
+        "operationId": "get_approaches",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+              "title": "Slug",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ApproachOut"
+                  },
+                  "title": "Response Get Approaches",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad request (e.g. an invalid cursor)."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing or invalid credentials."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Signed in, but not allowed."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not found."
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict (e.g. a request with this Idempotency-Key is still running)."
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "The request is invalid; see `errors`."
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Rate limited; see Retry-After."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Server error."
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Temporarily unavailable."
+          }
+        },
+        "summary": "Get Approaches",
+        "tags": [
+          "catalog"
+        ]
+      }
+    },
+    "/v1/tracks": {
+      "get": {
+        "description": "Published tracks with scenario counts, plus the caller's progress when signed in.",
+        "operationId": "list_tracks",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/TrackSummary"
+                  },
+                  "title": "Response List Tracks",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad request (e.g. an invalid cursor)."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing or invalid credentials."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Signed in, but not allowed."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not found."
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict (e.g. a request with this Idempotency-Key is still running)."
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "The request is invalid; see `errors`."
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Rate limited; see Retry-After."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Server error."
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Temporarily unavailable."
+          }
+        },
+        "summary": "List Tracks",
+        "tags": [
+          "catalog"
+        ]
+      }
+    },
+    "/v1/tracks/{slug}": {
+      "get": {
+        "description": "A track's topics and every published scenario in it, easiest first.",
+        "operationId": "get_track",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+              "title": "Slug",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrackDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad request (e.g. an invalid cursor)."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing or invalid credentials."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Signed in, but not allowed."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not found."
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict (e.g. a request with this Idempotency-Key is still running)."
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "The request is invalid; see `errors`."
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Rate limited; see Retry-After."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Server error."
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Temporarily unavailable."
+          }
+        },
+        "summary": "Get Track",
+        "tags": [
+          "catalog"
+        ]
+      }
+    },
+    "/v1/users/{handle}": {
+      "get": {
+        "description": "A player's public profile (404 when private, so private handles can't be probed).",
+        "operationId": "public_profile",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "handle",
+            "required": true,
+            "schema": {
+              "maxLength": 39,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9-]{0,38}$",
+              "title": "Handle",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicProfile"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad request (e.g. an invalid cursor)."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing or invalid credentials."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Signed in, but not allowed."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not found."
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict (e.g. a request with this Idempotency-Key is still running)."
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "The request is invalid; see `errors`."
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Rate limited; see Retry-After."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Server error."
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Temporarily unavailable."
+          }
+        },
+        "summary": "Public Profile",
+        "tags": [
+          "me",
+          "profiles"
         ]
       }
     }

@@ -1,0 +1,29 @@
+# Scenario metadata and briefing. Phase 3 adds faults, probes, hints and the rubric.
+slug: ttl-zero
+title: TTL zero
+track: caching
+topic: invalidation
+difficulty: sev4
+est_minutes: 10
+status: published
+summary: The cache works locally and does nothing in production
+tags:
+  - redis
+  - config
+base_app: shopkart
+briefing:
+  story: The new caching layer made every local benchmark faster. In production the database load did
+    not move at all.
+  system:
+    - kind: api
+      name: product-api
+      note: Python, 2 pods
+      role: path
+    - kind: cache
+      name: redis
+      note: cache
+      role: path
+    - kind: db
+      name: postgres
+      note: products
+      role: path

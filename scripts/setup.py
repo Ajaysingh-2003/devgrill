@@ -1,8 +1,13 @@
-"""One-time local setup checks: tools, Docker, .env. Run via `just setup`."""
+"""One-time local setup checks: tools, Docker, .env. Run via `just setup`.
+
+`--env-only` skips the tool checks and only prepares .env (CI uses this).
+"""
 
 from __future__ import annotations
 
 import os
+import re
+import secrets
 import shutil
 import subprocess
 import sys
@@ -10,6 +15,38 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 REQUIRED = {"git": "--version", "docker": "--version", "node": "--version", "pnpm": "--version"}
+#: Local-only secrets generated on first setup (each stays stable once written).
+GENERATED_SECRETS = ("BETTER_AUTH_SECRET", "INTERNAL_HMAC_SECRET", "GUEST_TOKEN_SECRET")
+
+
+def fill_secrets(env_text: str) -> tuple[str, list[str]]:
+    """Give every empty (or missing) generated secret a random value; return what changed."""
+    filled: list[str] = []
+    for key in GENERATED_SECRETS:
+        value = secrets.token_urlsafe(32)
+        # [ \t]* rather than \s*: \s would also match the newline and swallow the next line.
+        pattern = re.compile(rf"^{key}=[ \t]*$", re.MULTILINE)
+        if pattern.search(env_text):
+            env_text = pattern.sub(f"{key}={value}", env_text)
+            filled.append(key)
+        elif not re.search(rf"^{key}=", env_text, re.MULTILINE):
+            env_text = env_text.rstrip("\n") + f"\n{key}={value}\n"
+            filled.append(key)
+    return env_text, filled
+
+
+def ensure_env_file() -> None:
+    """Create .env from .env.example if missing, and generate any empty local secrets."""
+    env_file = ROOT / ".env"
+    if not env_file.exists():
+        env_file.write_text((ROOT / ".env.example").read_text(encoding="utf-8"), encoding="utf-8")
+        print("  made .env from .env.example")
+    else:
+        print("  ok   .env exists")
+    text, filled = fill_secrets(env_file.read_text(encoding="utf-8"))
+    if filled:
+        env_file.write_text(text, encoding="utf-8", newline="\n")
+        print(f"  generated {', '.join(filled)}")
 
 
 def _version(tool: str, flag: str) -> str | None:
@@ -23,6 +60,10 @@ def _version(tool: str, flag: str) -> str | None:
 
 
 def main() -> int:
+    if "--env-only" in sys.argv:
+        ensure_env_file()
+        return 0
+
     ok = True
     print("setup: checking tools")
     for tool, flag in REQUIRED.items():
@@ -53,12 +94,7 @@ def main() -> int:
     if os.name == "nt" and "--use-system-ca" not in os.environ.get("NODE_OPTIONS", ""):
         print("  WARN NODE_OPTIONS lacks --use-system-ca (needed behind the corporate proxy)")
 
-    env_file = ROOT / ".env"
-    if not env_file.exists():
-        env_file.write_text((ROOT / ".env.example").read_text(encoding="utf-8"), encoding="utf-8")
-        print("  made .env from .env.example")
-    else:
-        print("  ok   .env exists")
+    ensure_env_file()
 
     print("setup: ready" if ok else "setup: fix the MISS items above, then re-run `just setup`")
     return 0 if ok else 1

@@ -2,7 +2,7 @@
 
 import type { Client, ClientMeta, Options as Options2, RequestResult, TDataShape } from './client';
 import { client } from './client.gen';
-import type { HealthzHealthzGetData, HealthzHealthzGetResponses, ReadyzReadyzGetData, ReadyzReadyzGetErrors, ReadyzReadyzGetResponses } from './types.gen';
+import type { AdminScenariosData, AdminScenariosErrors, AdminScenariosResponses, ClaimGuestData, ClaimGuestErrors, ClaimGuestResponses, CreateGuestTokenData, CreateGuestTokenErrors, CreateGuestTokenResponses, DailyChallengeData, DailyChallengeErrors, DailyChallengeResponses, GetApproachesData, GetApproachesErrors, GetApproachesResponses, GetMeData, GetMeErrors, GetMeResponses, GetScenarioData, GetScenarioErrors, GetScenarioResponses, GetTrackData, GetTrackErrors, GetTrackResponses, HealthzData, HealthzResponses, ListScenariosData, ListScenariosErrors, ListScenariosResponses, ListTracksData, ListTracksErrors, ListTracksResponses, MyAttemptsData, MyAttemptsErrors, MyAttemptsResponses, MyProgressData, MyProgressErrors, MyProgressResponses, MyRatingsData, MyRatingsErrors, MyRatingsResponses, MyStreakData, MyStreakErrors, MyStreakResponses, PatchMeData, PatchMeErrors, PatchMeResponses, PublicProfileData, PublicProfileErrors, PublicProfileResponses, ReadyzData, ReadyzErrors, ReadyzResponses, WeeklyChallengeData, WeeklyChallengeErrors, WeeklyChallengeResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -21,9 +21,140 @@ export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends 
 /**
  * Liveness probe
  */
-export const healthzHealthzGet = <ThrowOnError extends boolean = false>(options?: Options<HealthzHealthzGetData, ThrowOnError>): RequestResult<HealthzHealthzGetResponses, unknown, ThrowOnError> => (options?.client ?? client).get<HealthzHealthzGetResponses, unknown, ThrowOnError>({ url: '/healthz', ...options });
+export const healthz = <ThrowOnError extends boolean = false>(options?: Options<HealthzData, ThrowOnError>): RequestResult<HealthzResponses, unknown, ThrowOnError> => (options?.client ?? client).get<HealthzResponses, unknown, ThrowOnError>({ url: '/healthz', ...options });
 
 /**
  * Readiness probe (database, Valkey, Temporal)
  */
-export const readyzReadyzGet = <ThrowOnError extends boolean = false>(options?: Options<ReadyzReadyzGetData, ThrowOnError>): RequestResult<ReadyzReadyzGetResponses, ReadyzReadyzGetErrors, ThrowOnError> => (options?.client ?? client).get<ReadyzReadyzGetResponses, ReadyzReadyzGetErrors, ThrowOnError>({ url: '/readyz', ...options });
+export const readyz = <ThrowOnError extends boolean = false>(options?: Options<ReadyzData, ThrowOnError>): RequestResult<ReadyzResponses, ReadyzErrors, ThrowOnError> => (options?.client ?? client).get<ReadyzResponses, ReadyzErrors, ThrowOnError>({ url: '/readyz', ...options });
+
+/**
+ * Admin Scenarios
+ *
+ * Every scenario in any status, with attempt counts.
+ */
+export const adminScenarios = <ThrowOnError extends boolean = false>(options?: Options<AdminScenariosData, ThrowOnError>): RequestResult<AdminScenariosResponses, AdminScenariosErrors, ThrowOnError> => (options?.client ?? client).get<AdminScenariosResponses, AdminScenariosErrors, ThrowOnError>({ url: '/v1/admin/scenarios', ...options });
+
+/**
+ * Daily Challenge
+ *
+ * Today's incident (IST day), the same for everyone.
+ */
+export const dailyChallenge = <ThrowOnError extends boolean = false>(options?: Options<DailyChallengeData, ThrowOnError>): RequestResult<DailyChallengeResponses, DailyChallengeErrors, ThrowOnError> => (options?.client ?? client).get<DailyChallengeResponses, DailyChallengeErrors, ThrowOnError>({ url: '/v1/challenges/daily', ...options });
+
+/**
+ * Weekly Challenge
+ *
+ * This week's incident (from Monday 00:00 IST).
+ */
+export const weeklyChallenge = <ThrowOnError extends boolean = false>(options?: Options<WeeklyChallengeData, ThrowOnError>): RequestResult<WeeklyChallengeResponses, WeeklyChallengeErrors, ThrowOnError> => (options?.client ?? client).get<WeeklyChallengeResponses, WeeklyChallengeErrors, ThrowOnError>({ url: '/v1/challenges/weekly', ...options });
+
+/**
+ * Create Guest Token
+ *
+ * A signed token for playing /try without an account. Keep it in an httpOnly cookie.
+ */
+export const createGuestToken = <ThrowOnError extends boolean = false>(options?: Options<CreateGuestTokenData, ThrowOnError>): RequestResult<CreateGuestTokenResponses, CreateGuestTokenErrors, ThrowOnError> => (options?.client ?? client).post<CreateGuestTokenResponses, CreateGuestTokenErrors, ThrowOnError>({ url: '/v1/guest-tokens', ...options });
+
+/**
+ * Get Me
+ */
+export const getMe = <ThrowOnError extends boolean = false>(options?: Options<GetMeData, ThrowOnError>): RequestResult<GetMeResponses, GetMeErrors, ThrowOnError> => (options?.client ?? client).get<GetMeResponses, GetMeErrors, ThrowOnError>({ url: '/v1/me', ...options });
+
+/**
+ * Patch Me
+ *
+ * Update profile fields and merge preference changes (omitted fields are kept).
+ */
+export const patchMe = <ThrowOnError extends boolean = false>(options: Options<PatchMeData, ThrowOnError>): RequestResult<PatchMeResponses, PatchMeErrors, ThrowOnError> => (options.client ?? client).patch<PatchMeResponses, PatchMeErrors, ThrowOnError>({
+    url: '/v1/me',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * My Attempts
+ *
+ * Attempt history, newest first.
+ */
+export const myAttempts = <ThrowOnError extends boolean = false>(options?: Options<MyAttemptsData, ThrowOnError>): RequestResult<MyAttemptsResponses, MyAttemptsErrors, ThrowOnError> => (options?.client ?? client).get<MyAttemptsResponses, MyAttemptsErrors, ThrowOnError>({ url: '/v1/me/attempts', ...options });
+
+/**
+ * Claim Guest
+ *
+ * Attach attempts played as a guest to this account (after signing up).
+ */
+export const claimGuest = <ThrowOnError extends boolean = false>(options: Options<ClaimGuestData, ThrowOnError>): RequestResult<ClaimGuestResponses, ClaimGuestErrors, ThrowOnError> => (options.client ?? client).post<ClaimGuestResponses, ClaimGuestErrors, ThrowOnError>({
+    url: '/v1/me/claim-guest',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * My Progress
+ *
+ * Solved and attempted counts and mastery per track and topic.
+ */
+export const myProgress = <ThrowOnError extends boolean = false>(options?: Options<MyProgressData, ThrowOnError>): RequestResult<MyProgressResponses, MyProgressErrors, ThrowOnError> => (options?.client ?? client).get<MyProgressResponses, MyProgressErrors, ThrowOnError>({ url: '/v1/me/progress', ...options });
+
+/**
+ * My Ratings
+ *
+ * Per-track Glicko-2 rating with recent history (tracks played at least once).
+ */
+export const myRatings = <ThrowOnError extends boolean = false>(options?: Options<MyRatingsData, ThrowOnError>): RequestResult<MyRatingsResponses, MyRatingsErrors, ThrowOnError> => (options?.client ?? client).get<MyRatingsResponses, MyRatingsErrors, ThrowOnError>({ url: '/v1/me/ratings', ...options });
+
+/**
+ * My Streak
+ *
+ * Current and longest streak (recomputed from activity days) and the activity grid.
+ */
+export const myStreak = <ThrowOnError extends boolean = false>(options?: Options<MyStreakData, ThrowOnError>): RequestResult<MyStreakResponses, MyStreakErrors, ThrowOnError> => (options?.client ?? client).get<MyStreakResponses, MyStreakErrors, ThrowOnError>({ url: '/v1/me/streak', ...options });
+
+/**
+ * List Scenarios
+ *
+ * Published scenarios, filterable, ordered by slug with cursor pagination.
+ */
+export const listScenarios = <ThrowOnError extends boolean = false>(options?: Options<ListScenariosData, ThrowOnError>): RequestResult<ListScenariosResponses, ListScenariosErrors, ThrowOnError> => (options?.client ?? client).get<ListScenariosResponses, ListScenariosErrors, ThrowOnError>({ url: '/v1/scenarios', ...options });
+
+/**
+ * Get Scenario
+ *
+ * The briefing: story, system, goals and stats. Never contains solution data.
+ */
+export const getScenario = <ThrowOnError extends boolean = false>(options: Options<GetScenarioData, ThrowOnError>): RequestResult<GetScenarioResponses, GetScenarioErrors, ThrowOnError> => (options.client ?? client).get<GetScenarioResponses, GetScenarioErrors, ThrowOnError>({ url: '/v1/scenarios/{slug}', ...options });
+
+/**
+ * Get Approaches
+ *
+ * Known fixes. Spoilers, so only for players who have resolved the scenario (else 403).
+ */
+export const getApproaches = <ThrowOnError extends boolean = false>(options: Options<GetApproachesData, ThrowOnError>): RequestResult<GetApproachesResponses, GetApproachesErrors, ThrowOnError> => (options.client ?? client).get<GetApproachesResponses, GetApproachesErrors, ThrowOnError>({ url: '/v1/scenarios/{slug}/approaches', ...options });
+
+/**
+ * List Tracks
+ *
+ * Published tracks with scenario counts, plus the caller's progress when signed in.
+ */
+export const listTracks = <ThrowOnError extends boolean = false>(options?: Options<ListTracksData, ThrowOnError>): RequestResult<ListTracksResponses, ListTracksErrors, ThrowOnError> => (options?.client ?? client).get<ListTracksResponses, ListTracksErrors, ThrowOnError>({ url: '/v1/tracks', ...options });
+
+/**
+ * Get Track
+ *
+ * A track's topics and every published scenario in it, easiest first.
+ */
+export const getTrack = <ThrowOnError extends boolean = false>(options: Options<GetTrackData, ThrowOnError>): RequestResult<GetTrackResponses, GetTrackErrors, ThrowOnError> => (options.client ?? client).get<GetTrackResponses, GetTrackErrors, ThrowOnError>({ url: '/v1/tracks/{slug}', ...options });
+
+/**
+ * Public Profile
+ *
+ * A player's public profile (404 when private, so private handles can't be probed).
+ */
+export const publicProfile = <ThrowOnError extends boolean = false>(options: Options<PublicProfileData, ThrowOnError>): RequestResult<PublicProfileResponses, PublicProfileErrors, ThrowOnError> => (options.client ?? client).get<PublicProfileResponses, PublicProfileErrors, ThrowOnError>({ url: '/v1/users/{handle}', ...options });

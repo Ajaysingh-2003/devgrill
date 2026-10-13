@@ -1,0 +1,30 @@
+# Scenario metadata and briefing. Phase 3 adds faults, probes, hints and the rubric.
+slug: the-3am-table-lock
+title: The 3 a.m. table lock
+track: databases
+topic: migrations
+difficulty: sev2
+est_minutes: 25
+status: published
+summary: Checkout freezes right after a deploy
+tags:
+  - postgres
+  - migrations
+  - deploys
+base_app: shopkart
+briefing:
+  story: The nightly deploy finished at 2:58 a.m. At 3:00 checkout stopped responding and the pager went
+    off.
+  system:
+    - kind: api
+      name: checkout-api
+      note: Python, 4 pods
+      role: path
+    - kind: db
+      name: postgres
+      note: orders, payments
+      role: path
+    - kind: worker
+      name: migrator
+      note: schema changes
+      role: side

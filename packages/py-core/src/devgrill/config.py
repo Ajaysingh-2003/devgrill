@@ -48,6 +48,24 @@ class Settings(BaseSettings):
     api_cors_origins: str = "http://localhost:3000"
     readiness_timeout_s: float = 2.0
 
+    # ---- auth (ADR 005, ADR 011)
+    auth_jwks_url: str = "http://localhost:3000/api/auth/jwks"
+    auth_issuer: str = "http://localhost:3000"
+    auth_audience: str = "devgrill-api"
+    #: How long a fetched JWKS is trusted before a background refresh.
+    auth_jwks_ttl_s: float = 600.0
+    #: An unknown `kid` triggers a refetch at most this often (rotation without hammering).
+    auth_jwks_min_refresh_s: float = 30.0
+    internal_hmac_secret: str = ""
+    guest_token_secret: str = ""
+    guest_token_ttl_days: int = 30
+    admin_github_logins: str = ""
+
+    # ---- rate limits (requests per window, per user or per IP)
+    rate_limit_default: int = 300
+    rate_limit_window_s: int = 60
+    rate_limit_enabled: bool = True
+
     otel_enabled: bool = False
     otel_exporter_otlp_endpoint: str = "http://localhost:4318"
     sentry_dsn: str | None = None
@@ -55,6 +73,23 @@ class Settings(BaseSettings):
     @property
     def cors_origins(self) -> list[str]:
         return [origin.strip() for origin in self.api_cors_origins.split(",") if origin.strip()]
+
+    @property
+    def admin_logins(self) -> frozenset[str]:
+        return frozenset(
+            login.strip().lower() for login in self.admin_github_logins.split(",") if login.strip()
+        )
+
+    def require_secrets(self) -> None:
+        """Refuse to start outside dev/test with missing signing secrets."""
+        if self.env == "prod":
+            missing = [
+                name
+                for name in ("internal_hmac_secret", "guest_token_secret")
+                if len(getattr(self, name)) < 32
+            ]
+            if missing:
+                raise RuntimeError(f"missing or weak secrets: {', '.join(missing)}")
 
 
 @lru_cache

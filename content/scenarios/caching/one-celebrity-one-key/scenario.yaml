@@ -1,0 +1,33 @@
+# Scenario metadata and briefing. Phase 3 adds faults, probes, hints and the rubric.
+slug: one-celebrity-one-key
+title: One celebrity, one key
+track: caching
+topic: hot-keys
+difficulty: sev1
+est_minutes: 35
+status: published
+summary: A single viral profile melts one cache shard
+tags:
+  - redis
+  - hot-key
+base_app: shopkart
+briefing:
+  story: A film star just posted a link to their profile on ShopKart. One Redis shard is at 100% CPU and
+    timeouts are spreading.
+  system:
+    - kind: lb
+      name: load-gen
+      note: viral traffic
+      role: path
+    - kind: api
+      name: profile-api
+      note: Python, 6 pods
+      role: path
+    - kind: cache
+      name: redis
+      note: 3 shards
+      role: path
+    - kind: db
+      name: postgres
+      note: profiles
+      role: path

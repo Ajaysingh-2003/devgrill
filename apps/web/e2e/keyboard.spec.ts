@@ -24,14 +24,18 @@ test("command palette opens with the keyboard and navigates", async ({ page }) =
   await page.keyboard.press(`${mod}+k`);
   const input = page.getByRole("combobox");
   await expect(input).toBeFocused();
-  await input.fill("settings");
+  await input.fill("daily");
   await page.keyboard.press("Enter");
-  await expect(page).toHaveURL(/\/settings$/);
+  await expect(page).toHaveURL(/\/daily$/);
 });
 
 test("theme choice persists across reloads", async ({ page }) => {
-  await page.goto("/settings");
-  await page.getByRole("main").getByRole("button", { name: "Dark" }).click();
+  await open(page, "/drills");
+  await page
+    .getByRole("banner")
+    .getByRole("group", { name: "Theme" })
+    .getByRole("button", { name: "Dark" })
+    .click();
   await expect(page.locator("html")).toHaveClass(/dark/);
   await page.reload();
   await expect(page.locator("html")).toHaveClass(/dark/);

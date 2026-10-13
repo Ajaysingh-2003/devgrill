@@ -48,7 +48,7 @@ jobs:
       - run: uv run python -m pytest -m "not integration"
 
   web:
-    name: web · format, lint, types, build, e2e
+    name: web · format, lint, types, build
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -66,16 +66,6 @@ jobs:
       - run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm build
-      - run: pnpm exec playwright install --with-deps chromium
-      # axe (WCAG 2.2 AA) on every route in both themes, plus keyboard flows, against the production build.
-      - run: pnpm e2e
-      - name: e2e report on failure
-        if: failure()
-        uses: actions/upload-artifact@v7
-        with:
-          name: playwright-report
-          path: apps/web/test-results/
-          retention-days: 7
 
   ui:
     name: ui · tokens, component tests, storybook
@@ -114,8 +104,8 @@ jobs:
       - name: fail on drift
         run: git diff --exit-code -- packages/api-client
 
-  smoke:
-    name: smoke · services, migrations, integration, full stack
+  stack:
+    name: stack · services, migrations, integration, contract, smoke, e2e
     runs-on: ubuntu-latest
     timeout-minutes: 30
     needs: [python, web]
@@ -129,15 +119,22 @@ jobs:
         with:
           node-version: 24
           cache: pnpm
-      - run: cp .env.example .env
       - run: docker compose -f infra/compose/docker-compose.dev.yml up -d --wait
       - run: uv sync --all-packages --locked
       - run: pnpm install --frozen-lockfile
-      - name: migrations round-trip
+      # .env from .env.example with generated local secrets (auth, HMAC, guest tokens).
+      - run: uv run python scripts/setup.py --env-only
+      - name: migrations round-trip (app schema) and auth schema
         run: |
           uv run python -m alembic -c apps/api/alembic.ini upgrade head
           uv run python -m alembic -c apps/api/alembic.ini downgrade base
           uv run python -m alembic -c apps/api/alembic.ini upgrade head
+          uv run python -m alembic -c apps/api/alembic.ini check
+          node apps/web/scripts/auth-migrate.mts
+          node apps/web/scripts/auth-migrate.mts --check
+          uv run python -m devgrill_content.cli seed
+      # Real Postgres + Valkey: schema guarantees, seed, API, query plans on 10k scenarios,
+      # and Schemathesis over every /v1 operation (each on its own throwaway database).
       - run: uv run python -m pytest -m integration
       - name: full-stack smoke
         timeout-minutes: 10
@@ -152,6 +149,20 @@ jobs:
       - name: dev log on failure
         if: failure()
         run: cat dev.log || true
+      - run: pnpm build
+      - run: pnpm exec playwright install --with-deps chromium
+      # Production web build + API + mock GitHub on their own database (apps/web/e2e/stack.mjs):
+      # sign-in, sign-out, expiry, guests, admin authz, prefs, axe on every page, keyboard flows.
+      - name: e2e
+        timeout-minutes: 15
+        run: pnpm e2e
+      - name: e2e report on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-report
+          path: apps/web/test-results/
+          retention-days: 7
 
   hygiene:
     name: hygiene · line endings, secrets, audits

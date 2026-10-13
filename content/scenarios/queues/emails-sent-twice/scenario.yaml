@@ -1,0 +1,29 @@
+# Scenario metadata and briefing. Phase 3 adds faults, probes, hints and the rubric.
+slug: emails-sent-twice
+title: Emails sent twice
+track: queues
+topic: idempotency
+difficulty: sev3
+est_minutes: 25
+status: published
+summary: Every receipt arrives twice
+tags:
+  - queue
+  - idempotency
+base_app: shopkart
+briefing:
+  story: Since this afternoon every customer gets two receipt emails. Finance has noticed some refunds
+    were issued twice too.
+  system:
+    - kind: api
+      name: orders-api
+      note: Python, 2 pods
+      role: path
+    - kind: queue
+      name: rabbitmq
+      note: orders queue
+      role: path
+    - kind: worker
+      name: mailer
+      note: 2 consumers
+      role: path

@@ -1,0 +1,33 @@
+# Scenario metadata and briefing. Phase 3 adds faults, probes, hints and the rubric.
+slug: retry-storm
+title: Retry storm
+track: queues
+topic: retries
+difficulty: sev1
+est_minutes: 35
+status: published
+summary: A two-minute blip becomes an hour-long outage
+tags:
+  - queue
+  - retries
+  - backoff
+base_app: shopkart
+briefing:
+  story: The payment provider had a two-minute outage at 14:00. It recovered. Your system did not.
+  system:
+    - kind: api
+      name: checkout-api
+      note: Python, 4 pods
+      role: path
+    - kind: queue
+      name: rabbitmq
+      note: payment jobs
+      role: path
+    - kind: worker
+      name: payments
+      note: 8 consumers
+      role: path
+    - kind: lb
+      name: provider
+      note: payment gateway
+      role: side

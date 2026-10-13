@@ -10,6 +10,7 @@ from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
+import devgrill.infra.models  # noqa: F401  (registers every table on Base.metadata)
 from devgrill.config import get_settings
 from devgrill.infra.db import APP_SCHEMA, Base
 

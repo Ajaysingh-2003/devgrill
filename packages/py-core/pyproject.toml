@@ -11,6 +11,11 @@ dependencies = [
     "redis==8.1.0",
     "temporalio==1.34.0",
     "structlog==26.1.0",
+    "pyjwt[crypto]==2.15.1",
+    "pgvector==0.5.1",
+    "pyyaml>=6.0.2",
+    # IANA time zones for zoneinfo (Windows ships none); streak days roll over in IST.
+    "tzdata>=2025.2",
 ]
 
 [project.optional-dependencies]

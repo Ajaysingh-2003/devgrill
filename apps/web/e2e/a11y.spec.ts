@@ -1,7 +1,10 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test } from "@playwright/test";
 
-/** Every template, both themes, WCAG 2.2 AA (docs/PLAN.md §8.7). */
+/**
+ * Every template, both themes, WCAG 2.2 AA (docs/PLAN.md §8.7). Pages that need an account
+ * (settings, profiles, admin) are audited signed in, in a11y-signed-in.spec.ts.
+ */
 const ROUTES = [
   "/",
   "/sign-in",
@@ -10,12 +13,9 @@ const ROUTES = [
   "/drills/caching",
   "/drills/caching/big-sale-meltdown",
   "/daily",
-  "/settings",
-  "/u/ajay",
   "/incident/inc-4021",
   "/incident/inc-4021/debrief",
   "/incident/inc-4021/postmortem",
-  "/admin",
   "/quickfire",
   "/this-page-does-not-exist",
 ];

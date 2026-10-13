@@ -14,6 +14,8 @@ Private and proprietary. See [LICENSE](LICENSE).
 
 **Phase 1 (design system and app shell) complete.** Tokens with a contrast gate, the component library in Storybook, and every page template as a static, clickable prototype in both themes (mock data). See `docs/design/system.md` and `docs/qc/phase-1.md`.
 
+**Phase 2 (domain, database, auth, API) complete.** GitHub sign-in, the full schema (37 tables, migrated by Alembic) and the `/v1` API serve the library, tracks, briefings, profiles and settings from Postgres. To sign in locally, register a GitHub OAuth App first: `docs/runbooks/github-oauth.md`.
+
 ## Stack
 
 | Layer     | Tech                                                                        |
@@ -57,7 +59,7 @@ This machine has constraints (corporate TLS proxy, `cmd.exe` blocked by policy).
    Make sure `%APPDATA%\Python\Python314\Scripts` is on your user PATH, then open a new terminal.
 4. In the repo:
    ```powershell
-   just setup      # uv sync, .env from .env.example, pnpm install, services up, migrate
+   just setup      # uv sync, .env (+ generated secrets), pnpm install, services up, migrate
    just dev        # api :8000 · gateway :8100 · web :3000 · worker
    just smoke      # in a second terminal: checks the running stack end to end
    ```

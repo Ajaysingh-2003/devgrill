@@ -13,13 +13,14 @@ default:
 
 # ---------------------------------------------------------------- setup
 
-# Install dependencies, create .env, start services, migrate.
+# Install dependencies, create .env (with generated secrets), start services, migrate, seed.
 setup:
     uv sync --all-packages
     uv run python scripts/setup.py
     pnpm install
     just deps-up
     just db-migrate
+    just db-seed
 
 # ------------------------------------------------------- platform services
 
@@ -64,9 +65,14 @@ smoke:
 
 # ------------------------------------------------------------- database
 
-# Apply all migrations.
+# Apply all migrations: Alembic owns schema `app`, Better Auth owns schema `auth`.
 db-migrate:
     {{alembic}} upgrade head
+    node apps/web/scripts/auth-migrate.mts
+
+# Load content/ (tracks, topics, scenarios) into the database. Safe to re-run.
+db-seed:
+    uv run python -m devgrill_content.cli seed
 
 # Roll back one migration.
 db-downgrade:
@@ -76,11 +82,13 @@ db-downgrade:
 db-revision message:
     {{alembic}} revision --autogenerate -m "{{message}}"
 
-# Drop the app schema and re-apply all migrations.
-[confirm("Drop and recreate the app schema? (y/N)")]
+# Drop both schemas (app data AND accounts/sessions) and re-apply all migrations, then seed.
+[confirm("Drop and recreate the app and auth schemas, deleting all local data? (y/N)")]
 db-reset:
     {{alembic}} downgrade base
     {{alembic}} upgrade head
+    node apps/web/scripts/auth-migrate.mts --reset
+    just db-seed
 
 # --------------------------------------------------------------- quality
 
@@ -154,7 +162,8 @@ storybook:
 storybook-build:
     pnpm --filter @devgrill/ui build-storybook
 
-# Browser e2e: axe on every route in both themes + keyboard flows (builds the web app first).
+# Browser e2e on its own database (devgrill_e2e) with a mock GitHub: auth flows, axe on every
+# page in both themes, keyboard flows. Needs `just deps-up`; builds the web app first.
 e2e: build
     pnpm e2e
 

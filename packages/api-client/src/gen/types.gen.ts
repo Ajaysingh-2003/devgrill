@@ -5,6 +5,251 @@ export type ClientOptions = {
 };
 
 /**
+ * AdminScenario
+ */
+export type AdminScenario = {
+    /**
+     * Attempts
+     */
+    attempts: number;
+    difficulty: Difficulty;
+    /**
+     * Resolved
+     */
+    resolved: number;
+    /**
+     * Slug
+     */
+    slug: string;
+    status: ScenarioStatus;
+    /**
+     * Title
+     */
+    title: string;
+    /**
+     * Track Slug
+     */
+    track_slug: string;
+    /**
+     * Updated At
+     */
+    updated_at: string;
+    /**
+     * Version
+     */
+    version: number | null;
+};
+
+/**
+ * AdminScenarioPage
+ */
+export type AdminScenarioPage = {
+    /**
+     * Items
+     */
+    items: Array<AdminScenario>;
+    /**
+     * Next Cursor
+     */
+    next_cursor: string | null;
+};
+
+/**
+ * ApproachOut
+ */
+export type ApproachOut = {
+    /**
+     * Cons
+     */
+    cons: Array<string>;
+    /**
+     * Idea Md
+     */
+    idea_md: string;
+    /**
+     * Key
+     */
+    key: string;
+    /**
+     * Name
+     */
+    name: string;
+    outcome: ApproachOutcome;
+    /**
+     * Pros
+     */
+    pros: Array<string>;
+};
+
+/**
+ * ApproachOutcome
+ */
+export type ApproachOutcome = 'full' | 'partial' | 'fails';
+
+/**
+ * AttemptMode
+ */
+export type AttemptMode = 'tutorial' | 'guided' | 'oncall' | 'daily' | 'weekly';
+
+/**
+ * AttemptPage
+ */
+export type AttemptPage = {
+    /**
+     * Items
+     */
+    items: Array<AttemptSummary>;
+    /**
+     * Next Cursor
+     */
+    next_cursor: string | null;
+};
+
+/**
+ * AttemptState
+ */
+export type AttemptState = 'provisioning' | 'active' | 'mitigated' | 'verifying' | 'resolved' | 'abandoned' | 'expired' | 'failed';
+
+/**
+ * AttemptSummary
+ */
+export type AttemptSummary = {
+    difficulty: Difficulty;
+    /**
+     * Ended At
+     */
+    ended_at: string | null;
+    /**
+     * Id
+     */
+    id: string;
+    mode: AttemptMode;
+    /**
+     * Scenario Slug
+     */
+    scenario_slug: string;
+    /**
+     * Scenario Title
+     */
+    scenario_title: string;
+    /**
+     * Started At
+     */
+    started_at: string;
+    state: AttemptState;
+    /**
+     * Track Slug
+     */
+    track_slug: string;
+};
+
+/**
+ * Briefing
+ */
+export type Briefing = {
+    briefing: BriefingSpec;
+    difficulty: Difficulty;
+    /**
+     * Est Minutes
+     */
+    est_minutes: number;
+    /**
+     * Modes
+     */
+    modes: Array<AttemptMode>;
+    /**
+     * Progress
+     *
+     * Only for signed-in callers.
+     */
+    progress?: 'solved' | 'attempted' | 'new' | null;
+    /**
+     * Slug
+     */
+    slug: string;
+    stats: ScenarioStats;
+    /**
+     * Summary
+     */
+    summary: string;
+    /**
+     * Tags
+     */
+    tags: Array<string>;
+    /**
+     * Title
+     */
+    title: string;
+    /**
+     * Topic Slug
+     */
+    topic_slug: string | null;
+    /**
+     * Topic Title
+     */
+    topic_title: string | null;
+    /**
+     * Track Slug
+     */
+    track_slug: string;
+    /**
+     * Track Title
+     */
+    track_title: string;
+    /**
+     * Version
+     */
+    version: number;
+    /**
+     * An easier scenario from the same track, if any.
+     */
+    warmup?: ScenarioCard | null;
+};
+
+/**
+ * BriefingSpec
+ */
+export type BriefingSpec = {
+    /**
+     * Goals
+     */
+    goals?: Array<Goal>;
+    /**
+     * Story
+     */
+    story: string;
+    /**
+     * System
+     */
+    system?: Array<SystemNode>;
+};
+
+/**
+ * ChallengeKind
+ */
+export type ChallengeKind = 'daily' | 'weekly';
+
+/**
+ * ChallengeOut
+ */
+export type ChallengeOut = {
+    /**
+     * Ends At
+     */
+    ends_at: string;
+    kind: ChallengeKind;
+    /**
+     * Players
+     */
+    players: number;
+    scenario: ScenarioCard;
+    /**
+     * Starts At
+     */
+    starts_at: string;
+};
+
+/**
  * CheckResult
  */
 export type CheckResult = {
@@ -23,6 +268,84 @@ export type CheckResult = {
 };
 
 /**
+ * ClaimGuestIn
+ */
+export type ClaimGuestIn = {
+    /**
+     * Guest Token
+     */
+    guest_token: string;
+};
+
+/**
+ * ClaimGuestOut
+ */
+export type ClaimGuestOut = {
+    /**
+     * Claimed
+     */
+    claimed: number;
+};
+
+/**
+ * Difficulty
+ *
+ * Severity of an incident. SEV1 is the hardest.
+ */
+export type Difficulty = 'sev4' | 'sev3' | 'sev2' | 'sev1';
+
+/**
+ * ExperienceLevel
+ */
+export type ExperienceLevel = 'student' | '0-2' | '2-5' | '5+';
+
+/**
+ * FieldError
+ */
+export type FieldError = {
+    /**
+     * Loc
+     */
+    loc: Array<string | number>;
+    /**
+     * Msg
+     */
+    msg: string;
+    /**
+     * Type
+     */
+    type: string;
+};
+
+/**
+ * Goal
+ */
+export type Goal = {
+    /**
+     * Detail
+     */
+    detail: string;
+    /**
+     * Title
+     */
+    title: string;
+};
+
+/**
+ * GuestTokenOut
+ */
+export type GuestTokenOut = {
+    /**
+     * Expires At
+     */
+    expires_at: string;
+    /**
+     * Token
+     */
+    token: string;
+};
+
+/**
  * Health
  */
 export type Health = {
@@ -34,6 +357,198 @@ export type Health = {
      * Version
      */
     version?: string;
+};
+
+/**
+ * Me
+ */
+export type Me = {
+    /**
+     * Avatar Url
+     */
+    avatar_url: string | null;
+    /**
+     * Country
+     */
+    country: string | null;
+    /**
+     * Created At
+     */
+    created_at: string;
+    /**
+     * Display Name
+     */
+    display_name: string;
+    experience_level: ExperienceLevel | null;
+    /**
+     * Handle
+     */
+    handle: string;
+    /**
+     * Is Public
+     */
+    is_public: boolean;
+    prefs: Prefs;
+    /**
+     * Roles
+     */
+    roles: Array<string>;
+    /**
+     * User Id
+     */
+    user_id: string;
+};
+
+/**
+ * MePatch
+ *
+ * Omit a field to keep it. `country` and `experience_level` accept null to clear them;
+ * the others can't be null (the schema shows them as non-nullable).
+ */
+export type MePatch = {
+    /**
+     * Country
+     */
+    country?: string | null;
+    /**
+     * Display Name
+     */
+    display_name?: string;
+    experience_level?: ExperienceLevel | null;
+    /**
+     * Is Public
+     */
+    is_public?: boolean;
+    /**
+     * Prefs
+     */
+    prefs?: PrefsPatch;
+};
+
+/**
+ * Prefs
+ */
+export type Prefs = {
+    /**
+     * Motion
+     */
+    motion?: 'system' | 'reduce' | 'full';
+    /**
+     * Pro Mode
+     */
+    pro_mode?: boolean;
+    /**
+     * Sounds
+     */
+    sounds?: boolean;
+    streak_mode?: StreakMode;
+    /**
+     * Theme
+     */
+    theme?: 'system' | 'light' | 'dark';
+    timezone?: Timezone;
+};
+
+/**
+ * PrefsPatch
+ */
+export type PrefsPatch = {
+    /**
+     * Motion
+     */
+    motion?: 'system' | 'reduce' | 'full' | null;
+    /**
+     * Pro Mode
+     */
+    pro_mode?: boolean | null;
+    /**
+     * Sounds
+     */
+    sounds?: boolean | null;
+    streak_mode?: StreakMode | null;
+    /**
+     * Theme
+     */
+    theme?: 'system' | 'light' | 'dark' | null;
+    timezone?: Timezone | null;
+};
+
+/**
+ * Problem
+ */
+export type Problem = {
+    /**
+     * Code
+     */
+    code?: string | null;
+    /**
+     * Detail
+     */
+    detail?: string | null;
+    /**
+     * Errors
+     */
+    errors?: Array<FieldError> | null;
+    /**
+     * Instance
+     */
+    instance?: string | null;
+    /**
+     * Status
+     */
+    status: number;
+    /**
+     * Title
+     */
+    title: string;
+    /**
+     * Type
+     */
+    type?: string;
+};
+
+/**
+ * PublicProfile
+ */
+export type PublicProfile = {
+    /**
+     * Avatar Url
+     */
+    avatar_url: string | null;
+    /**
+     * Created At
+     */
+    created_at: string;
+    /**
+     * Display Name
+     */
+    display_name: string;
+    /**
+     * Handle
+     */
+    handle: string;
+    /**
+     * Ratings
+     */
+    ratings: Array<TrackRating>;
+    /**
+     * Resolved
+     */
+    resolved: number;
+};
+
+/**
+ * RatingPoint
+ */
+export type RatingPoint = {
+    /**
+     * Rating
+     */
+    rating: number;
+    /**
+     * Ts
+     */
+    ts: string;
 };
 
 /**
@@ -52,43 +567,1526 @@ export type Readiness = {
     status: 'ok' | 'degraded';
 };
 
-export type HealthzHealthzGetData = {
+/**
+ * ScenarioCard
+ */
+export type ScenarioCard = {
+    difficulty: Difficulty;
+    /**
+     * Est Minutes
+     */
+    est_minutes: number;
+    /**
+     * Progress
+     *
+     * Only for signed-in callers.
+     */
+    progress?: 'solved' | 'attempted' | 'new' | null;
+    /**
+     * Slug
+     */
+    slug: string;
+    /**
+     * Summary
+     */
+    summary: string;
+    /**
+     * Tags
+     */
+    tags: Array<string>;
+    /**
+     * Title
+     */
+    title: string;
+    /**
+     * Topic Slug
+     */
+    topic_slug: string | null;
+    /**
+     * Topic Title
+     */
+    topic_title: string | null;
+    /**
+     * Track Slug
+     */
+    track_slug: string;
+};
+
+/**
+ * ScenarioPage
+ */
+export type ScenarioPage = {
+    /**
+     * Items
+     */
+    items: Array<ScenarioCard>;
+    /**
+     * Next Cursor
+     */
+    next_cursor: string | null;
+};
+
+/**
+ * ScenarioStats
+ */
+export type ScenarioStats = {
+    /**
+     * Median Minutes
+     */
+    median_minutes: number | null;
+    /**
+     * Players
+     */
+    players: number;
+    /**
+     * Solve Rate Pct
+     *
+     * Null until enough attempts have ended.
+     */
+    solve_rate_pct: number | null;
+};
+
+/**
+ * ScenarioStatus
+ */
+export type ScenarioStatus = 'draft' | 'review' | 'published' | 'retired';
+
+/**
+ * StreakMode
+ */
+export type StreakMode = 'daily' | 'weekly';
+
+/**
+ * StreakOut
+ */
+export type StreakOut = {
+    /**
+     * Current
+     */
+    current: number;
+    /**
+     * Days
+     */
+    days: Array<string>;
+    /**
+     * Freezes
+     */
+    freezes: number;
+    /**
+     * Last Day
+     */
+    last_day: string | null;
+    /**
+     * Longest
+     */
+    longest: number;
+    mode: StreakMode;
+    /**
+     * Window Start
+     */
+    window_start: string;
+};
+
+/**
+ * SystemNode
+ */
+export type SystemNode = {
+    /**
+     * Kind
+     */
+    kind: 'api' | 'worker' | 'db' | 'cache' | 'queue' | 'lb';
+    /**
+     * Name
+     */
+    name: string;
+    /**
+     * Note
+     */
+    note: string;
+    /**
+     * Role
+     */
+    role?: 'path' | 'side';
+};
+
+/**
+ * Timezone
+ */
+export type Timezone = 'Africa/Abidjan' | 'Africa/Accra' | 'Africa/Addis_Ababa' | 'Africa/Algiers' | 'Africa/Asmara' | 'Africa/Asmera' | 'Africa/Bamako' | 'Africa/Bangui' | 'Africa/Banjul' | 'Africa/Bissau' | 'Africa/Blantyre' | 'Africa/Brazzaville' | 'Africa/Bujumbura' | 'Africa/Cairo' | 'Africa/Casablanca' | 'Africa/Ceuta' | 'Africa/Conakry' | 'Africa/Dakar' | 'Africa/Dar_es_Salaam' | 'Africa/Djibouti' | 'Africa/Douala' | 'Africa/El_Aaiun' | 'Africa/Freetown' | 'Africa/Gaborone' | 'Africa/Harare' | 'Africa/Johannesburg' | 'Africa/Juba' | 'Africa/Kampala' | 'Africa/Khartoum' | 'Africa/Kigali' | 'Africa/Kinshasa' | 'Africa/Lagos' | 'Africa/Libreville' | 'Africa/Lome' | 'Africa/Luanda' | 'Africa/Lubumbashi' | 'Africa/Lusaka' | 'Africa/Malabo' | 'Africa/Maputo' | 'Africa/Maseru' | 'Africa/Mbabane' | 'Africa/Mogadishu' | 'Africa/Monrovia' | 'Africa/Nairobi' | 'Africa/Ndjamena' | 'Africa/Niamey' | 'Africa/Nouakchott' | 'Africa/Ouagadougou' | 'Africa/Porto-Novo' | 'Africa/Sao_Tome' | 'Africa/Timbuktu' | 'Africa/Tripoli' | 'Africa/Tunis' | 'Africa/Windhoek' | 'America/Adak' | 'America/Anchorage' | 'America/Anguilla' | 'America/Antigua' | 'America/Araguaina' | 'America/Argentina/Buenos_Aires' | 'America/Argentina/Catamarca' | 'America/Argentina/ComodRivadavia' | 'America/Argentina/Cordoba' | 'America/Argentina/Jujuy' | 'America/Argentina/La_Rioja' | 'America/Argentina/Mendoza' | 'America/Argentina/Rio_Gallegos' | 'America/Argentina/Salta' | 'America/Argentina/San_Juan' | 'America/Argentina/San_Luis' | 'America/Argentina/Tucuman' | 'America/Argentina/Ushuaia' | 'America/Aruba' | 'America/Asuncion' | 'America/Atikokan' | 'America/Atka' | 'America/Bahia' | 'America/Bahia_Banderas' | 'America/Barbados' | 'America/Belem' | 'America/Belize' | 'America/Blanc-Sablon' | 'America/Boa_Vista' | 'America/Bogota' | 'America/Boise' | 'America/Buenos_Aires' | 'America/Cambridge_Bay' | 'America/Campo_Grande' | 'America/Cancun' | 'America/Caracas' | 'America/Catamarca' | 'America/Cayenne' | 'America/Cayman' | 'America/Chicago' | 'America/Chihuahua' | 'America/Ciudad_Juarez' | 'America/Coral_Harbour' | 'America/Cordoba' | 'America/Costa_Rica' | 'America/Coyhaique' | 'America/Creston' | 'America/Cuiaba' | 'America/Curacao' | 'America/Danmarkshavn' | 'America/Dawson' | 'America/Dawson_Creek' | 'America/Denver' | 'America/Detroit' | 'America/Dominica' | 'America/Edmonton' | 'America/Eirunepe' | 'America/El_Salvador' | 'America/Ensenada' | 'America/Fort_Nelson' | 'America/Fort_Wayne' | 'America/Fortaleza' | 'America/Glace_Bay' | 'America/Godthab' | 'America/Goose_Bay' | 'America/Grand_Turk' | 'America/Grenada' | 'America/Guadeloupe' | 'America/Guatemala' | 'America/Guayaquil' | 'America/Guyana' | 'America/Halifax' | 'America/Havana' | 'America/Hermosillo' | 'America/Indiana/Indianapolis' | 'America/Indiana/Knox' | 'America/Indiana/Marengo' | 'America/Indiana/Petersburg' | 'America/Indiana/Tell_City' | 'America/Indiana/Vevay' | 'America/Indiana/Vincennes' | 'America/Indiana/Winamac' | 'America/Indianapolis' | 'America/Inuvik' | 'America/Iqaluit' | 'America/Jamaica' | 'America/Jujuy' | 'America/Juneau' | 'America/Kentucky/Louisville' | 'America/Kentucky/Monticello' | 'America/Knox_IN' | 'America/Kralendijk' | 'America/La_Paz' | 'America/Lima' | 'America/Los_Angeles' | 'America/Louisville' | 'America/Lower_Princes' | 'America/Maceio' | 'America/Managua' | 'America/Manaus' | 'America/Marigot' | 'America/Martinique' | 'America/Matamoros' | 'America/Mazatlan' | 'America/Mendoza' | 'America/Menominee' | 'America/Merida' | 'America/Metlakatla' | 'America/Mexico_City' | 'America/Miquelon' | 'America/Moncton' | 'America/Monterrey' | 'America/Montevideo' | 'America/Montreal' | 'America/Montserrat' | 'America/Nassau' | 'America/New_York' | 'America/Nipigon' | 'America/Nome' | 'America/Noronha' | 'America/North_Dakota/Beulah' | 'America/North_Dakota/Center' | 'America/North_Dakota/New_Salem' | 'America/Nuuk' | 'America/Ojinaga' | 'America/Panama' | 'America/Pangnirtung' | 'America/Paramaribo' | 'America/Phoenix' | 'America/Port-au-Prince' | 'America/Port_of_Spain' | 'America/Porto_Acre' | 'America/Porto_Velho' | 'America/Puerto_Rico' | 'America/Punta_Arenas' | 'America/Rainy_River' | 'America/Rankin_Inlet' | 'America/Recife' | 'America/Regina' | 'America/Resolute' | 'America/Rio_Branco' | 'America/Rosario' | 'America/Santa_Isabel' | 'America/Santarem' | 'America/Santiago' | 'America/Santo_Domingo' | 'America/Sao_Paulo' | 'America/Scoresbysund' | 'America/Shiprock' | 'America/Sitka' | 'America/St_Barthelemy' | 'America/St_Johns' | 'America/St_Kitts' | 'America/St_Lucia' | 'America/St_Thomas' | 'America/St_Vincent' | 'America/Swift_Current' | 'America/Tegucigalpa' | 'America/Thule' | 'America/Thunder_Bay' | 'America/Tijuana' | 'America/Toronto' | 'America/Tortola' | 'America/Vancouver' | 'America/Virgin' | 'America/Whitehorse' | 'America/Winnipeg' | 'America/Yakutat' | 'America/Yellowknife' | 'Antarctica/Casey' | 'Antarctica/Davis' | 'Antarctica/DumontDUrville' | 'Antarctica/Macquarie' | 'Antarctica/Mawson' | 'Antarctica/McMurdo' | 'Antarctica/Palmer' | 'Antarctica/Rothera' | 'Antarctica/South_Pole' | 'Antarctica/Syowa' | 'Antarctica/Troll' | 'Antarctica/Vostok' | 'Arctic/Longyearbyen' | 'Asia/Aden' | 'Asia/Almaty' | 'Asia/Amman' | 'Asia/Anadyr' | 'Asia/Aqtau' | 'Asia/Aqtobe' | 'Asia/Ashgabat' | 'Asia/Ashkhabad' | 'Asia/Atyrau' | 'Asia/Baghdad' | 'Asia/Bahrain' | 'Asia/Baku' | 'Asia/Bangkok' | 'Asia/Barnaul' | 'Asia/Beirut' | 'Asia/Bishkek' | 'Asia/Brunei' | 'Asia/Calcutta' | 'Asia/Chita' | 'Asia/Choibalsan' | 'Asia/Chongqing' | 'Asia/Chungking' | 'Asia/Colombo' | 'Asia/Dacca' | 'Asia/Damascus' | 'Asia/Dhaka' | 'Asia/Dili' | 'Asia/Dubai' | 'Asia/Dushanbe' | 'Asia/Famagusta' | 'Asia/Gaza' | 'Asia/Harbin' | 'Asia/Hebron' | 'Asia/Ho_Chi_Minh' | 'Asia/Hong_Kong' | 'Asia/Hovd' | 'Asia/Irkutsk' | 'Asia/Istanbul' | 'Asia/Jakarta' | 'Asia/Jayapura' | 'Asia/Jerusalem' | 'Asia/Kabul' | 'Asia/Kamchatka' | 'Asia/Karachi' | 'Asia/Kashgar' | 'Asia/Kathmandu' | 'Asia/Katmandu' | 'Asia/Khandyga' | 'Asia/Kolkata' | 'Asia/Krasnoyarsk' | 'Asia/Kuala_Lumpur' | 'Asia/Kuching' | 'Asia/Kuwait' | 'Asia/Macao' | 'Asia/Macau' | 'Asia/Magadan' | 'Asia/Makassar' | 'Asia/Manila' | 'Asia/Muscat' | 'Asia/Nicosia' | 'Asia/Novokuznetsk' | 'Asia/Novosibirsk' | 'Asia/Omsk' | 'Asia/Oral' | 'Asia/Phnom_Penh' | 'Asia/Pontianak' | 'Asia/Pyongyang' | 'Asia/Qatar' | 'Asia/Qostanay' | 'Asia/Qyzylorda' | 'Asia/Rangoon' | 'Asia/Riyadh' | 'Asia/Saigon' | 'Asia/Sakhalin' | 'Asia/Samarkand' | 'Asia/Seoul' | 'Asia/Shanghai' | 'Asia/Singapore' | 'Asia/Srednekolymsk' | 'Asia/Taipei' | 'Asia/Tashkent' | 'Asia/Tbilisi' | 'Asia/Tehran' | 'Asia/Tel_Aviv' | 'Asia/Thimbu' | 'Asia/Thimphu' | 'Asia/Tokyo' | 'Asia/Tomsk' | 'Asia/Ujung_Pandang' | 'Asia/Ulaanbaatar' | 'Asia/Ulan_Bator' | 'Asia/Urumqi' | 'Asia/Ust-Nera' | 'Asia/Vientiane' | 'Asia/Vladivostok' | 'Asia/Yakutsk' | 'Asia/Yangon' | 'Asia/Yekaterinburg' | 'Asia/Yerevan' | 'Atlantic/Azores' | 'Atlantic/Bermuda' | 'Atlantic/Canary' | 'Atlantic/Cape_Verde' | 'Atlantic/Faeroe' | 'Atlantic/Faroe' | 'Atlantic/Jan_Mayen' | 'Atlantic/Madeira' | 'Atlantic/Reykjavik' | 'Atlantic/South_Georgia' | 'Atlantic/St_Helena' | 'Atlantic/Stanley' | 'Australia/ACT' | 'Australia/Adelaide' | 'Australia/Brisbane' | 'Australia/Broken_Hill' | 'Australia/Canberra' | 'Australia/Currie' | 'Australia/Darwin' | 'Australia/Eucla' | 'Australia/Hobart' | 'Australia/LHI' | 'Australia/Lindeman' | 'Australia/Lord_Howe' | 'Australia/Melbourne' | 'Australia/NSW' | 'Australia/North' | 'Australia/Perth' | 'Australia/Queensland' | 'Australia/South' | 'Australia/Sydney' | 'Australia/Tasmania' | 'Australia/Victoria' | 'Australia/West' | 'Australia/Yancowinna' | 'Brazil/Acre' | 'Brazil/DeNoronha' | 'Brazil/East' | 'Brazil/West' | 'CET' | 'CST6CDT' | 'Canada/Atlantic' | 'Canada/Central' | 'Canada/Eastern' | 'Canada/Mountain' | 'Canada/Newfoundland' | 'Canada/Pacific' | 'Canada/Saskatchewan' | 'Canada/Yukon' | 'Chile/Continental' | 'Chile/EasterIsland' | 'Cuba' | 'EET' | 'EST' | 'EST5EDT' | 'Egypt' | 'Eire' | 'Etc/GMT' | 'Etc/GMT+0' | 'Etc/GMT+1' | 'Etc/GMT+10' | 'Etc/GMT+11' | 'Etc/GMT+12' | 'Etc/GMT+2' | 'Etc/GMT+3' | 'Etc/GMT+4' | 'Etc/GMT+5' | 'Etc/GMT+6' | 'Etc/GMT+7' | 'Etc/GMT+8' | 'Etc/GMT+9' | 'Etc/GMT-0' | 'Etc/GMT-1' | 'Etc/GMT-10' | 'Etc/GMT-11' | 'Etc/GMT-12' | 'Etc/GMT-13' | 'Etc/GMT-14' | 'Etc/GMT-2' | 'Etc/GMT-3' | 'Etc/GMT-4' | 'Etc/GMT-5' | 'Etc/GMT-6' | 'Etc/GMT-7' | 'Etc/GMT-8' | 'Etc/GMT-9' | 'Etc/GMT0' | 'Etc/Greenwich' | 'Etc/UCT' | 'Etc/UTC' | 'Etc/Universal' | 'Etc/Zulu' | 'Europe/Amsterdam' | 'Europe/Andorra' | 'Europe/Astrakhan' | 'Europe/Athens' | 'Europe/Belfast' | 'Europe/Belgrade' | 'Europe/Berlin' | 'Europe/Bratislava' | 'Europe/Brussels' | 'Europe/Bucharest' | 'Europe/Budapest' | 'Europe/Busingen' | 'Europe/Chisinau' | 'Europe/Copenhagen' | 'Europe/Dublin' | 'Europe/Gibraltar' | 'Europe/Guernsey' | 'Europe/Helsinki' | 'Europe/Isle_of_Man' | 'Europe/Istanbul' | 'Europe/Jersey' | 'Europe/Kaliningrad' | 'Europe/Kiev' | 'Europe/Kirov' | 'Europe/Kyiv' | 'Europe/Lisbon' | 'Europe/Ljubljana' | 'Europe/London' | 'Europe/Luxembourg' | 'Europe/Madrid' | 'Europe/Malta' | 'Europe/Mariehamn' | 'Europe/Minsk' | 'Europe/Monaco' | 'Europe/Moscow' | 'Europe/Nicosia' | 'Europe/Oslo' | 'Europe/Paris' | 'Europe/Podgorica' | 'Europe/Prague' | 'Europe/Riga' | 'Europe/Rome' | 'Europe/Samara' | 'Europe/San_Marino' | 'Europe/Sarajevo' | 'Europe/Saratov' | 'Europe/Simferopol' | 'Europe/Skopje' | 'Europe/Sofia' | 'Europe/Stockholm' | 'Europe/Tallinn' | 'Europe/Tirane' | 'Europe/Tiraspol' | 'Europe/Ulyanovsk' | 'Europe/Uzhgorod' | 'Europe/Vaduz' | 'Europe/Vatican' | 'Europe/Vienna' | 'Europe/Vilnius' | 'Europe/Volgograd' | 'Europe/Warsaw' | 'Europe/Zagreb' | 'Europe/Zaporozhye' | 'Europe/Zurich' | 'Factory' | 'GB' | 'GB-Eire' | 'GMT' | 'GMT+0' | 'GMT-0' | 'GMT0' | 'Greenwich' | 'HST' | 'Hongkong' | 'Iceland' | 'Indian/Antananarivo' | 'Indian/Chagos' | 'Indian/Christmas' | 'Indian/Cocos' | 'Indian/Comoro' | 'Indian/Kerguelen' | 'Indian/Mahe' | 'Indian/Maldives' | 'Indian/Mauritius' | 'Indian/Mayotte' | 'Indian/Reunion' | 'Iran' | 'Israel' | 'Jamaica' | 'Japan' | 'Kwajalein' | 'Libya' | 'MET' | 'MST' | 'MST7MDT' | 'Mexico/BajaNorte' | 'Mexico/BajaSur' | 'Mexico/General' | 'NZ' | 'NZ-CHAT' | 'Navajo' | 'PRC' | 'PST8PDT' | 'Pacific/Apia' | 'Pacific/Auckland' | 'Pacific/Bougainville' | 'Pacific/Chatham' | 'Pacific/Chuuk' | 'Pacific/Easter' | 'Pacific/Efate' | 'Pacific/Enderbury' | 'Pacific/Fakaofo' | 'Pacific/Fiji' | 'Pacific/Funafuti' | 'Pacific/Galapagos' | 'Pacific/Gambier' | 'Pacific/Guadalcanal' | 'Pacific/Guam' | 'Pacific/Honolulu' | 'Pacific/Johnston' | 'Pacific/Kanton' | 'Pacific/Kiritimati' | 'Pacific/Kosrae' | 'Pacific/Kwajalein' | 'Pacific/Majuro' | 'Pacific/Marquesas' | 'Pacific/Midway' | 'Pacific/Nauru' | 'Pacific/Niue' | 'Pacific/Norfolk' | 'Pacific/Noumea' | 'Pacific/Pago_Pago' | 'Pacific/Palau' | 'Pacific/Pitcairn' | 'Pacific/Pohnpei' | 'Pacific/Ponape' | 'Pacific/Port_Moresby' | 'Pacific/Rarotonga' | 'Pacific/Saipan' | 'Pacific/Samoa' | 'Pacific/Tahiti' | 'Pacific/Tarawa' | 'Pacific/Tongatapu' | 'Pacific/Truk' | 'Pacific/Wake' | 'Pacific/Wallis' | 'Pacific/Yap' | 'Poland' | 'Portugal' | 'ROC' | 'ROK' | 'Singapore' | 'Turkey' | 'UCT' | 'US/Alaska' | 'US/Aleutian' | 'US/Arizona' | 'US/Central' | 'US/East-Indiana' | 'US/Eastern' | 'US/Hawaii' | 'US/Indiana-Starke' | 'US/Michigan' | 'US/Mountain' | 'US/Pacific' | 'US/Samoa' | 'UTC' | 'Universal' | 'W-SU' | 'WET' | 'Zulu';
+
+/**
+ * TopicOut
+ */
+export type TopicOut = {
+    /**
+     * Has Primer
+     */
+    has_primer: boolean;
+    /**
+     * Scenarios
+     */
+    scenarios: Array<ScenarioCard>;
+    /**
+     * Slug
+     */
+    slug: string;
+    /**
+     * Title
+     */
+    title: string;
+};
+
+/**
+ * TopicProgress
+ */
+export type TopicProgress = {
+    /**
+     * Slug
+     */
+    slug: string;
+    /**
+     * Solved
+     */
+    solved: number;
+    /**
+     * Title
+     */
+    title: string;
+    /**
+     * Total
+     */
+    total: number;
+};
+
+/**
+ * TrackDetail
+ */
+export type TrackDetail = {
+    /**
+     * Icon
+     */
+    icon: 'api' | 'worker' | 'db' | 'cache' | 'queue' | 'lb';
+    /**
+     * Position
+     */
+    position: number;
+    /**
+     * Only for signed-in callers.
+     */
+    progress?: TrackProgress | null;
+    /**
+     * Scenario Count
+     */
+    scenario_count: number;
+    /**
+     * Slug
+     */
+    slug: string;
+    /**
+     * Summary
+     */
+    summary: string;
+    /**
+     * Title
+     */
+    title: string;
+    /**
+     * Topics
+     */
+    topics: Array<string>;
+    /**
+     * Topics Detail
+     */
+    topics_detail: Array<TopicOut>;
+};
+
+/**
+ * TrackProgress
+ */
+export type TrackProgress = {
+    /**
+     * Attempted
+     */
+    attempted: number;
+    /**
+     * Mastery Pct
+     */
+    mastery_pct: number;
+    /**
+     * Rating
+     */
+    rating: number | null;
+    /**
+     * Solved
+     */
+    solved: number;
+};
+
+/**
+ * TrackProgressDetail
+ */
+export type TrackProgressDetail = {
+    /**
+     * Attempted
+     */
+    attempted: number;
+    /**
+     * Mastery Pct
+     */
+    mastery_pct: number;
+    /**
+     * Solved
+     */
+    solved: number;
+    /**
+     * Topics
+     */
+    topics: Array<TopicProgress>;
+    /**
+     * Total
+     */
+    total: number;
+    /**
+     * Track Slug
+     */
+    track_slug: string;
+    /**
+     * Track Title
+     */
+    track_title: string;
+};
+
+/**
+ * TrackRating
+ */
+export type TrackRating = {
+    /**
+     * Games
+     */
+    games: number;
+    /**
+     * History
+     */
+    history: Array<RatingPoint>;
+    /**
+     * Rating
+     */
+    rating: number;
+    /**
+     * Rd
+     */
+    rd: number;
+    /**
+     * Track Slug
+     */
+    track_slug: string;
+    /**
+     * Track Title
+     */
+    track_title: string;
+};
+
+/**
+ * TrackSummary
+ */
+export type TrackSummary = {
+    /**
+     * Icon
+     */
+    icon: 'api' | 'worker' | 'db' | 'cache' | 'queue' | 'lb';
+    /**
+     * Position
+     */
+    position: number;
+    /**
+     * Only for signed-in callers.
+     */
+    progress?: TrackProgress | null;
+    /**
+     * Scenario Count
+     */
+    scenario_count: number;
+    /**
+     * Slug
+     */
+    slug: string;
+    /**
+     * Summary
+     */
+    summary: string;
+    /**
+     * Title
+     */
+    title: string;
+    /**
+     * Topics
+     */
+    topics: Array<string>;
+};
+
+export type HealthzData = {
     body?: never;
     path?: never;
     query?: never;
     url: '/healthz';
 };
 
-export type HealthzHealthzGetResponses = {
+export type HealthzResponses = {
     /**
      * Successful Response
      */
     200: Health;
 };
 
-export type HealthzHealthzGetResponse = HealthzHealthzGetResponses[keyof HealthzHealthzGetResponses];
+export type HealthzResponse = HealthzResponses[keyof HealthzResponses];
 
-export type ReadyzReadyzGetData = {
+export type ReadyzData = {
     body?: never;
     path?: never;
     query?: never;
     url: '/readyz';
 };
 
-export type ReadyzReadyzGetErrors = {
+export type ReadyzErrors = {
     /**
      * A dependency is unavailable
      */
     503: Readiness;
 };
 
-export type ReadyzReadyzGetError = ReadyzReadyzGetErrors[keyof ReadyzReadyzGetErrors];
+export type ReadyzError = ReadyzErrors[keyof ReadyzErrors];
 
-export type ReadyzReadyzGetResponses = {
+export type ReadyzResponses = {
     /**
      * Successful Response
      */
     200: Readiness;
 };
 
-export type ReadyzReadyzGetResponse = ReadyzReadyzGetResponses[keyof ReadyzReadyzGetResponses];
+export type ReadyzResponse = ReadyzResponses[keyof ReadyzResponses];
+
+export type AdminScenariosData = {
+    body?: never;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+    };
+    path?: never;
+    query?: {
+        /**
+         * Status
+         */
+        status?: ScenarioStatus | null;
+        /**
+         * Track
+         */
+        track?: string | null;
+        /**
+         * Cursor
+         */
+        cursor?: string | null;
+        /**
+         * Limit
+         */
+        limit?: number;
+    };
+    url: '/v1/admin/scenarios';
+};
+
+export type AdminScenariosErrors = {
+    /**
+     * Bad request (e.g. an invalid cursor).
+     */
+    400: Problem;
+    /**
+     * Missing or invalid credentials.
+     */
+    401: Problem;
+    /**
+     * Signed in, but not allowed.
+     */
+    403: Problem;
+    /**
+     * Not found.
+     */
+    404: Problem;
+    /**
+     * Conflict (e.g. a request with this Idempotency-Key is still running).
+     */
+    409: Problem;
+    /**
+     * The request is invalid; see `errors`.
+     */
+    422: Problem;
+    /**
+     * Rate limited; see Retry-After.
+     */
+    429: Problem;
+    /**
+     * Server error.
+     */
+    500: Problem;
+    /**
+     * Temporarily unavailable.
+     */
+    503: Problem;
+};
+
+export type AdminScenariosError = AdminScenariosErrors[keyof AdminScenariosErrors];
+
+export type AdminScenariosResponses = {
+    /**
+     * Successful Response
+     */
+    200: AdminScenarioPage;
+};
+
+export type AdminScenariosResponse = AdminScenariosResponses[keyof AdminScenariosResponses];
+
+export type DailyChallengeData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/v1/challenges/daily';
+};
+
+export type DailyChallengeErrors = {
+    /**
+     * Bad request (e.g. an invalid cursor).
+     */
+    400: Problem;
+    /**
+     * Missing or invalid credentials.
+     */
+    401: Problem;
+    /**
+     * Signed in, but not allowed.
+     */
+    403: Problem;
+    /**
+     * Not found.
+     */
+    404: Problem;
+    /**
+     * Conflict (e.g. a request with this Idempotency-Key is still running).
+     */
+    409: Problem;
+    /**
+     * The request is invalid; see `errors`.
+     */
+    422: Problem;
+    /**
+     * Rate limited; see Retry-After.
+     */
+    429: Problem;
+    /**
+     * Server error.
+     */
+    500: Problem;
+    /**
+     * Temporarily unavailable.
+     */
+    503: Problem;
+};
+
+export type DailyChallengeError = DailyChallengeErrors[keyof DailyChallengeErrors];
+
+export type DailyChallengeResponses = {
+    /**
+     * Successful Response
+     */
+    200: ChallengeOut;
+};
+
+export type DailyChallengeResponse = DailyChallengeResponses[keyof DailyChallengeResponses];
+
+export type WeeklyChallengeData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/v1/challenges/weekly';
+};
+
+export type WeeklyChallengeErrors = {
+    /**
+     * Bad request (e.g. an invalid cursor).
+     */
+    400: Problem;
+    /**
+     * Missing or invalid credentials.
+     */
+    401: Problem;
+    /**
+     * Signed in, but not allowed.
+     */
+    403: Problem;
+    /**
+     * Not found.
+     */
+    404: Problem;
+    /**
+     * Conflict (e.g. a request with this Idempotency-Key is still running).
+     */
+    409: Problem;
+    /**
+     * The request is invalid; see `errors`.
+     */
+    422: Problem;
+    /**
+     * Rate limited; see Retry-After.
+     */
+    429: Problem;
+    /**
+     * Server error.
+     */
+    500: Problem;
+    /**
+     * Temporarily unavailable.
+     */
+    503: Problem;
+};
+
+export type WeeklyChallengeError = WeeklyChallengeErrors[keyof WeeklyChallengeErrors];
+
+export type WeeklyChallengeResponses = {
+    /**
+     * Successful Response
+     */
+    200: ChallengeOut;
+};
+
+export type WeeklyChallengeResponse = WeeklyChallengeResponses[keyof WeeklyChallengeResponses];
+
+export type CreateGuestTokenData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/v1/guest-tokens';
+};
+
+export type CreateGuestTokenErrors = {
+    /**
+     * Bad request (e.g. an invalid cursor).
+     */
+    400: Problem;
+    /**
+     * Missing or invalid credentials.
+     */
+    401: Problem;
+    /**
+     * Signed in, but not allowed.
+     */
+    403: Problem;
+    /**
+     * Not found.
+     */
+    404: Problem;
+    /**
+     * Conflict (e.g. a request with this Idempotency-Key is still running).
+     */
+    409: Problem;
+    /**
+     * The request is invalid; see `errors`.
+     */
+    422: Problem;
+    /**
+     * Rate limited; see Retry-After.
+     */
+    429: Problem;
+    /**
+     * Server error.
+     */
+    500: Problem;
+    /**
+     * Temporarily unavailable.
+     */
+    503: Problem;
+};
+
+export type CreateGuestTokenError = CreateGuestTokenErrors[keyof CreateGuestTokenErrors];
+
+export type CreateGuestTokenResponses = {
+    /**
+     * Successful Response
+     */
+    201: GuestTokenOut;
+};
+
+export type CreateGuestTokenResponse = CreateGuestTokenResponses[keyof CreateGuestTokenResponses];
+
+export type GetMeData = {
+    body?: never;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+    };
+    path?: never;
+    query?: never;
+    url: '/v1/me';
+};
+
+export type GetMeErrors = {
+    /**
+     * Bad request (e.g. an invalid cursor).
+     */
+    400: Problem;
+    /**
+     * Missing or invalid credentials.
+     */
+    401: Problem;
+    /**
+     * Signed in, but not allowed.
+     */
+    403: Problem;
+    /**
+     * Not found.
+     */
+    404: Problem;
+    /**
+     * Conflict (e.g. a request with this Idempotency-Key is still running).
+     */
+    409: Problem;
+    /**
+     * The request is invalid; see `errors`.
+     */
+    422: Problem;
+    /**
+     * Rate limited; see Retry-After.
+     */
+    429: Problem;
+    /**
+     * Server error.
+     */
+    500: Problem;
+    /**
+     * Temporarily unavailable.
+     */
+    503: Problem;
+};
+
+export type GetMeError = GetMeErrors[keyof GetMeErrors];
+
+export type GetMeResponses = {
+    /**
+     * Successful Response
+     */
+    200: Me;
+};
+
+export type GetMeResponse = GetMeResponses[keyof GetMeResponses];
+
+export type PatchMeData = {
+    body: MePatch;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+    };
+    path?: never;
+    query?: never;
+    url: '/v1/me';
+};
+
+export type PatchMeErrors = {
+    /**
+     * Bad request (e.g. an invalid cursor).
+     */
+    400: Problem;
+    /**
+     * Missing or invalid credentials.
+     */
+    401: Problem;
+    /**
+     * Signed in, but not allowed.
+     */
+    403: Problem;
+    /**
+     * Not found.
+     */
+    404: Problem;
+    /**
+     * Conflict (e.g. a request with this Idempotency-Key is still running).
+     */
+    409: Problem;
+    /**
+     * The request is invalid; see `errors`.
+     */
+    422: Problem;
+    /**
+     * Rate limited; see Retry-After.
+     */
+    429: Problem;
+    /**
+     * Server error.
+     */
+    500: Problem;
+    /**
+     * Temporarily unavailable.
+     */
+    503: Problem;
+};
+
+export type PatchMeError = PatchMeErrors[keyof PatchMeErrors];
+
+export type PatchMeResponses = {
+    /**
+     * Successful Response
+     */
+    200: Me;
+};
+
+export type PatchMeResponse = PatchMeResponses[keyof PatchMeResponses];
+
+export type MyAttemptsData = {
+    body?: never;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+    };
+    path?: never;
+    query?: {
+        /**
+         * Cursor
+         */
+        cursor?: string | null;
+        /**
+         * Limit
+         */
+        limit?: number;
+    };
+    url: '/v1/me/attempts';
+};
+
+export type MyAttemptsErrors = {
+    /**
+     * Bad request (e.g. an invalid cursor).
+     */
+    400: Problem;
+    /**
+     * Missing or invalid credentials.
+     */
+    401: Problem;
+    /**
+     * Signed in, but not allowed.
+     */
+    403: Problem;
+    /**
+     * Not found.
+     */
+    404: Problem;
+    /**
+     * Conflict (e.g. a request with this Idempotency-Key is still running).
+     */
+    409: Problem;
+    /**
+     * The request is invalid; see `errors`.
+     */
+    422: Problem;
+    /**
+     * Rate limited; see Retry-After.
+     */
+    429: Problem;
+    /**
+     * Server error.
+     */
+    500: Problem;
+    /**
+     * Temporarily unavailable.
+     */
+    503: Problem;
+};
+
+export type MyAttemptsError = MyAttemptsErrors[keyof MyAttemptsErrors];
+
+export type MyAttemptsResponses = {
+    /**
+     * Successful Response
+     */
+    200: AttemptPage;
+};
+
+export type MyAttemptsResponse = MyAttemptsResponses[keyof MyAttemptsResponses];
+
+export type ClaimGuestData = {
+    body: ClaimGuestIn;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+    };
+    path?: never;
+    query?: never;
+    url: '/v1/me/claim-guest';
+};
+
+export type ClaimGuestErrors = {
+    /**
+     * Bad request (e.g. an invalid cursor).
+     */
+    400: Problem;
+    /**
+     * Missing or invalid credentials.
+     */
+    401: Problem;
+    /**
+     * Signed in, but not allowed.
+     */
+    403: Problem;
+    /**
+     * Not found.
+     */
+    404: Problem;
+    /**
+     * Conflict (e.g. a request with this Idempotency-Key is still running).
+     */
+    409: Problem;
+    /**
+     * The request is invalid; see `errors`.
+     */
+    422: Problem;
+    /**
+     * Rate limited; see Retry-After.
+     */
+    429: Problem;
+    /**
+     * Server error.
+     */
+    500: Problem;
+    /**
+     * Temporarily unavailable.
+     */
+    503: Problem;
+};
+
+export type ClaimGuestError = ClaimGuestErrors[keyof ClaimGuestErrors];
+
+export type ClaimGuestResponses = {
+    /**
+     * Successful Response
+     */
+    200: ClaimGuestOut;
+};
+
+export type ClaimGuestResponse = ClaimGuestResponses[keyof ClaimGuestResponses];
+
+export type MyProgressData = {
+    body?: never;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+    };
+    path?: never;
+    query?: never;
+    url: '/v1/me/progress';
+};
+
+export type MyProgressErrors = {
+    /**
+     * Bad request (e.g. an invalid cursor).
+     */
+    400: Problem;
+    /**
+     * Missing or invalid credentials.
+     */
+    401: Problem;
+    /**
+     * Signed in, but not allowed.
+     */
+    403: Problem;
+    /**
+     * Not found.
+     */
+    404: Problem;
+    /**
+     * Conflict (e.g. a request with this Idempotency-Key is still running).
+     */
+    409: Problem;
+    /**
+     * The request is invalid; see `errors`.
+     */
+    422: Problem;
+    /**
+     * Rate limited; see Retry-After.
+     */
+    429: Problem;
+    /**
+     * Server error.
+     */
+    500: Problem;
+    /**
+     * Temporarily unavailable.
+     */
+    503: Problem;
+};
+
+export type MyProgressError = MyProgressErrors[keyof MyProgressErrors];
+
+export type MyProgressResponses = {
+    /**
+     * Response My Progress
+     *
+     * Successful Response
+     */
+    200: Array<TrackProgressDetail>;
+};
+
+export type MyProgressResponse = MyProgressResponses[keyof MyProgressResponses];
+
+export type MyRatingsData = {
+    body?: never;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+    };
+    path?: never;
+    query?: never;
+    url: '/v1/me/ratings';
+};
+
+export type MyRatingsErrors = {
+    /**
+     * Bad request (e.g. an invalid cursor).
+     */
+    400: Problem;
+    /**
+     * Missing or invalid credentials.
+     */
+    401: Problem;
+    /**
+     * Signed in, but not allowed.
+     */
+    403: Problem;
+    /**
+     * Not found.
+     */
+    404: Problem;
+    /**
+     * Conflict (e.g. a request with this Idempotency-Key is still running).
+     */
+    409: Problem;
+    /**
+     * The request is invalid; see `errors`.
+     */
+    422: Problem;
+    /**
+     * Rate limited; see Retry-After.
+     */
+    429: Problem;
+    /**
+     * Server error.
+     */
+    500: Problem;
+    /**
+     * Temporarily unavailable.
+     */
+    503: Problem;
+};
+
+export type MyRatingsError = MyRatingsErrors[keyof MyRatingsErrors];
+
+export type MyRatingsResponses = {
+    /**
+     * Response My Ratings
+     *
+     * Successful Response
+     */
+    200: Array<TrackRating>;
+};
+
+export type MyRatingsResponse = MyRatingsResponses[keyof MyRatingsResponses];
+
+export type MyStreakData = {
+    body?: never;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+    };
+    path?: never;
+    query?: never;
+    url: '/v1/me/streak';
+};
+
+export type MyStreakErrors = {
+    /**
+     * Bad request (e.g. an invalid cursor).
+     */
+    400: Problem;
+    /**
+     * Missing or invalid credentials.
+     */
+    401: Problem;
+    /**
+     * Signed in, but not allowed.
+     */
+    403: Problem;
+    /**
+     * Not found.
+     */
+    404: Problem;
+    /**
+     * Conflict (e.g. a request with this Idempotency-Key is still running).
+     */
+    409: Problem;
+    /**
+     * The request is invalid; see `errors`.
+     */
+    422: Problem;
+    /**
+     * Rate limited; see Retry-After.
+     */
+    429: Problem;
+    /**
+     * Server error.
+     */
+    500: Problem;
+    /**
+     * Temporarily unavailable.
+     */
+    503: Problem;
+};
+
+export type MyStreakError = MyStreakErrors[keyof MyStreakErrors];
+
+export type MyStreakResponses = {
+    /**
+     * Successful Response
+     */
+    200: StreakOut;
+};
+
+export type MyStreakResponse = MyStreakResponses[keyof MyStreakResponses];
+
+export type ListScenariosData = {
+    body?: never;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+    };
+    path?: never;
+    query?: {
+        /**
+         * Track
+         */
+        track?: string | null;
+        /**
+         * Topic
+         */
+        topic?: string | null;
+        /**
+         * Difficulty
+         */
+        difficulty?: Difficulty | null;
+        /**
+         * Q
+         */
+        q?: string | null;
+        /**
+         * Cursor
+         */
+        cursor?: string | null;
+        /**
+         * Limit
+         */
+        limit?: number;
+    };
+    url: '/v1/scenarios';
+};
+
+export type ListScenariosErrors = {
+    /**
+     * Bad request (e.g. an invalid cursor).
+     */
+    400: Problem;
+    /**
+     * Missing or invalid credentials.
+     */
+    401: Problem;
+    /**
+     * Signed in, but not allowed.
+     */
+    403: Problem;
+    /**
+     * Not found.
+     */
+    404: Problem;
+    /**
+     * Conflict (e.g. a request with this Idempotency-Key is still running).
+     */
+    409: Problem;
+    /**
+     * The request is invalid; see `errors`.
+     */
+    422: Problem;
+    /**
+     * Rate limited; see Retry-After.
+     */
+    429: Problem;
+    /**
+     * Server error.
+     */
+    500: Problem;
+    /**
+     * Temporarily unavailable.
+     */
+    503: Problem;
+};
+
+export type ListScenariosError = ListScenariosErrors[keyof ListScenariosErrors];
+
+export type ListScenariosResponses = {
+    /**
+     * Successful Response
+     */
+    200: ScenarioPage;
+};
+
+export type ListScenariosResponse = ListScenariosResponses[keyof ListScenariosResponses];
+
+export type GetScenarioData = {
+    body?: never;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+    };
+    path: {
+        /**
+         * Slug
+         */
+        slug: string;
+    };
+    query?: never;
+    url: '/v1/scenarios/{slug}';
+};
+
+export type GetScenarioErrors = {
+    /**
+     * Bad request (e.g. an invalid cursor).
+     */
+    400: Problem;
+    /**
+     * Missing or invalid credentials.
+     */
+    401: Problem;
+    /**
+     * Signed in, but not allowed.
+     */
+    403: Problem;
+    /**
+     * Not found.
+     */
+    404: Problem;
+    /**
+     * Conflict (e.g. a request with this Idempotency-Key is still running).
+     */
+    409: Problem;
+    /**
+     * The request is invalid; see `errors`.
+     */
+    422: Problem;
+    /**
+     * Rate limited; see Retry-After.
+     */
+    429: Problem;
+    /**
+     * Server error.
+     */
+    500: Problem;
+    /**
+     * Temporarily unavailable.
+     */
+    503: Problem;
+};
+
+export type GetScenarioError = GetScenarioErrors[keyof GetScenarioErrors];
+
+export type GetScenarioResponses = {
+    /**
+     * Successful Response
+     */
+    200: Briefing;
+};
+
+export type GetScenarioResponse = GetScenarioResponses[keyof GetScenarioResponses];
+
+export type GetApproachesData = {
+    body?: never;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+    };
+    path: {
+        /**
+         * Slug
+         */
+        slug: string;
+    };
+    query?: never;
+    url: '/v1/scenarios/{slug}/approaches';
+};
+
+export type GetApproachesErrors = {
+    /**
+     * Bad request (e.g. an invalid cursor).
+     */
+    400: Problem;
+    /**
+     * Missing or invalid credentials.
+     */
+    401: Problem;
+    /**
+     * Signed in, but not allowed.
+     */
+    403: Problem;
+    /**
+     * Not found.
+     */
+    404: Problem;
+    /**
+     * Conflict (e.g. a request with this Idempotency-Key is still running).
+     */
+    409: Problem;
+    /**
+     * The request is invalid; see `errors`.
+     */
+    422: Problem;
+    /**
+     * Rate limited; see Retry-After.
+     */
+    429: Problem;
+    /**
+     * Server error.
+     */
+    500: Problem;
+    /**
+     * Temporarily unavailable.
+     */
+    503: Problem;
+};
+
+export type GetApproachesError = GetApproachesErrors[keyof GetApproachesErrors];
+
+export type GetApproachesResponses = {
+    /**
+     * Response Get Approaches
+     *
+     * Successful Response
+     */
+    200: Array<ApproachOut>;
+};
+
+export type GetApproachesResponse = GetApproachesResponses[keyof GetApproachesResponses];
+
+export type ListTracksData = {
+    body?: never;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+    };
+    path?: never;
+    query?: never;
+    url: '/v1/tracks';
+};
+
+export type ListTracksErrors = {
+    /**
+     * Bad request (e.g. an invalid cursor).
+     */
+    400: Problem;
+    /**
+     * Missing or invalid credentials.
+     */
+    401: Problem;
+    /**
+     * Signed in, but not allowed.
+     */
+    403: Problem;
+    /**
+     * Not found.
+     */
+    404: Problem;
+    /**
+     * Conflict (e.g. a request with this Idempotency-Key is still running).
+     */
+    409: Problem;
+    /**
+     * The request is invalid; see `errors`.
+     */
+    422: Problem;
+    /**
+     * Rate limited; see Retry-After.
+     */
+    429: Problem;
+    /**
+     * Server error.
+     */
+    500: Problem;
+    /**
+     * Temporarily unavailable.
+     */
+    503: Problem;
+};
+
+export type ListTracksError = ListTracksErrors[keyof ListTracksErrors];
+
+export type ListTracksResponses = {
+    /**
+     * Response List Tracks
+     *
+     * Successful Response
+     */
+    200: Array<TrackSummary>;
+};
+
+export type ListTracksResponse = ListTracksResponses[keyof ListTracksResponses];
+
+export type GetTrackData = {
+    body?: never;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+    };
+    path: {
+        /**
+         * Slug
+         */
+        slug: string;
+    };
+    query?: never;
+    url: '/v1/tracks/{slug}';
+};
+
+export type GetTrackErrors = {
+    /**
+     * Bad request (e.g. an invalid cursor).
+     */
+    400: Problem;
+    /**
+     * Missing or invalid credentials.
+     */
+    401: Problem;
+    /**
+     * Signed in, but not allowed.
+     */
+    403: Problem;
+    /**
+     * Not found.
+     */
+    404: Problem;
+    /**
+     * Conflict (e.g. a request with this Idempotency-Key is still running).
+     */
+    409: Problem;
+    /**
+     * The request is invalid; see `errors`.
+     */
+    422: Problem;
+    /**
+     * Rate limited; see Retry-After.
+     */
+    429: Problem;
+    /**
+     * Server error.
+     */
+    500: Problem;
+    /**
+     * Temporarily unavailable.
+     */
+    503: Problem;
+};
+
+export type GetTrackError = GetTrackErrors[keyof GetTrackErrors];
+
+export type GetTrackResponses = {
+    /**
+     * Successful Response
+     */
+    200: TrackDetail;
+};
+
+export type GetTrackResponse = GetTrackResponses[keyof GetTrackResponses];
+
+export type PublicProfileData = {
+    body?: never;
+    path: {
+        /**
+         * Handle
+         */
+        handle: string;
+    };
+    query?: never;
+    url: '/v1/users/{handle}';
+};
+
+export type PublicProfileErrors = {
+    /**
+     * Bad request (e.g. an invalid cursor).
+     */
+    400: Problem;
+    /**
+     * Missing or invalid credentials.
+     */
+    401: Problem;
+    /**
+     * Signed in, but not allowed.
+     */
+    403: Problem;
+    /**
+     * Not found.
+     */
+    404: Problem;
+    /**
+     * Conflict (e.g. a request with this Idempotency-Key is still running).
+     */
+    409: Problem;
+    /**
+     * The request is invalid; see `errors`.
+     */
+    422: Problem;
+    /**
+     * Rate limited; see Retry-After.
+     */
+    429: Problem;
+    /**
+     * Server error.
+     */
+    500: Problem;
+    /**
+     * Temporarily unavailable.
+     */
+    503: Problem;
+};
+
+export type PublicProfileError = PublicProfileErrors[keyof PublicProfileErrors];
+
+export type PublicProfileResponses = {
+    /**
+     * Successful Response
+     */
+    200: PublicProfile;
+};
+
+export type PublicProfileResponse = PublicProfileResponses[keyof PublicProfileResponses];

@@ -1,6 +1,6 @@
 # 005. Better Auth in Next.js, JWT verification in FastAPI
 
-Date: 2026-10-13 · Status: accepted (implemented in phase 2)
+Date: 2026-10-13 · Status: accepted (implemented in phase 2; details and changes in ADR 011)
 
 ## Context
 The web app owns the browser session; the Python API must authorise requests statelessly. The owner chose **GitHub sign-in only** for now.

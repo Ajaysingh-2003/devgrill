@@ -14,4 +14,6 @@ paths = [
   '''(^|/)\.devgrill/''',
   '''(^|/)storybook-static/''',
   '''(^|/)(test-results|playwright-report)/''',
+  # The local secrets file: git-ignored by design, holds generated dev secrets.
+  '''(^|/)\.env$''',
 ]

@@ -4,6 +4,8 @@ import {
   Accessibility,
   CalendarClock,
   Compass,
+  LogIn,
+  LogOut,
   Menu,
   Monitor,
   Moon,
@@ -24,6 +26,8 @@ import { useIsMac } from "@devgrill/ui/hooks/use-platform";
 import { Wordmark } from "@devgrill/ui/icons";
 import { cn } from "@devgrill/ui/lib/utils";
 import { useTheme } from "@devgrill/ui/theme";
+import { authClient } from "@/lib/auth-client";
+import type { Viewer } from "@/lib/viewer";
 
 const NAV = [
   { href: "/drills", label: "Drills", icon: Compass },
@@ -31,7 +35,11 @@ const NAV = [
   { href: "/quickfire", label: "Quick Fire", icon: Zap },
 ] as const;
 
-export function TopBar({ streakDays }: { streakDays: number }) {
+/**
+ * App shell top bar. `viewer` is undefined while the session loads (the bar renders at once
+ * and the account area fills in), null when signed out.
+ */
+export function TopBar({ viewer }: { viewer: Viewer | null | undefined }) {
   const pathname = usePathname();
   const router = useRouter();
   const { setTheme, setMotion, reducedMotion } = useTheme();
@@ -46,13 +54,21 @@ export function TopBar({ streakDays }: { streakDays: number }) {
       icon: n.icon,
       onSelect: () => router.push(n.href),
     })),
-    {
-      id: "profile",
-      group: "Go to",
-      label: "Your profile",
-      icon: User,
-      onSelect: () => router.push("/u/ajay"),
-    },
+    viewer
+      ? {
+          id: "profile",
+          group: "Go to",
+          label: "Your profile",
+          icon: User,
+          onSelect: () => router.push(`/u/${viewer.handle}`),
+        }
+      : {
+          id: "sign-in",
+          group: "Go to",
+          label: "Sign in",
+          icon: LogIn,
+          onSelect: () => router.push(`/sign-in?next=${encodeURIComponent(pathname)}`),
+        },
     {
       id: "settings",
       group: "Go to",
@@ -88,7 +104,24 @@ export function TopBar({ streakDays }: { streakDays: number }) {
       icon: Accessibility,
       onSelect: () => setMotion(reducedMotion ? "full" : "reduce"),
     },
+    ...(viewer
+      ? [
+          {
+            id: "sign-out",
+            group: "Account",
+            label: "Sign out",
+            icon: LogOut,
+            onSelect: () => void signOut(),
+          },
+        ]
+      : []),
   ];
+
+  async function signOut() {
+    await authClient.signOut();
+    router.push("/");
+    router.refresh();
+  }
 
   return (
     <header className="sticky top-0 z-[var(--z-sticky)] border-b border-border bg-canvas/90 backdrop-blur-sm">
@@ -126,15 +159,9 @@ export function TopBar({ streakDays }: { streakDays: number }) {
             <span>Search or jump to</span>
             <kbd className="ml-4 font-mono text-mono-sm">{isMac ? "⌘K" : "Ctrl K"}</kbd>
           </button>
-          <Streak days={streakDays} />
+          {viewer ? <Streak days={viewer.streak} /> : null}
           <ThemeSwitch className="hidden sm:inline-flex" />
-          <Link
-            href="/u/ajay"
-            aria-label="Your profile (AS)"
-            className="grid size-8 place-items-center rounded-full bg-brand-subtle text-label font-semibold text-brand-text"
-          >
-            AS
-          </Link>
+          <AccountButton viewer={viewer} pathname={pathname} />
           <Sheet>
             <SheetTrigger
               render={
@@ -164,11 +191,61 @@ export function TopBar({ streakDays }: { streakDays: number }) {
               <div className="px-4 pt-2">
                 <ThemeSwitch />
               </div>
+              {viewer ? (
+                <div className="px-2 pt-4">
+                  <button
+                    type="button"
+                    onClick={() => void signOut()}
+                    className="flex w-full items-center gap-3 rounded-sm px-3 py-2.5 text-body text-fg hover:bg-raised"
+                  >
+                    <LogOut className="size-4 text-fg-muted" aria-hidden="true" />
+                    Sign out
+                  </button>
+                </div>
+              ) : null}
             </SheetContent>
           </Sheet>
         </div>
       </div>
       <CommandPalette commands={commands} open={paletteOpen} onOpenChange={setPaletteOpen} />
     </header>
+  );
+}
+
+function initials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  return ((parts[0]?.[0] ?? "") + (parts.length > 1 ? (parts.at(-1)?.[0] ?? "") : "")).toUpperCase() || "?";
+}
+
+function AccountButton({ viewer, pathname }: { viewer: Viewer | null | undefined; pathname: string }) {
+  if (viewer === undefined) {
+    // Same footprint as the avatar, so nothing shifts when the session arrives.
+    return <span aria-hidden="true" className="size-8 rounded-full bg-raised" />;
+  }
+  if (viewer === null) {
+    return (
+      <Link
+        href={`/sign-in?next=${encodeURIComponent(pathname)}`}
+        className="inline-flex h-8 items-center rounded-sm px-2.5 text-label font-medium text-fg hover:bg-raised"
+      >
+        Sign in
+      </Link>
+    );
+  }
+  const label = initials(viewer.displayName);
+  return (
+    <Link
+      href={viewer.handle ? `/u/${viewer.handle}` : "/settings"}
+      aria-label={`Your profile (${label})`}
+      className="grid size-8 place-items-center overflow-hidden rounded-full bg-brand-subtle text-label font-semibold text-brand-text"
+    >
+      {viewer.avatarUrl ? (
+        // Plain img: GitHub avatars are tiny and already sized by the CDN.
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={viewer.avatarUrl} alt="" width={32} height={32} className="size-8" />
+      ) : (
+        label
+      )}
+    </Link>
   );
 }

@@ -21,6 +21,8 @@
 - Python 3.14, uv workspace, FastAPI, SQLAlchemy 2.1 async, Pydantic v2. `packages/py-core/src/devgrill/domain` must not import infrastructure.
 - Frontend: Next.js 16 App Router, React 19, Tailwind v4 tokens from packages/tokens. Never use raw colours; use semantic tokens only.
 - API changes: update OpenAPI, run `just gen`, keep the client in sync (CI fails on drift).
+- Database: models in `devgrill/infra/models`, migrations follow docs/runbooks/safe-migrations.md (generate against a scratch DB, read every line). Better Auth owns schema `auth`; app tables reference `app.profiles`, never `auth` (ADR 011).
+- Auth: never trust a client-settable field for authorization; tests use the mock GitHub (apps/web/e2e/mock-github.mjs), never real GitHub.
 - Errors are problem+json via `AppError`; log with structlog (bind request/attempt IDs).
 
 ## UI work
@@ -44,7 +46,7 @@ Design system reference: docs/design/system.md (tokens, type roles, a11y pattern
 
 ## Before you finish
 
-`just lint`, `just types`, `just test`, `just eol-check` (and `just test-int` / `just smoke` when touching services). For UI: `just test-web`, `just colors-check`, `just fmt-web-check`, and `just e2e` when pages change.
+`just lint`, `just types`, `just test`, `just eol-check` (and `just test-int` / `just smoke` when touching services or the database). For UI: `just test-web`, `just colors-check`, `just fmt-web-check`, and `just e2e` when pages change.
 
 ## Safety
 

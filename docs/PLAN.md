@@ -846,7 +846,7 @@ erDiagram
 
 | Table | Key columns | Notes |
 |---|---|---|
-| `profiles` | `user_id` PK→auth.user, `handle` unique citext, `display_name`, `avatar_url`, `country`, `experience_level` enum(student, 0-2, 2-5, 5+), `roles` text[] (user, author, reviewer, admin), `prefs` jsonb (theme, reduce_motion, sounds, pro_mode, streak_mode daily/weekly, tz, notification settings), `is_public` bool, `created_at` | Created on first login (Better Auth hook → `POST /internal/profiles`) |
+| `profiles` | `user_id` PK (Better Auth's user id; no cross-schema FK, ADR 011), `handle` unique citext, `display_name`, `avatar_url`, `country`, `experience_level` enum(student, 0-2, 2-5, 5+), `roles` text[] (user, author, reviewer, admin), `prefs` jsonb (theme, reduce_motion, sounds, pro_mode, streak_mode daily/weekly, tz, notification settings), `is_public` bool, `created_at` | Created on first login (Better Auth hook → `POST /internal/profiles`) |
 | `entitlements` | `user_id`, `plan` enum(free, pro, team), `limits` jsonb (concurrent_sandboxes, daily_minutes, ai_msgs_per_day), `valid_until` | Phase 9+ billing; free defaults until then |
 
 **Catalog and content**
@@ -903,7 +903,7 @@ erDiagram
 | `content_reviews` | `scenario_version_id`, `reviewer_id`, `decision`, `notes` |
 | `feature_flags` | `key`, `enabled`, `rules` jsonb (simple; swap for OpenFeature or PostHog flags later) |
 | `audit_log` | `actor_id`, `action`, `target`, `data`, `ts`. Admin and content actions |
-| `idempotency_keys` | `key`, `user_id`, `request_hash`, `response`, `expires_at` (or keep in Valkey) |
+| `idempotency_keys` | Kept in Valkey (24 h TTL), not a table (ADR 011) |
 
 ### 9.3 Indexes, constraints and data rules
 
@@ -1528,7 +1528,7 @@ Wk:  1  2 | 3  4  5 | 6  7  8 | 9 10 11 12 | 13 14 15 16 17 | 18 19 20 | 21 22 2
 
 ---
 
-### Phase 2: Domain, database, auth and API skeleton (weeks 6–8)
+### Phase 2: Domain, database, auth and API skeleton (weeks 6–8) ✅ done 2026-10-13 (see docs/qc/phase-2.md and ADR 011)
 
 **Goal:** real users can sign in, and the catalog and progress APIs serve real data from Postgres to the UI.
 

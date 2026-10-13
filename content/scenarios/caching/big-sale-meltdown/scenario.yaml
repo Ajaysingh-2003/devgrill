@@ -1,0 +1,38 @@
+# Scenario metadata and briefing. Phase 3 adds faults, probes, hints and the rubric.
+slug: big-sale-meltdown
+title: The Big Sale Meltdown
+track: caching
+topic: stampedes
+difficulty: sev2
+est_minutes: 25
+status: published
+summary: Product pages die the minute a sale starts
+tags:
+  - redis
+  - postgres
+  - deploys
+base_app: shopkart
+briefing:
+  story: You are on call for ShopKart. At 8 p.m. the biggest sale of the year goes live. You have just
+    finished dinner when your phone buzzes.
+  system:
+    - kind: lb
+      name: load-gen
+      note: sale traffic
+      role: path
+    - kind: api
+      name: product-api
+      note: Python, 4 pods
+      role: path
+    - kind: cache
+      name: redis
+      note: product cache
+      role: path
+    - kind: db
+      name: postgres
+      note: products, inventory
+      role: path
+    - kind: worker
+      name: worker
+      note: orders queue
+      role: side

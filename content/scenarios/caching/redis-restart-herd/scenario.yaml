@@ -1,0 +1,33 @@
+# Scenario metadata and briefing. Phase 3 adds faults, probes, hints and the rubric.
+slug: redis-restart-herd
+title: Redis restart herd
+track: caching
+topic: stampedes
+difficulty: sev2
+est_minutes: 25
+status: published
+summary: A routine cache restart takes the site down
+tags:
+  - redis
+  - postgres
+base_app: shopkart
+briefing:
+  story: Platform restarted the Redis cluster for a minor version bump. It was supposed to take thirty
+    seconds. The site has been down for six minutes.
+  system:
+    - kind: lb
+      name: load-gen
+      note: steady traffic
+      role: path
+    - kind: api
+      name: product-api
+      note: Python, 4 pods
+      role: path
+    - kind: cache
+      name: redis
+      note: just restarted
+      role: path
+    - kind: db
+      name: postgres
+      note: products
+      role: path

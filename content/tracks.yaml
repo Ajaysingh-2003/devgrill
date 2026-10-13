@@ -1,0 +1,86 @@
+# Tracks and topics (docs/PLAN.md §11.5). Order here is the order in the library.
+# `icon` is a service icon: api, worker, db, cache, queue, lb.
+# Draft tracks are loaded but hidden until they have published scenarios.
+tracks:
+  - slug: databases
+    title: Databases
+    icon: db
+    summary: Most outages end at the database. Tell a slow query from a starved pool.
+    topics:
+      - { slug: indexes, title: Indexes }
+      - { slug: connection-pools, title: Connection pools }
+      - { slug: locks, title: Locks }
+      - { slug: migrations, title: Migrations }
+      - { slug: replication, title: Replication }
+
+  - slug: caching
+    title: Caching
+    icon: cache
+    summary: Caches hide problems until the moment they stop working.
+    topics:
+      - slug: stampedes
+        title: Stampedes
+        primer: |
+          A cache stampede happens when many requests miss the cache at the same moment and all
+          go to the database together: after a restart, a deploy that changes keys, or one hot
+          key expiring under load. Fixes spread the misses out (jittered TTLs, early refresh) or
+          collapse them into one (request coalescing, a lock per key).
+      - { slug: invalidation, title: Invalidation }
+      - { slug: hot-keys, title: Hot keys }
+      - { slug: eviction, title: Eviction }
+
+  - slug: queues
+    title: Queues and async
+    icon: queue
+    summary: Nothing is down, yet nothing is happening.
+    topics:
+      - { slug: poison-messages, title: Poison messages }
+      - { slug: consumer-lag, title: Consumer lag }
+      - { slug: idempotency, title: Idempotency }
+      - { slug: retries, title: Retries }
+
+  - slug: concurrency
+    title: Concurrency
+    icon: worker
+    summary: Bugs that vanish when you add a print statement.
+    topics:
+      - { slug: race-conditions, title: Race conditions }
+      - { slug: deadlocks, title: Deadlocks }
+      - { slug: double-spend, title: Double spend }
+
+  - slug: memory
+    title: Memory and CPU
+    icon: api
+    summary: Read the shape of a graph and know what the process is doing.
+    topics:
+      - { slug: leaks, title: Leaks }
+      - { slug: runaway-regex, title: Runaway regex }
+      - { slug: thread-starvation, title: Thread starvation }
+
+  - slug: networking
+    title: Networking
+    icon: lb
+    summary: One slow dependency decides whether everything else falls over too.
+    topics:
+      - { slug: timeouts, title: Timeouts }
+      - { slug: retry-storms, title: Retry storms }
+      - { slug: dns, title: DNS }
+      - { slug: circuit-breakers, title: Circuit breakers }
+
+  - slug: deploys
+    title: Deploys and config
+    icon: worker
+    status: draft
+    summary: The change that was supposed to be safe.
+    topics:
+      - { slug: bad-config, title: Bad config }
+      - { slug: feature-flags, title: Feature flags }
+
+  - slug: distributed
+    title: Distributed systems
+    icon: lb
+    status: draft
+    summary: Every node is right, and the system is still wrong.
+    topics:
+      - { slug: clocks, title: Clocks }
+      - { slug: partitions, title: Partitions }

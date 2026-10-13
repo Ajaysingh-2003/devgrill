@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from http import HTTPStatus
 from typing import Any
 
@@ -34,6 +35,28 @@ class Problem(BaseModel):
     errors: list[FieldError] | None = None
 
 
+def _problem(description: str) -> dict[str, Any]:
+    return {
+        "description": description,
+        "content": {PROBLEM_CONTENT_TYPE: {"schema": {"$ref": "#/components/schemas/Problem"}}},
+    }
+
+
+#: Error responses every /v1 operation can return, documented so clients (and Schemathesis)
+#: know their shape. Each is RFC 9457 problem+json with a machine-readable `code`.
+PROBLEM_RESPONSES: dict[int | str, dict[str, Any]] = {
+    400: _problem("Bad request (e.g. an invalid cursor)."),
+    401: _problem("Missing or invalid credentials."),
+    403: _problem("Signed in, but not allowed."),
+    404: _problem("Not found."),
+    409: _problem("Conflict (e.g. a request with this Idempotency-Key is still running)."),
+    422: _problem("The request is invalid; see `errors`."),
+    429: _problem("Rate limited; see Retry-After."),
+    500: _problem("Server error."),
+    503: _problem("Temporarily unavailable."),
+}
+
+
 def problem_response(
     status: int,
     *,
@@ -63,18 +86,47 @@ def problem_response(
 class AppError(Exception):
     """Raise from routes/services for an expected, client-facing error."""
 
-    def __init__(self, status: int, code: str, detail: str | None = None) -> None:
+    def __init__(
+        self,
+        status: int,
+        code: str,
+        detail: str | None = None,
+        *,
+        headers: dict[str, str] | None = None,
+    ) -> None:
         super().__init__(detail or code)
         self.status = status
         self.code = code
         self.detail = detail
+        self.headers = headers
+
+
+def _allowed_methods(request: Request) -> str:
+    patterns: list[tuple[re.Pattern[str], str]] | None = getattr(
+        request.app.state, "allow_patterns", None
+    )
+    if patterns is None:
+        patterns = []
+        for template, operations in request.app.openapi().get("paths", {}).items():
+            regex = "[^/]+".join(re.escape(part) for part in re.split(r"\{[^/]+?\}", template))
+            methods = ", ".join(sorted(m.upper() for m in operations))
+            patterns.append((re.compile(f"^{regex}$"), methods))
+        request.app.state.allow_patterns = patterns
+    for pattern, methods in patterns:
+        if pattern.match(request.url.path):
+            return methods
+    return ""
 
 
 def install_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(AppError)
     async def _app_error(request: Request, exc: AppError) -> JSONResponse:
         return problem_response(
-            exc.status, code=exc.code, detail=exc.detail, instance=request.url.path
+            exc.status,
+            code=exc.code,
+            detail=exc.detail,
+            instance=request.url.path,
+            headers=exc.headers,
         )
 
     @app.exception_handler(StarletteHTTPException)
@@ -82,6 +134,10 @@ def install_error_handlers(app: FastAPI) -> None:
         code = HTTPStatus(exc.status_code).name.lower()
         detail = exc.detail if isinstance(exc.detail, str) else None
         headers: Any = getattr(exc, "headers", None)
+        if exc.status_code == 405:
+            # Starlette lists only the first matching route's methods (GET /me and PATCH /me
+            # are separate routes); the OpenAPI paths know every method for the path.
+            headers = {**(headers or {}), "Allow": _allowed_methods(request)}
         return problem_response(
             exc.status_code, code=code, detail=detail, instance=request.url.path, headers=headers
         )
