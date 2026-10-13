@@ -4,17 +4,57 @@
   "private": true,
   "type": "module",
   "exports": {
-    "./lib/utils": "./src/lib/utils.ts"
+    "./components/*": "./src/components/*.tsx",
+    "./lib/*": "./src/lib/*.ts",
+    "./hooks/*": "./src/hooks/*.ts",
+    "./theme": "./src/theme/index.ts",
+    "./motion": "./src/motion/index.ts",
+    "./icons": "./src/icons/index.tsx",
+    "./styles/*": "./src/styles/*",
+    "./theme/motion": "./src/theme/motion-provider.tsx"
   },
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "storybook": "storybook dev --port 6006 --no-open",
+    "build-storybook": "storybook build --quiet"
   },
   "dependencies": {
-    "clsx": "^2.1.1",
-    "tailwind-merge": "^3.3.1"
+    "@base-ui/react": "1.9.0",
+    "@devgrill/tokens": "workspace:*",
+    "class-variance-authority": "0.7.1",
+    "clsx": "2.1.1",
+    "cmdk": "1.1.1",
+    "lucide-react": "1.56.0",
+    "motion": "14.2.0",
+    "react-resizable-panels": "4.14.5",
+    "sonner": "2.0.8",
+    "tailwind-merge": "3.7.0",
+    "uplot": "1.6.32"
   },
   "devDependencies": {
     "@devgrill/config": "workspace:*",
-    "typescript": "~6.0.3"
+    "@storybook/addon-a11y": "10.6.2",
+    "@storybook/addon-themes": "10.6.2",
+    "@storybook/addon-vitest": "10.6.2",
+    "@storybook/react-vite": "10.6.2",
+    "@tailwindcss/vite": "4.3.3",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "6.1.2",
+    "@vitest/browser-playwright": "5.0.4",
+    "playwright": "1.64.0",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "storybook": "10.6.2",
+    "tailwindcss": "4.3.3",
+    "tw-animate-css": "1.4.0",
+    "typescript": "~6.0.3",
+    "vite": "8.3.4",
+    "vitest": "5.0.4"
+  },
+  "peerDependencies": {
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
   }
 }

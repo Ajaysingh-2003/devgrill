@@ -7,6 +7,7 @@ packages:
 
 # Native build scripts allowed to run on install (pnpm blocks them by default).
 allowBuilds:
+  esbuild: true # Vite/Storybook bundler; postinstall verifies its native binary
   sharp: false
   unrs-resolver: false
 
@@ -20,3 +21,19 @@ overrides:
 auditConfig:
   ignoreGhsas:
     - GHSA-vfj7-8cjw-p6xm
+
+minimumReleaseAgeExclude:
+  - framer-motion@14.2.0
+  - lucide-react@1.56.0
+  - motion-dom@14.2.0
+  - motion-utils@14.1.1
+  - motion@14.2.0
+  - react-resizable-panels@4.14.5
+  - "@storybook/addon-a11y@10.6.2"
+  - "@storybook/addon-themes@10.6.2"
+  - "@storybook/addon-vitest@10.6.2"
+  - "@storybook/builder-vite@10.6.2"
+  - "@storybook/react-dom-shim@10.6.2"
+  - "@storybook/react-vite@10.6.2"
+  - "@storybook/react@10.6.2"
+  - storybook@10.6.2

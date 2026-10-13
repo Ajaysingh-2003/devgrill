@@ -1,0 +1,20 @@
+{
+  "$schema": "https://ui.shadcn.com/schema.json",
+  "style": "base-nova",
+  "rsc": true,
+  "tsx": true,
+  "tailwind": {
+    "config": "",
+    "css": "src/styles/ui.css",
+    "baseColor": "neutral",
+    "cssVariables": true
+  },
+  "iconLibrary": "lucide",
+  "aliases": {
+    "components": "@devgrill/ui/components",
+    "ui": "@devgrill/ui/components/ui",
+    "utils": "@devgrill/ui/lib/utils",
+    "lib": "@devgrill/ui/lib",
+    "hooks": "@devgrill/ui/hooks"
+  }
+}

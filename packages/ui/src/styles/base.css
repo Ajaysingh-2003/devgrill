@@ -1,0 +1,77 @@
+/*
+ * DevGrill base layer, shared by the web app and Storybook.
+ * Import after "tailwindcss", "tw-animate-css" and the @devgrill/tokens stylesheets.
+ */
+
+@layer base {
+  *,
+  ::before,
+  ::after {
+    border-color: var(--border);
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+    text-rendering: optimizeLegibility;
+    /* Keep focused and fragment targets clear of the 56px sticky top bar (WCAG 2.4.11). */
+    scroll-padding-top: 4.5rem;
+  }
+
+  body {
+    /* @theme inline values are not emitted as variables, so apply the utilities. */
+    @apply bg-canvas font-sans text-body text-fg;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* Headings break into even lines instead of leaving a single word on the last one. */
+  h1,
+  h2,
+  h3 {
+    text-wrap: balance;
+  }
+
+  /* Numbers that update never jitter. */
+  time,
+  kbd,
+  code,
+  pre,
+  samp {
+    font-variant-numeric: tabular-nums;
+  }
+
+  ::selection {
+    background: var(--brand-subtle);
+    color: var(--text);
+  }
+
+  /* One visible focus style everywhere; components may refine it. */
+  :focus-visible {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
+}
+
+/*
+ * Reduced motion: OS setting (unless the user chose "full" in settings) or the in-app toggle.
+ * Covers third-party durations (tw-animate, Base UI) as well as our tokens.
+ */
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-motion="full"]) *,
+  :root:not([data-motion="full"]) ::before,
+  :root:not([data-motion="full"]) ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+:root[data-motion="reduce"] *,
+:root[data-motion="reduce"] ::before,
+:root[data-motion="reduce"] ::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+  scroll-behavior: auto !important;
+}

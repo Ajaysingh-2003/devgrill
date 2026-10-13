@@ -5,7 +5,7 @@ name: devgrill-dev
 
 services:
   postgres:
-    image: pgvector/pgvector:0.8.7-pg18-trixie   # Postgres 18.x + pgvector 0.8.7
+    image: pgvector/pgvector:0.8.7-pg18-trixie # Postgres 18.x + pgvector 0.8.7
     environment:
       POSTGRES_USER: devgrill
       POSTGRES_PASSWORD: devgrill
@@ -30,12 +30,12 @@ services:
       retries: 20
 
   temporal:
-    image: temporalio/temporal:1.9.1             # Temporal CLI 1.9.1 = Server 1.32.0, UI 2.54.1
+    image: temporalio/temporal:1.9.1 # Temporal CLI 1.9.1 = Server 1.32.0, UI 2.54.1
     command: ["server", "start-dev", "--ip", "0.0.0.0", "--db-filename", "/home/temporal/temporal.db"]
     ports:
-      - "127.0.0.1:7233:7233"                    # gRPC frontend
-      - "127.0.0.1:8233:8233"                    # Web UI → http://localhost:8233
-    volumes: [temporal:/home/temporal]          # image user (uid 1000) owns this path
+      - "127.0.0.1:7233:7233" # gRPC frontend
+      - "127.0.0.1:8233:8233" # Web UI → http://localhost:8233
+    volumes: [temporal:/home/temporal] # image user (uid 1000) owns this path
     healthcheck:
       test: ["CMD", "temporal", "operator", "cluster", "health", "--address", "127.0.0.1:7233"]
       interval: 5s
@@ -61,8 +61,8 @@ services:
   mailpit:
     image: axllent/mailpit:v1.31.5
     ports:
-      - "127.0.0.1:1025:1025"                    # SMTP
-      - "127.0.0.1:8025:8025"                    # Web UI → http://localhost:8025
+      - "127.0.0.1:1025:1025" # SMTP
+      - "127.0.0.1:8025:8025" # Web UI → http://localhost:8025
     healthcheck:
       test: ["CMD", "/mailpit", "readyz"]
       interval: 5s

@@ -136,5 +136,43 @@ eol-fix:
 build:
     pnpm build
 
-# Everything CI runs locally (except the e2e smoke).
-check: lint types test eol-check gen-check
+# ---------------------------------------------------------- design system
+
+# Regenerate design tokens (fails if any colour pair misses its contrast target).
+tokens:
+    pnpm --filter @devgrill/tokens build
+
+# Component tests: unit + every Storybook story in Chromium with an axe audit.
+test-web:
+    pnpm test
+
+# Storybook on http://localhost:6006
+storybook:
+    pnpm storybook
+
+# Static Storybook build (packages/ui/storybook-static).
+storybook-build:
+    pnpm --filter @devgrill/ui build-storybook
+
+# Browser e2e: axe on every route in both themes + keyboard flows (builds the web app first).
+e2e: build
+    pnpm e2e
+
+# Fail on raw colour values outside the token system.
+colors-check:
+    pnpm colors:check
+
+# Format TypeScript, CSS, JSON and Markdown with Prettier.
+fmt-web:
+    pnpm format
+
+# Fail if Prettier would change anything.
+fmt-web-check:
+    pnpm format:check
+
+# Screenshot matrix for design QC (needs a running web app): just shots docs/design/qc/phase-1 / /drills
+shots out +paths:
+    node scripts/screenshots.mjs {{out}} {{paths}}
+
+# Everything CI runs locally (except the e2e and the service smoke).
+check: lint types test test-web eol-check gen-check colors-check fmt-web-check

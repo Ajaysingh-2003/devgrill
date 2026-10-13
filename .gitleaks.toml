@@ -12,4 +12,6 @@ paths = [
   '''(^|/)\.next/''',
   '''(^|/)\.turbo/''',
   '''(^|/)\.devgrill/''',
+  '''(^|/)storybook-static/''',
+  '''(^|/)(test-results|playwright-report)/''',
 ]

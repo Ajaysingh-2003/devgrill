@@ -4,6 +4,20 @@
   "private": true,
   "type": "module",
   "exports": {
-    "./tokens.css": "./src/tokens.css"
+    ".": "./dist/tokens.ts",
+    "./tokens.css": "./dist/tokens.css",
+    "./theme.css": "./dist/theme.css",
+    "./contrast.json": "./dist/contrast.json"
+  },
+  "scripts": {
+    "build": "node src/build.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@devgrill/config": "workspace:*",
+    "@types/node": "^24",
+    "typescript": "~6.0.3",
+    "vitest": "5.0.4"
   }
 }

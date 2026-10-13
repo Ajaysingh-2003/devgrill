@@ -1,0 +1,16 @@
+# Generated or vendored
+pnpm-lock.yaml
+uv.lock
+packages/api-client/src/gen/
+packages/api-client/openapi.json
+packages/tokens/dist/
+.claude/
+docs/
+**/.next/
+**/node_modules/
+**/storybook-static/
+**/test-results/
+**/playwright-report/
+.devgrill/
+# Python is formatted by ruff
+**/*.py

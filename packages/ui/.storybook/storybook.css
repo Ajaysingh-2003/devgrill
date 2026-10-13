@@ -1,0 +1,15 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "@devgrill/tokens/tokens.css";
+@import "@devgrill/tokens/theme.css";
+@import "../src/styles/base.css";
+
+@source "../src";
+
+/* next/font is not available in Storybook: the same families come from preview-head.html. */
+:root {
+  --font-ui: "Instrument Sans";
+  --font-editorial: "Instrument Serif";
+  --font-code: "JetBrains Mono";
+  --font-arcade: "Bricolage Grotesque";
+}

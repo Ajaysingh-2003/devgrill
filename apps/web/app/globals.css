@@ -1,23 +1,40 @@
 @import "tailwindcss";
+@import "tw-animate-css";
 @import "@devgrill/tokens/tokens.css";
+@import "@devgrill/tokens/theme.css";
+@import "@devgrill/ui/styles/base.css";
 
-/* Phase 1 replaces this with the generated token bridge (docs/PLAN.md §7.2.5). */
-@theme inline {
-  --color-canvas: var(--canvas);
-  --color-surface: var(--surface);
-  --color-raised: var(--raised);
-  --color-border: var(--border);
-  --color-fg: var(--text);
-  --color-muted: var(--text-muted);
-  --color-subtle: var(--text-subtle);
-  --color-brand: var(--brand);
-  --color-on-brand: var(--on-brand);
-  --color-brand-text: var(--brand-text);
-  --font-sans: ui-sans-serif, system-ui, "Segoe UI", sans-serif;
-  --font-mono: ui-monospace, "Cascadia Code", Consolas, monospace;
+/* Scan the shared UI package for class names. */
+@source "../../../packages/ui/src";
+
+/*
+ * Route transitions for the drills hierarchy (components/page-transition.tsx).
+ * Navigation happens tens of times a day, so the motion is small: the old page fades, the new
+ * one fades in with a 12px shift in the direction of travel. Durations are motion tokens,
+ * which are 0ms under reduced motion (OS setting or the in-app preference).
+ */
+::view-transition-old(.nav-forward),
+::view-transition-old(.nav-back) {
+  animation: var(--duration-base-out) var(--ease-standard) both vt-fade-out;
 }
-
-body {
-  background: var(--canvas);
-  color: var(--text);
+::view-transition-new(.nav-forward),
+::view-transition-new(.nav-back) {
+  animation: var(--duration-base-in) var(--ease-enter) both vt-enter;
+}
+::view-transition-new(.nav-forward) {
+  --vt-shift: 12px;
+}
+::view-transition-new(.nav-back) {
+  --vt-shift: -12px;
+}
+@keyframes vt-fade-out {
+  to {
+    opacity: 0;
+  }
+}
+@keyframes vt-enter {
+  from {
+    opacity: 0;
+    transform: translateX(var(--vt-shift));
+  }
 }

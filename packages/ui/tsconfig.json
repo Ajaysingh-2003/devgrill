@@ -1,7 +1,10 @@
 {
   "extends": "@devgrill/config/tsconfig.base.json",
   "compilerOptions": {
-    "jsx": "react-jsx"
+    "jsx": "react-jsx",
+    "paths": {
+      "@devgrill/ui/*": ["./src/*"]
+    }
   },
-  "include": ["src"]
+  "include": ["src", ".storybook"]
 }

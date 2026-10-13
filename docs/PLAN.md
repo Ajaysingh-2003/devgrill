@@ -402,7 +402,7 @@ The product deliberately avoids the LeetCode and HackerRank look (cool charcoal,
 
 ### 7.2 Colour (OKLCH, contrast-validated)
 
-All values were generated in OKLCH with sRGB gamut clamping (generator script: `packages/tokens/scripts/palette.py`, ported from the planning prototype). **Every text and background pair below passes WCAG AA (4.5:1)** in both themes. Hex values are fallbacks and for tooling only. Source of truth: `packages/tokens/tokens.json` → CSS variables.
+All values were generated in OKLCH with sRGB gamut clamping (generator: `packages/tokens/src/build.ts`, which also fails the build on any contrast miss). **Every text and background pair below passes WCAG AA (4.5:1)** in both themes. Hex values are fallbacks and for tooling only. Source of truth: `packages/tokens/tokens.json` → CSS variables.
 
 #### 7.2.1 Primitive scales
 
@@ -503,7 +503,7 @@ All series are ≥4.4:1 against the panel (chart marks need 3:1).
 
 #### 7.2.5 Theming implementation
 
-- Use `next-themes` with `attribute="class"`, defaulting to **system**. Users can override per device, and the setting is stored on the profile.
+- Use DevGrill's own `ThemeProvider` (ADR 010; replaces the planned `next-themes`) with a `class` on `<html>`, defaulting to **system**. Users can override per device, and the setting is stored on the profile.
 - `packages/tokens` emits:
   - `tokens.css`: `:root { … }` plus `.dark { … }` semantic variables.
   - A Tailwind v4 `@theme inline` block that maps `--color-canvas: var(--canvas)` and so on, so utilities like `bg-surface text-muted border-border` work in both themes.
@@ -600,12 +600,12 @@ Avoid: Satoshi and General Sans (Fontshare licence restricts redistribution), Be
 |---|---|---|---|
 | `instant` | 0ms | — | Keyboard-triggered palette and preset switches, panel resize (direct manipulation), log lines, terminal output |
 | `fast` | 120ms | `cubic-bezier(0.2, 0, 0, 1)` | Hover, press, tab switch, focus ring |
-| `base-in` / `base-out` | 200ms / 150ms | in `cubic-bezier(0.05, 0.7, 0.1, 1)`, out `cubic-bezier(0.3, 0, 0.8, 0.15)` | Popovers, dropdowns, sheets, mouse-initiated collapse |
+| `base-in` / `base-out` | 200ms / 150ms | in `cubic-bezier(0.05, 0.7, 0.1, 1)`, out `cubic-bezier(0.23, 1, 0.32, 1)` (ease-out: exits never ease in) | Popovers, dropdowns, sheets, mouse-initiated collapse |
 | `slow` | 320ms | emphasized-decelerate | Route transitions (View Transitions API), opening the debrief |
 | `celebrate` | 600–1000ms sequence | spring (motion) | **Only on verify-passed and the debrief**: checkmark draw → rating delta count-up → skill bars fill. Skippable with a click or keypress |
 
 **Incident-specific rules:**
-- An alert arriving gets one 200ms slide into the timeline plus a tab badge.
+- An alert arriving appears in the timeline instantly, plus a tab badge (the timeline is a streaming surface, so it doesn't animate).
 - No looping pulses or shakes. Anything moving for more than 5s needs a pause control (WCAG 2.2.2).
 - No skeleton shimmer on streaming panels.
 - No confetti during an incident.
@@ -1488,7 +1488,7 @@ Wk:  1  2 | 3  4  5 | 6  7  8 | 9 10 11 12 | 13 14 15 16 17 | 18 19 20 | 21 22 2
 
 ---
 
-### Phase 1: Design system and app shell (weeks 3–5)
+### Phase 1: Design system and app shell (weeks 3–5) ✅ done 2026-10-13 (see docs/qc/phase-1.md; owner sign-off on the "Not LeetCode" review pending)
 
 **Goal:** the product looks and feels like DevGrill before any feature exists. Tokens, typography, components and page templates are built as static shells with mock data.
 
@@ -1500,7 +1500,7 @@ Wk:  1  2 | 3  4  5 | 6  7  8 | 9 10 11 12 | 13 14 15 16 17 | 18 19 20 | 21 22 2
    - **The contrast test runs in CI and fails if any declared pair drops below its target.**
 2. **Tailwind v4 preset:** `@theme inline` mapping; CVA variant conventions (`tailwind-design-system` skill).
 3. **Fonts:** `next/font/google` (Instrument Sans, Instrument Serif, JetBrains Mono, Bricolage Grotesque) with subsets, `display: swap`, CSS variables, and size-adjusted fallbacks to avoid CLS.
-4. **Theming:** `next-themes` (system default), theme toggle, no-flash script, reduce-motion preference (OS + in-app) exposed as a `data-motion` attribute.
+4. **Theming:** own `ThemeProvider` (ADR 010; system default), theme toggle, no-flash script, reduce-motion preference (OS + in-app) exposed as a `data-motion` attribute.
 5. **Components:**
    - shadcn/Base UI base set restyled to tokens.
    - Custom set from §7.7 as **visual shells**, fed mock data: SevBadge, StatusPill, ProbeRow, ApproachCard, RatingDelta, MasteryRing, StreakFlame, EmptyState, BootSequence, IncidentTimeline, ToolRail.
