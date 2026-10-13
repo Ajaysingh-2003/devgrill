@@ -1,0 +1,138 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  TURBO_TELEMETRY_DISABLED: "1"
+  NEXT_TELEMETRY_DISABLED: "1"
+  DEVGRILL_ENV: test
+  LOG_FORMAT: json
+
+jobs:
+  python:
+    name: python · lint, types, unit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.13.0"
+      - run: uv sync --all-packages --locked
+      - run: uv run python -m ruff check .
+      - run: uv run python -m ruff format --check .
+      - run: uv run python -m basedpyright
+      - run: uv run python -m pytest -m "not integration" --cov=devgrill --cov=devgrill_api --cov=devgrill_worker --cov=devgrill_gateway --cov-report=term-missing
+
+  python-windows:
+    name: python · unit on Windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.13.0"
+      - run: uv sync --all-packages --locked
+      - run: uv run python -m pytest -m "not integration"
+
+  web:
+    name: web · lint, types, build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm build
+
+  codegen:
+    name: codegen · OpenAPI client is up to date
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.13.0"
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: uv sync --all-packages --locked
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm gen:api
+      - name: fail on drift
+        run: git diff --exit-code -- packages/api-client
+
+  smoke:
+    name: smoke · services, migrations, integration, full stack
+    runs-on: ubuntu-latest
+    needs: [python, web]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.13.0"
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: cp .env.example .env
+      - run: docker compose -f infra/compose/docker-compose.dev.yml up -d --wait
+      - run: uv sync --all-packages --locked
+      - run: pnpm install --frozen-lockfile
+      - name: migrations round-trip
+        run: |
+          uv run python -m alembic -c apps/api/alembic.ini upgrade head
+          uv run python -m alembic -c apps/api/alembic.ini downgrade base
+          uv run python -m alembic -c apps/api/alembic.ini upgrade head
+      - run: uv run python -m pytest -m integration
+      - name: full-stack smoke
+        run: |
+          uv run python scripts/dev.py > dev.log 2>&1 &
+          uv run python scripts/smoke.py
+      - name: dev log on failure
+        if: failure()
+        run: cat dev.log || true
+
+  hygiene:
+    name: hygiene · line endings, secrets, audits
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.13.0"
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: uv run --no-project python scripts/check_eol.py
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: pip-audit
+        run: |
+          uv export --all-packages --no-emit-workspace --no-hashes --format requirements-txt > requirements-audit.txt
+          uvx pip-audit -r requirements-audit.txt --disable-pip
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm audit --audit-level high

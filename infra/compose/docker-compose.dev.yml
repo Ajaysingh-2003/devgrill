@@ -1,0 +1,75 @@
+# Platform services for local development. App code (api, worker, gateway, web) runs natively.
+#   just deps-up      start and wait for health
+#   just deps-down    stop (keeps data)    |  just deps-nuke  stop and delete volumes
+name: devgrill-dev
+
+services:
+  postgres:
+    image: pgvector/pgvector:0.8.7-pg18-trixie   # Postgres 18.x + pgvector 0.8.7
+    environment:
+      POSTGRES_USER: devgrill
+      POSTGRES_PASSWORD: devgrill
+      POSTGRES_DB: devgrill
+    command: ["postgres", "-c", "shared_preload_libraries=pg_stat_statements"]
+    ports: ["127.0.0.1:5432:5432"]
+    volumes: [pgdata:/var/lib/postgresql]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U devgrill -d devgrill"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  valkey:
+    image: valkey/valkey:9.1
+    command: ["valkey-server", "--save", "", "--appendonly", "no"]
+    ports: ["127.0.0.1:6379:6379"]
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  temporal:
+    image: temporalio/temporal:1.9.1             # Temporal CLI 1.9.1 = Server 1.32.0, UI 2.54.1
+    command: ["server", "start-dev", "--ip", "0.0.0.0", "--db-filename", "/home/temporal/temporal.db"]
+    ports:
+      - "127.0.0.1:7233:7233"                    # gRPC frontend
+      - "127.0.0.1:8233:8233"                    # Web UI → http://localhost:8233
+    volumes: [temporal:/home/temporal]          # image user (uid 1000) owns this path
+    healthcheck:
+      test: ["CMD", "temporal", "operator", "cluster", "health", "--address", "127.0.0.1:7233"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+
+  objectstore:
+    # S3-compatible store for recordings and artifacts (MinIO stopped publishing community images).
+    image: chrislusf/seaweedfs:4.48
+    command: ["server", "-dir=/data", "-s3", "-s3.port=8333", "-s3.config=/etc/seaweedfs/s3.json"]
+    ports: ["127.0.0.1:8333:8333"]
+    volumes:
+      - objectstore:/data
+      - ./seaweedfs-s3.json:/etc/seaweedfs/s3.json:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8333/status || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 10s
+
+  mailpit:
+    image: axllent/mailpit:v1.31.5
+    ports:
+      - "127.0.0.1:1025:1025"                    # SMTP
+      - "127.0.0.1:8025:8025"                    # Web UI → http://localhost:8025
+    healthcheck:
+      test: ["CMD", "/mailpit", "readyz"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  pgdata: {}
+  temporal: {}
+  objectstore: {}

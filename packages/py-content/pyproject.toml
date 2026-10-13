@@ -1,0 +1,16 @@
+[project]
+name = "devgrill-content"
+version = "0.1.0"
+description = "Scenario spec models and the devgrill-content CLI (validate, build, up, test, publish)."
+requires-python = ">=3.14,<3.15"
+dependencies = ["devgrill-core", "pyyaml>=6.0.2"]
+
+[project.scripts]
+devgrill-content = "devgrill_content.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.9,<0.14"]
+build-backend = "uv_build"
+
+[tool.uv.sources]
+devgrill-core = { workspace = true }

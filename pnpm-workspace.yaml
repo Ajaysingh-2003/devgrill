@@ -1,0 +1,22 @@
+packages:
+  - "apps/web"
+  - "packages/ui"
+  - "packages/tokens"
+  - "packages/config"
+  - "packages/api-client"
+
+# Native build scripts allowed to run on install (pnpm blocks them by default).
+allowBuilds:
+  sharp: false
+  unrs-resolver: false
+
+# Security overrides (docs/qc/phase-0.md). js-yaml is used only by the API-client generator.
+overrides:
+  js-yaml@>=4.0.0 <4.3.2: ">=4.3.2"
+
+# Accepted advisories (documented in docs/qc/phase-0.md; review when a patch ships):
+# GHSA-vfj7-8cjw-p6xm braces stack-exhaustion DoS. Dev-only (eslint-config-next → fast-glob),
+# processes our own lint globs, no patched version exists yet.
+auditConfig:
+  ignoreGhsas:
+    - GHSA-vfj7-8cjw-p6xm

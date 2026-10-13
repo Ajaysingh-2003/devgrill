@@ -1,0 +1,20 @@
+[project]
+name = "devgrill-gateway"
+version = "0.1.0"
+description = "DevGrill sandbox gateway: WebSocket terminal and telemetry multiplexing."
+requires-python = ">=3.14,<3.15"
+dependencies = [
+    "devgrill-core",
+    "fastapi==0.143.0",
+    "uvicorn[standard]==0.54.0",
+]
+
+[project.scripts]
+devgrill-gateway = "devgrill_gateway.__main__:main"
+
+[build-system]
+requires = ["uv_build>=0.9,<0.14"]
+build-backend = "uv_build"
+
+[tool.uv.sources]
+devgrill-core = { workspace = true }

@@ -1,0 +1,56 @@
+/*
+ * DevGrill design tokens: phase 0 seed.
+ * Phase 1 replaces this hand-written file with output generated from tokens.json
+ * (palette generator + contrast tests). Values come from docs/PLAN.md §7.2 and are
+ * contrast-validated (WCAG AA) in both themes.
+ */
+
+:root {
+  --canvas: oklch(0.985 0.005 85);
+  --surface: oklch(1 0 0);
+  --raised: oklch(0.945 0.005 75);
+  --border: oklch(0.895 0.009 75);
+  --text: oklch(0.24 0.009 75);
+  --text-muted: oklch(0.475 0.009 75);
+  --text-subtle: oklch(0.52 0.009 75);
+  --brand: oklch(0.52 0.098 215);
+  --on-brand: oklch(1 0 0);
+  --brand-text: oklch(0.475 0.076 210);
+  --success-text: oklch(0.475 0.095 152);
+  --danger-text: oklch(0.475 0.158 25);
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --canvas: oklch(0.17 0.006 70);
+    --surface: oklch(0.2 0.007 70);
+    --raised: oklch(0.235 0.008 70);
+    --border: oklch(0.3 0.009 70);
+    --text: oklch(0.975 0.005 75);
+    --text-muted: oklch(0.825 0.009 75);
+    --text-subtle: oklch(0.735 0.009 75);
+    --brand: oklch(0.8 0.12 205);
+    --on-brand: oklch(0.24 0.009 75);
+    --brand-text: oklch(0.825 0.131 210);
+    --success-text: oklch(0.825 0.165 152);
+    --danger-text: oklch(0.825 0.08 25);
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme="dark"] {
+  --canvas: oklch(0.17 0.006 70);
+  --surface: oklch(0.2 0.007 70);
+  --raised: oklch(0.235 0.008 70);
+  --border: oklch(0.3 0.009 70);
+  --text: oklch(0.975 0.005 75);
+  --text-muted: oklch(0.825 0.009 75);
+  --text-subtle: oklch(0.735 0.009 75);
+  --brand: oklch(0.8 0.12 205);
+  --on-brand: oklch(0.24 0.009 75);
+  --brand-text: oklch(0.825 0.131 210);
+  --success-text: oklch(0.825 0.165 152);
+  --danger-text: oklch(0.825 0.08 25);
+  color-scheme: dark;
+}

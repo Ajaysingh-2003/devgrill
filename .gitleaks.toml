@@ -1,0 +1,15 @@
+# Gitleaks config: default rules, minus folders that are never committed.
+title = "devgrill"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "dependencies, build output and local tooling (gitignored)"
+paths = [
+  '''(^|/)\.venv/''',
+  '''(^|/)node_modules/''',
+  '''(^|/)\.next/''',
+  '''(^|/)\.turbo/''',
+  '''(^|/)\.devgrill/''',
+]

@@ -1,0 +1,11 @@
+{
+  "identities": [
+    {
+      "name": "devgrill-dev",
+      "credentials": [
+        { "accessKey": "devgrill", "secretKey": "devgrill-dev-secret" }
+      ],
+      "actions": ["Admin", "Read", "Write", "List", "Tagging"]
+    }
+  ]
+}

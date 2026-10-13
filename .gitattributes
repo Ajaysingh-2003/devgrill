@@ -1,0 +1,28 @@
+# Normalise everything to LF in the repo and on checkout. Containers choke on CRLF.
+* text=auto eol=lf
+
+# Windows-only scripts keep CRLF
+*.ps1 text eol=crlf
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+# Binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.otf binary
+*.pdf binary
+*.zip binary
+*.gz binary
+
+# Generated
+packages/api-client/src/gen/** linguist-generated=true
+packages/api-client/openapi.json linguist-generated=true
+uv.lock linguist-generated=true
+pnpm-lock.yaml linguist-generated=true

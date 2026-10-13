@@ -1,0 +1,86 @@
+# DevGrill Python workspace root (virtual: no package of its own).
+# Members share one lockfile (uv.lock) and one virtualenv (.venv).
+
+[tool.uv.workspace]
+members = [
+    "packages/py-core",
+    "packages/py-content",
+    "apps/api",
+    "apps/worker",
+    "apps/gateway",
+]
+
+[tool.uv]
+required-version = ">=0.13.0"
+
+[tool.uv.sources]
+devgrill-core = { workspace = true }
+devgrill-content = { workspace = true }
+devgrill-api = { workspace = true }
+devgrill-worker = { workspace = true }
+devgrill-gateway = { workspace = true }
+
+[dependency-groups]
+dev = [
+    "devgrill-core[otel,sentry]",
+    "devgrill-content",
+    "devgrill-api",
+    "devgrill-worker",
+    "devgrill-gateway",
+    "pytest==9.1.1",
+    "pytest-asyncio==1.4.0",
+    "pytest-cov>=7.0",
+    "httpx2>=0.1",
+    "ruff==0.17.0",
+    "basedpyright==1.40.2",
+]
+
+# ---------------------------------------------------------------- ruff
+[tool.ruff]
+line-length = 100
+target-version = "py314"
+src = [
+    "packages/py-core/src",
+    "packages/py-content/src",
+    "apps/api/src",
+    "apps/worker/src",
+    "apps/gateway/src",
+]
+extend-exclude = ["apps/api/migrations/versions"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "ASYNC", "S", "RUF", "N", "PT"]
+ignore = [
+    "S101", # assert is fine in tests
+]
+
+[tool.ruff.lint.per-file-ignores]
+"**/tests/**" = ["S", "PT011"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["devgrill", "devgrill_api", "devgrill_worker", "devgrill_gateway", "devgrill_content"]
+
+# ---------------------------------------------------------- basedpyright
+[tool.basedpyright]
+pythonVersion = "3.14"
+typeCheckingMode = "standard"
+include = ["packages", "apps", "scripts"]
+exclude = ["**/node_modules", "**/.venv", "**/__pycache__", "apps/web", "packages/ui", "packages/tokens", "packages/config", "packages/api-client"]
+strict = ["packages/py-core/src/devgrill/domain"]
+reportMissingTypeStubs = false
+
+# ---------------------------------------------------------------- pytest
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = [
+    "packages/py-core/tests",
+    "packages/py-content/tests",
+    "apps/api/tests",
+    "apps/worker/tests",
+    "apps/gateway/tests",
+]
+markers = [
+    "integration: needs the local platform services (just deps-up)",
+]
+addopts = "-ra --strict-markers --import-mode=importlib"

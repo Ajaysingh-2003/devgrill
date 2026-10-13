@@ -1,0 +1,21 @@
+{
+  "name": "devgrill",
+  "private": true,
+  "license": "UNLICENSED",
+  "packageManager": "pnpm@12.11.2",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "dev:web": "pnpm --filter @devgrill/web dev",
+    "gen:api": "uv run python -m devgrill_api.openapi_export && pnpm --filter @devgrill/api-client gen"
+  },
+  "devDependencies": {
+    "turbo": "2.11.7",
+    "typescript": "~6.0.3"
+  }
+}
