@@ -23,6 +23,7 @@ jobs:
   python:
     name: python · lint, types, unit
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
@@ -37,6 +38,7 @@ jobs:
   python-windows:
     name: python · unit on Windows
     runs-on: windows-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
@@ -48,6 +50,7 @@ jobs:
   web:
     name: web · format, lint, types, build, e2e
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -77,6 +80,7 @@ jobs:
   ui:
     name: ui · tokens, component tests, storybook
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -93,6 +97,7 @@ jobs:
   codegen:
     name: codegen · OpenAPI client is up to date
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
@@ -112,6 +117,7 @@ jobs:
   smoke:
     name: smoke · services, migrations, integration, full stack
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     needs: [python, web]
     steps:
       - uses: actions/checkout@v7
@@ -134,8 +140,14 @@ jobs:
           uv run python -m alembic -c apps/api/alembic.ini upgrade head
       - run: uv run python -m pytest -m integration
       - name: full-stack smoke
+        timeout-minutes: 10
         run: |
-          uv run python scripts/dev.py > dev.log 2>&1 &
+          # Own process group, no stdin: the whole stack (api, worker, gateway, web) is stopped
+          # when this step ends, pass or fail. A leftover background process would otherwise
+          # keep the step open until the job times out.
+          setsid uv run python scripts/dev.py > dev.log 2>&1 < /dev/null &
+          STACK_PID=$!
+          trap 'kill -TERM -- -"$STACK_PID" 2>/dev/null || true' EXIT
           uv run python scripts/smoke.py
       - name: dev log on failure
         if: failure()
@@ -144,6 +156,7 @@ jobs:
   hygiene:
     name: hygiene · line endings, secrets, audits
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
         with:
