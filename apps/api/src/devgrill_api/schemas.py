@@ -5,8 +5,8 @@ from __future__ import annotations
 import uuid
 from datetime import date, datetime
 from enum import StrEnum
+from importlib.resources import files
 from typing import TYPE_CHECKING, Annotated, Literal
-from zoneinfo import available_timezones
 
 from pydantic import (
     BaseModel,
@@ -37,7 +37,10 @@ ScenarioProgress = Literal["solved", "attempted", "new"]
 if TYPE_CHECKING:
     Timezone = str  # the members are only known at runtime
 else:
-    Timezone = StrEnum("Timezone", {zone: zone for zone in sorted(available_timezones())})
+    # From the pinned tzdata package, not available_timezones(): on Linux that also lists the
+    # system zoneinfo (e.g. "localtime"), so the contract would differ between machines.
+    _ZONES = files("tzdata").joinpath("zones").read_text(encoding="utf-8").split()
+    Timezone = StrEnum("Timezone", {zone: zone for zone in sorted(_ZONES)})
 DEFAULT_TIMEZONE = Timezone("Asia/Kolkata")
 
 
