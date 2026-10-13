@@ -132,7 +132,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: pip-audit
         run: |
-          uv export --all-packages --no-emit-workspace --no-hashes --format requirements-txt > requirements-audit.txt
+          # Hashed export: lets pip-audit audit the exact lock without invoking pip.
+          uv export --all-packages --no-emit-workspace --format requirements-txt > requirements-audit.txt
           uvx pip-audit -r requirements-audit.txt --disable-pip
       - run: pnpm install --frozen-lockfile
       - run: pnpm audit --audit-level high

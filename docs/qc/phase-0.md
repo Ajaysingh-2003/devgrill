@@ -1,6 +1,6 @@
 # Phase 0 QC report: Foundations and scaffold
 
-Date: 2026-10-13 · Result: **PASS locally; 2 items pending owner action (GitHub repo + CI run)**
+Date: 2026-10-13 · Result: **PASS** (branch protection blocked by GitHub plan; see item 4)
 
 ## Gate checklist (docs/PLAN.md §15, Phase 0)
 
@@ -9,7 +9,7 @@ Date: 2026-10-13 · Result: **PASS locally; 2 items pending owner action (GitHub
 | 1 | Fresh clone to `just dev` in ≤ 15 min on this Windows machine (PowerShell); same steps proven on Linux by CI | ✅ local · ⏳ CI | Fresh copy of every non-ignored file into a new folder (no `.env`, `.venv` or `node_modules`): `just setup` **128 s**, `just dev` + `just smoke` **49 s**. Total ≈ 3 min. Caveat: Docker images and the pnpm/uv caches were warm; a cold machine adds image pulls (≈ 1 GB) |
 | 2 | No CRLF in `*.sh`, `Dockerfile*`, `*.yaml` (CI check) | ✅ | `just eol-check` passes on every text file, not just those types. CI `hygiene` job runs it |
 | 3 | `/readyz` reports DB, Valkey and Temporal OK; Temporal `Ping` completes; web root renders | ✅ | `just smoke`: readyz 200 (database 85 ms, valkey 33 ms, temporal 23 ms), gateway 200, web 200 with brand, `PingWorkflow → pong:smoke` |
-| 4 | CI green on an empty PR; branch protection on | ⏳ pending | Needs a **private GitHub repo** (owner decision). `.github/workflows/ci.yml` passes `actionlint`; every command it runs was executed locally and passed |
+| 4 | CI green on an empty PR; branch protection on | ✅ CI · ⚠️ protection | Private repo `Ajaysingh-2003/devgrill`. First run: 5/6 jobs green (including the Linux full-stack smoke and the Windows unit job); `hygiene` failed on a pip-audit flag (needs hashed requirements), fixed in the follow-up commit. **Branch protection is unavailable**: GitHub returns 403 "Upgrade to GitHub Pro or make this repository public" for private repos on the Free plan. Mitigation until then: always merge through PRs with green CI |
 | 5 | `pnpm gen:api` is deterministic | ✅ | Two consecutive runs: byte-identical `openapi.json` and `src/gen` |
 | 6 | gitleaks clean; `.env` git-ignored; `.env.example` complete | ✅ | `just secrets`: no leaks (1.43 MB scanned). `git check-ignore .env` → `.gitignore:2` |
 | 7 | ADRs 001–008 merged | ✅ written (plus ADR 009) · ⏳ merge | `docs/adr/001…009`. Nothing is committed yet (awaiting owner go-ahead) |
@@ -63,7 +63,7 @@ Date: 2026-10-13 · Result: **PASS locally; 2 items pending owner action (GitHub
 - Local repo config: `core.autocrlf=false`.
 - Docker: images pulled; `devgrill-dev` compose project running (5 healthy services).
 
-## Pending owner actions
+## Owner follow-ups
 
-1. Approve the initial commit, then create a **private** GitHub repo and push, so CI can run (gate item 4) and branch protection can be enabled.
+1. Branch protection needs GitHub Pro (or a public repo). Decide whether to upgrade; until then, use PRs with green CI as a convention.
 2. Optional: ask IT to allow `cmd.exe` for development. This would remove the need for the workarounds in ADR 009, but nothing depends on it.
