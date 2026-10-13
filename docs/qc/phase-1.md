@@ -1,6 +1,6 @@
 # Phase 1 QC report: Design system and app shell
 
-Date: 2026-10-13 · Result: **PASS with two recorded deviations** (Lighthouse mobile performance, and owner sign-off pending on the "Not LeetCode" review). Design QC details: `docs/design/qc/phase-1.md`. Reference: `docs/design/system.md`.
+Date: 2026-10-13 · CI: all 7 jobs green on `a1d9c81` · Result: **PASS with two recorded deviations** (Lighthouse mobile performance, and owner sign-off pending on the "Not LeetCode" review). Design QC details: `docs/design/qc/phase-1.md`. Reference: `docs/design/system.md`.
 
 ## Gate checklist (docs/PLAN.md §15, Phase 1)
 
@@ -86,4 +86,7 @@ The gate's intent (no layout shift, fully accessible, fast on desktop) is met. T
 | axe: `aria-label` on spans, low-contrast tab text, duplicate region names, `kbd` inside tab names | sr-only text, `text-fg-muted`, one labelled region per panel, `aria-hidden` on `kbd` |
 | Keyboard e2e flaked on the dev server (listeners attached after hydration) | Wait for network idle, and `toPass` retries |
 | Chart marker labels overlapped the data (inherited canvas alignment) | Explicit alignment and knock-out labels |
+| CI (fresh checkout): Prettier's Tailwind plugin couldn't resolve the generated token CSS | CI builds the tokens before `format:check` |
+| CI (fresh checkout): `just dev` / smoke returned 500 because `next dev` doesn't run turbo builds, so token CSS was missing | `scripts/dev.py` generates the tokens before starting web (verified by deleting `dist/` locally) |
+| CI (slower runner): the primitives story checked the dialog title during its fade-in | `waitFor` around the visibility check |
 | Plus the 25 design-review findings | See design QC §2 |
