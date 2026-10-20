@@ -11,7 +11,7 @@ import { PROBES, REPLAY, RUBRIC, SCENARIOS } from "@/lib/mock";
 export const metadata: Metadata = { title: "Debrief" };
 
 export function generateStaticParams() {
-  return [{ attemptId: "inc-4021" }];
+  return [{ attemptId: "demo" }];
 }
 
 async function Debrief({ params }: { params: PageProps<"/incident/[attemptId]/debrief">["params"] }) {

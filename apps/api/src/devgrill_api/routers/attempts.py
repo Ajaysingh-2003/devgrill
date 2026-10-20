@@ -21,6 +21,7 @@ from sse_starlette import EventSourceResponse, ServerSentEvent
 from devgrill.domain import entitlements as policy
 from devgrill.domain.attempt import TERMINAL_STATES
 from devgrill.domain.enums import Access, AttemptState, ChallengeKind, Plan
+from devgrill.domain.events import visible
 from devgrill.domain.spec import ScenarioSpec
 from devgrill.infra.models import Attempt, Entitlement, SandboxSession, Scenario, ScenarioVersion
 from devgrill.infra.repositories import attempts as repo
@@ -189,9 +190,18 @@ async def start_attempt(
     )
     if not decision.allowed:
         headers = {"Retry-After": str(decision.retry_after_s)} if decision.retry_after_s else None
+        instance = None
+        if decision.refusal == "active_attempt_exists":
+            live = await repo.live_for(session, owner)
+            if live is not None:
+                instance = f"/v1/attempts/{live.id}"  # the incident to go back to
         log.info("attempt.refused", refusal=decision.refusal, tier=tier, scenario=row.scenario.slug)
         raise AppError(
-            decision.status, decision.refusal or "refused", decision.detail, headers=headers
+            decision.status,
+            decision.refusal or "refused",
+            decision.detail,
+            headers=headers,
+            instance=instance,
         )
 
     try:
@@ -326,6 +336,8 @@ async def attempt_events(
                     torn_down |= (
                         event.type == "sandbox" and event.payload.get("action") == "destroyed"
                     )
+                    if not visible(event.type):
+                        continue  # spoilers (which fault) and bookkeeping stay server-side
                     yield ServerSentEvent(
                         data=json.dumps(
                             {
@@ -334,7 +346,6 @@ async def attempt_events(
                                 "payload": event.payload,
                             }
                         ),
-                        event=event.type,
                         id=str(event.id),
                     )
                 if attempt is None or torn_down:

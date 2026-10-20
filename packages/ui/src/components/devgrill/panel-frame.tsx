@@ -38,11 +38,11 @@ export function PanelFrame({
       className={cn("flex h-full min-h-0 flex-col bg-surface", className)}
     >
       <header className="flex h-10 shrink-0 items-center gap-3 border-b border-border px-3">
-        <Heading id={headingId} className="text-label font-semibold text-fg">
+        <Heading id={headingId} className="shrink-0 text-label font-semibold whitespace-nowrap text-fg">
           {title}
         </Heading>
         {meta ? <div className="min-w-0 truncate text-caption text-fg-subtle">{meta}</div> : null}
-        {actions ? <div className="ml-auto flex items-center gap-1">{actions}</div> : null}
+        {actions ? <div className="ml-auto flex shrink-0 items-center gap-1">{actions}</div> : null}
       </header>
       {/* Scrollable body is keyboard-focusable so it can be scrolled (and maximised with F). */}
       <div

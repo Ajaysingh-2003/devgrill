@@ -19,7 +19,7 @@ from devgrill_api.errors import PROBLEM_RESPONSES, Problem, install_error_handle
 from devgrill_api.idempotency import IdempotencyMiddleware
 from devgrill_api.middleware import RequestIdMiddleware
 from devgrill_api.ratelimit import rate_limit
-from devgrill_api.routers import admin, attempts, catalog, internal, me
+from devgrill_api.routers import admin, attempts, catalog, internal, me, workspace
 
 log = structlog.get_logger(__name__)
 
@@ -41,6 +41,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
+        if getattr(app.state, "gateway", None) is not None and hasattr(app.state.gateway, "close"):
+            await app.state.gateway.close()
         await app.state.valkey.aclose()
         await app.state.engine.dispose()
         log.info("api_stopped")
@@ -88,7 +90,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     v1 = APIRouter(
         prefix="/v1", dependencies=[Depends(rate_limit("default"))], responses=PROBLEM_RESPONSES
     )
-    for module in (catalog, me, admin, attempts):
+    for module in (catalog, me, admin, attempts, workspace):
         v1.include_router(module.router)
     app.include_router(v1)
     app.include_router(internal.router)

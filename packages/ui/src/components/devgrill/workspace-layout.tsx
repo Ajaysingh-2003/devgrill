@@ -23,7 +23,7 @@ export type WorkspacePreset = {
 };
 
 export const WORKSPACE_PRESETS: WorkspacePreset[] = [
-  { id: "triage", label: "Triage", layout: { primary: 52, secondary: 23, side: 25 } },
+  { id: "triage", label: "Triage", layout: { primary: 46, secondary: 30, side: 24 } },
   { id: "debug", label: "Debug", layout: { primary: 34, secondary: 44, side: 22 } },
   { id: "comms", label: "Comms", layout: { primary: 38, secondary: 22, side: 40 } },
   { id: "postmortem", label: "Postmortem", layout: { primary: 60, secondary: 0, side: 40 } },

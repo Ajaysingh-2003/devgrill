@@ -152,6 +152,11 @@ jobs:
         if: failure()
         run: cat dev.log || true
       - run: pnpm build
+      # Phase 4 gate: the workspace's initial JS stays under 450 KB gz, and the terminal, the
+      # editor and the charts stay lazy-loaded.
+      - name: workspace route budget
+        working-directory: apps/web
+        run: node scripts/route-budget.mjs "/(incident)/incident/[attemptId]/page" 450 xterm codemirror uPlot
       - run: pnpm exec playwright install --with-deps chromium
       # Production web build + API + mock GitHub on their own database (apps/web/e2e/stack.mjs):
       # sign-in, sign-out, expiry, guests, admin authz, prefs, axe on every page, keyboard flows.

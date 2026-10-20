@@ -244,7 +244,7 @@ export const DAILY = {
 /* ------------------------------------------------------------------ incident */
 
 export const INCIDENT = {
-  id: "inc-4021",
+  id: "demo",
   scenario: "big-sale-meltdown",
   /** Severity of the page itself (the scenario's difficulty is separate). */
   sev: 1 as Severity,

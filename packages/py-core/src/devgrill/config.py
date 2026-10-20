@@ -86,6 +86,22 @@ class Settings(BaseSettings):
     #: The probe image (platform-owned; runs scrapes, load and verifier checks).
     sandbox_probe_image: str = "devgrill/sandbox-probe:1"
 
+    # ---- gateway (phase 4, ADR 014)
+    #: Where the API reaches the gateway's internal sandbox-operations endpoints.
+    gateway_internal_url: str = "http://127.0.0.1:8100"
+    #: Where browsers open terminal and telemetry WebSockets (returned with every ticket).
+    gateway_public_url: str = "ws://localhost:8100"
+    #: Origins allowed to open gateway WebSockets (comma-separated); same as the API's CORS.
+    gateway_ws_origins: str = "http://localhost:3000"
+    ws_ticket_ttl_s: int = 60
+
+    # ---- object storage (terminal recordings)
+    s3_endpoint: str = "http://localhost:8333"
+    s3_access_key: str = "devgrill"
+    s3_secret_key: str = "devgrill-dev-secret"  # noqa: S105 - the local SeaweedFS default
+    s3_bucket: str = "devgrill-dev"
+    s3_region: str = "us-east-1"
+
     otel_enabled: bool = False
     otel_exporter_otlp_endpoint: str = "http://localhost:4318"
     sentry_dsn: str | None = None
@@ -93,6 +109,10 @@ class Settings(BaseSettings):
     @property
     def cors_origins(self) -> list[str]:
         return [origin.strip() for origin in self.api_cors_origins.split(",") if origin.strip()]
+
+    @property
+    def ws_origins(self) -> frozenset[str]:
+        return frozenset(o.strip() for o in self.gateway_ws_origins.split(",") if o.strip())
 
     @property
     def guest_scenarios(self) -> frozenset[str]:

@@ -1241,11 +1241,10 @@ Every scenario is runtime-agnostic. Scenario content may also declare a **proces
   4. `tmux` keeps the session alive across reloads.
   5. Sessions are recorded as asciicast to object storage (SeaweedFS locally). The recording powers the replay and gives the AI its context.
 - **In-sandbox CLI** (`devgrill`, named `gym` in early mockups): `status`, `logs`, `restart <svc>`, `deploy`, `rollback`, `flags`. It is a thin client that calls the gateway's sandbox-control API, and every call is logged as an `attempt_event`.
-- **Telemetry (MVP):**
-  - The gateway scrapes exporters (app, postgres_exporter, redis_exporter, Toxiproxy) every 1–2s.
-  - It tails docker logs.
-  - It multiplexes both over the telemetry WebSocket. The UI charts with uPlot.
-  - A rolling 30-minute window is kept in Valkey for `/telemetry` history.
+- **Telemetry (MVP, ADR 014):**
+  - The worker's monitor activity samples the exporters (app, postgres_exporter, redis_exporter) every 2 s, once per live attempt, and detects mitigation from the same samples.
+  - Samples go to a rolling 30-minute Valkey list (history for reloads and the debrief) and a pub/sub channel.
+  - The gateway forwards samples and tails docker logs over the telemetry WebSocket. The UI charts with uPlot.
 - **Telemetry (scale):** Vector agent → VictoriaMetrics + VictoriaLogs (session ID as structured metadata, not a label). **Never expose raw Grafana to users.**
 - **The verifier runs outside the sandbox:** a k6 container attaches to the session network from the host side. Chaos steps run through Toxiproxy's API, and data invariants run as SQL through a read-only role. Root inside the sandbox cannot tamper with them.
 
@@ -1696,7 +1695,7 @@ Wk:  1  2 | 3  4  5 | 6  7  8 | 9 10 11 12 | 13 14 15 16 17 | 18 19 20 | 21 22 2
 
 ---
 
-### Phase 4: Incident workspace (weeks 13–17)
+### Phase 4: Incident workspace (weeks 13–17) ✅ done 2026-10-20 (see docs/qc/phase-4.md and ADR 014; NVDA pass, `/review-animations` and 3 usability sessions owed by the owner)
 
 **Goal:** a person can play `big-sale-meltdown` in the browser with real tools: terminal, logs, metrics, database and cache views, code, deploys and a scripted war room.
 

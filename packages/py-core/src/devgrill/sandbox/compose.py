@@ -24,7 +24,7 @@ import re
 import shlex
 import tarfile
 import time
-from collections.abc import AsyncIterator, Iterable
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -65,7 +65,16 @@ PROBE_CPUS = 1.0
 PROBE_MEMORY_MB = 512
 _STAGE = "/tmp/devgrill"  # scratch dir inside containers for scripts and patches
 _COMMIT = 'git add -A && git commit -q -m "$MSG"'
+#: The commit that is deployed, per patchable service repo.
+LIVE_REF = "refs/deploys/live"
+CONTROL_ALIAS = "control"
+#: Largest source file the workspace editor reads or writes.
+MAX_FILE_BYTES = 256 * 1024
 _LOG_TS = re.compile(r"^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)(?:\.(\d+))?Z\s?(.*)$")
+
+
+async def _no_progress(step: str) -> None:
+    return None
 
 
 def project_name(attempt_id: str) -> str:
@@ -265,7 +274,11 @@ class ComposeDriver:
             jobs.append(ensure_pulled(self._docker, self._probe_image))
         await asyncio.gather(*jobs)
 
-    async def create(self, spec: SandboxSpec) -> SandboxHandle:
+    async def create(
+        self, spec: SandboxSpec, progress: Callable[[str], Awaitable[None]] | None = None
+    ) -> SandboxHandle:
+        """Boot the sandbox. `progress` hears each boot step as it starts (the BootSequence)."""
+        report = progress or _no_progress
         bundle = spec.bundle
         handle = SandboxHandle(spec.attempt_id, project_name(spec.attempt_id))
         await self.destroy(handle)  # a retried activity starts from a clean slate
@@ -281,10 +294,12 @@ class ComposeDriver:
             }
         )
         try:
-            await self._start_probe(handle, bundle)
+            await self._start_probe(handle, spec)
+            await report("services")
             for level in _levels(bundle.base_app):
                 await asyncio.gather(*(self._start_service(handle, spec, name) for name in level))
                 await asyncio.gather(*(self._wait_service(handle, name) for name in level))
+            await report("source")
             await self._init_repos(handle, bundle)
         except BaseException:
             await asyncio.shield(self.destroy(handle))
@@ -294,17 +309,21 @@ class ComposeDriver:
         )
         return handle
 
-    async def _start_probe(self, handle: SandboxHandle, bundle: Bundle) -> None:
+    async def _start_probe(self, handle: SandboxHandle, spec: SandboxSpec) -> None:
+        bundle = spec.bundle
         container = await self._docker.containers.create(
             {
                 "Image": self._probe_image,
                 "Hostname": "probe",
                 "Labels": {**self._labels(handle), LABEL_SERVICE: PROBE},
-                "Env": ["K6_NO_USAGE_REPORT=true"],
+                "Env": ["K6_NO_USAGE_REPORT=true", f"DEVGRILL_CONTROL_TOKEN={spec.control_token}"],
                 "HostConfig": self._host_config(
                     handle, PROBE_CPUS, PROBE_MEMORY_MB, PIDS_LIMIT, {}
                 ),
-                "NetworkingConfig": {"EndpointsConfig": {self._network(handle): {}}},
+                # `control` is where the in-sandbox CLI finds the relay (dg-relay, ADR 014).
+                "NetworkingConfig": {
+                    "EndpointsConfig": {self._network(handle): {"Aliases": [CONTROL_ALIAS]}}
+                },
             },
             name=f"{handle.ref}{PROBE}",
         )
@@ -475,6 +494,7 @@ class ComposeDriver:
                     env={**_git_env(entry.minutes_before), "MSG": entry.message},
                     workdir=repo,
                 )
+            await self._run(shell, ["git", "update-ref", LIVE_REF, "HEAD"], workdir=repo)
 
     async def _commit(
         self, handle: SandboxHandle, bundle: Bundle, service: str, message: str, minutes_ago: float
@@ -812,6 +832,17 @@ class ComposeDriver:
         await self._put(target, files)
         await target.restart(timeout=5)
         label = f"{sha}{' (with uncommitted changes)' if dirty else ''}"
+        # What is live, for the Deploys panel: a ref to the commit and a dirty flag.
+        await self._run(
+            shell,
+            [
+                "sh",
+                "-c",
+                f"git update-ref {LIVE_REF} {shlex.quote(ref or 'HEAD')}"
+                f" && git config devgrill.livedirty {'true' if dirty else 'false'}",
+            ],
+            workdir=repo,
+        )
         try:
             await self._wait_service(handle, service, 90)
         except SandboxError as exc:
@@ -914,6 +945,245 @@ class ComposeDriver:
             memory_bytes=sum(memory for _, memory in samples),
         )
 
+    # ------------------------------------------------------------------- workspace (phase 4)
+
+    async def exec_pty(
+        self,
+        handle: SandboxHandle,
+        service: str,
+        argv: list[str],
+        *,
+        cols: int = 120,
+        rows: int = 32,
+        env: dict[str, str] | None = None,
+    ) -> PtySession:
+        """An interactive terminal (TTY) in a container: the workspace's shell."""
+        return await self._open(handle, service, argv, tty=True, env=env, size=(cols, rows))
+
+    async def attach(
+        self,
+        handle: SandboxHandle,
+        service: str,
+        argv: list[str],
+        *,
+        env: dict[str, str] | None = None,
+    ) -> PtySession:
+        """A process with stdin and stdout attached, no TTY (the control relay)."""
+        return await self._open(handle, service, argv, tty=False, env=env, size=None)
+
+    async def attach_probe(self, handle: SandboxHandle, argv: list[str]) -> PtySession:
+        return await self.attach(handle, PROBE, argv)
+
+    async def _open(
+        self,
+        handle: SandboxHandle,
+        service: str,
+        argv: list[str],
+        *,
+        tty: bool,
+        env: dict[str, str] | None,
+        size: tuple[int, int] | None,
+    ) -> PtySession:
+        container = await self._container(handle, service)
+        execution = await container.exec(argv, stdin=True, tty=tty, environment=env)
+        stream = execution.start(detach=False)
+        await stream.write_in(b"")  # opens the hijacked connection
+        session = PtySession(execution, stream, tty=tty)
+        if size is not None:
+            await session.resize(*size)
+        return session
+
+    async def follow_logs(
+        self, handle: SandboxHandle, *, services: Iterable[str] | None = None, tail: int = 100
+    ) -> AsyncIterator[LogLine]:
+        """Live log lines from the app's services, as they are written.
+
+        Follows each service by container name, so it carries on across restarts and recreated
+        containers (env faults, deploys). Ends when the consumer stops iterating.
+        """
+        wanted = set(services) if services is not None else None
+        names = [
+            c["Labels"].get(LABEL_SERVICE, "")
+            for c in await self._containers(handle)
+            if c["Labels"].get(LABEL_SERVICE) not in (None, PROBE)
+        ]
+        names = [n for n in names if wanted is None or n in wanted]
+        queue: asyncio.Queue[LogLine] = asyncio.Queue(maxsize=5000)
+
+        async def follow(service: str) -> None:
+            since: int | None = None
+            first = True
+            while True:
+                try:
+                    container = await self._container(handle, service)
+                    params: dict[str, Any] = {"timestamps": "true", "follow": True}
+                    if first:
+                        params["tail"] = str(tail)
+                    elif since is not None:
+                        params["since"] = str(since)
+                    first = False
+                    buffer = ""
+                    async for chunk in container.log(stdout=True, stderr=True, **params):
+                        buffer += chunk
+                        *complete, buffer = buffer.split("\n")
+                        for raw in complete:
+                            line = _parse_log(service, raw)
+                            if line is None:
+                                continue
+                            since = int(line.ts.timestamp()) + 1
+                            if queue.full():
+                                queue.get_nowait()  # never block a container: drop the oldest
+                            queue.put_nowait(line)
+                except DockerError, SandboxError:
+                    pass
+                await asyncio.sleep(1)  # the container stopped or restarted: follow again
+
+        tasks = [asyncio.create_task(follow(n)) for n in names]
+        try:
+            while True:
+                yield await queue.get()
+        finally:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def status(self, handle: SandboxHandle) -> list[dict[str, Any]]:
+        """Every app service: running state, health, restarts (the CLI's `devgrill status`)."""
+        out = []
+        for info in await self._containers(handle):
+            service = info["Labels"].get(LABEL_SERVICE, "")
+            if service == PROBE:
+                continue
+            details = await self._docker.containers.container(info["Id"]).show()
+            state = details["State"]
+            out.append(
+                {
+                    "name": service,
+                    "state": state.get("Status"),
+                    "health": (state.get("Health") or {}).get("Status"),
+                    "restarts": details.get("RestartCount", 0),
+                    "oom_killed": bool(state.get("OOMKilled")),
+                    "started_at": state.get("StartedAt"),
+                }
+            )
+        return sorted(out, key=lambda s: s["name"])
+
+    async def list_files(self, handle: SandboxHandle, bundle: Bundle, service: str) -> list[str]:
+        shell = await self._container(handle, bundle.base_app.shell_service)
+        result = await self._must(
+            shell,
+            ["git", "ls-files", "--cached", "--others", "--exclude-standard"],
+            f"list {service}",
+            workdir=self._patchable_repo(bundle, service),
+        )
+        return sorted(p for p in result.stdout.splitlines() if p)
+
+    async def read_file(
+        self, handle: SandboxHandle, bundle: Bundle, service: str, path: str
+    ) -> bytes:
+        rel = safe_repo_path(path)
+        shell = await self._container(handle, bundle.base_app.shell_service)
+        full = f"{self._patchable_repo(bundle, service)}/{rel}"
+        try:
+            archive = await shell.get_archive(full)
+        except DockerError as exc:
+            if exc.status == 404:
+                raise FileNotFoundError(rel) from exc
+            raise
+        member = next((m for m in archive.getmembers() if m.isfile()), None)
+        if member is None:
+            raise FileNotFoundError(rel)
+        if member.size > MAX_FILE_BYTES:
+            raise SandboxError(f"{rel} is larger than {MAX_FILE_BYTES // 1024} KB")
+        extracted = archive.extractfile(member)
+        return extracted.read() if extracted is not None else b""
+
+    async def write_file(
+        self, handle: SandboxHandle, bundle: Bundle, service: str, path: str, data: bytes
+    ) -> None:
+        rel = safe_repo_path(path)
+        if len(data) > MAX_FILE_BYTES:
+            raise SandboxError(f"files are limited to {MAX_FILE_BYTES // 1024} KB")
+        shell = await self._container(handle, bundle.base_app.shell_service)
+        repo = self._patchable_repo(bundle, service)
+        await self._put(shell, {f"{repo}/{rel}": data})
+
+    async def deploy_history(
+        self, handle: SandboxHandle, bundle: Bundle, service: str, limit: int = 30
+    ) -> dict[str, Any]:
+        """Commits on the service's repo, newest first, and which one is live."""
+        shell = await self._container(handle, bundle.base_app.shell_service)
+        repo = self._patchable_repo(bundle, service)
+        log_result = await self._must(
+            shell,
+            ["git", "log", f"-n{limit}", "--format=%H%x1f%h%x1f%an%x1f%at%x1f%s"],
+            f"history {service}",
+            workdir=repo,
+        )
+        live = await self._run(
+            shell, ["git", "rev-parse", "--verify", "-q", LIVE_REF], workdir=repo
+        )
+        dirty = await self._run(shell, ["git", "config", "devgrill.livedirty"], workdir=repo)
+        commits = []
+        for line in log_result.stdout.splitlines():
+            parts = line.split("\x1f")
+            if len(parts) == 5:
+                sha, short, author, at, subject = parts
+                commits.append(
+                    {
+                        "sha": sha,
+                        "short": short,
+                        "author": author,
+                        "at": int(at),
+                        "message": subject,
+                    }
+                )
+        return {
+            "service": service,
+            "commits": commits,
+            "live": live.stdout.strip() or None,
+            "live_dirty": dirty.stdout.strip() == "true",
+        }
+
+    def _patchable_repo(self, bundle: Bundle, service: str) -> str:
+        svc = bundle.base_app.services.get(service)
+        if svc is None or svc.source is None:
+            raise SandboxError(f"{service} has no source in this sandbox")
+        return self._repo(service)
+
+    async def db_insights(self, handle: SandboxHandle, bundle: Bundle) -> dict[str, Any]:
+        """Top statements, connections by state, blocked sessions (read-only role)."""
+        dsn = bundle.base_app.readonly_dsn()
+        if dsn is None:
+            raise SandboxError(f"{bundle.base_app.slug} has no database")
+        result = await self.probe(handle, ["dg-sql", dsn, _DB_INSIGHTS_SQL], timeout_s=20)
+        data = json.loads(result.stdout or "{}")
+        if "error" in data:
+            raise SandboxError(data["error"])
+        return json.loads(data["rows"][0][0]) if data.get("rows") else {}
+
+    async def db_query(self, handle: SandboxHandle, bundle: Bundle, sql: str) -> dict[str, Any]:
+        """One read-only statement from the Database panel's console."""
+        dsn = bundle.base_app.readonly_dsn()
+        if dsn is None:
+            raise SandboxError(f"{bundle.base_app.slug} has no database")
+        result = await self.probe(handle, ["dg-sql", dsn, sql], timeout_s=20)
+        try:
+            data: dict[str, Any] = json.loads(result.stdout or "{}")
+        except json.JSONDecodeError as exc:
+            raise SandboxError("the query console did not answer") from exc
+        return data
+
+    async def cache_insights(self, handle: SandboxHandle, bundle: Bundle) -> dict[str, Any]:
+        cache = bundle.base_app.cache_service
+        if cache is None:
+            raise SandboxError(f"{bundle.base_app.slug} has no cache")
+        result = await self.probe(handle, ["dg-cache", cache], timeout_s=20)
+        if not result.ok:
+            raise SandboxError(result.stderr[-500:] or "cache insights failed")
+        data: dict[str, Any] = json.loads(result.stdout)
+        return data
+
     # --------------------------------------------------------------------------- destroy
 
     async def _containers(self, handle: SandboxHandle) -> list[dict[str, Any]]:
@@ -977,6 +1247,90 @@ class ComposeDriver:
             "networks": len(networks),
             "dangling_volumes": len(volumes.get("Volumes") or []),
         }
+
+
+class PtySession:
+    """A process with stdin attached (with or without a TTY), as a byte stream."""
+
+    def __init__(self, execution: Any, stream: Any, *, tty: bool) -> None:
+        self._execution = execution
+        self._stream = stream
+        self._tty = tty
+
+    async def read(self) -> bytes | None:
+        """The next chunk of output (stdout only when there is no TTY); None at the end."""
+        while True:
+            message = await self._stream.read_out()
+            if message is None:
+                return None
+            if self._tty or message.stream == 1:
+                return bytes(message.data)
+
+    async def write(self, data: bytes) -> None:
+        await self._stream.write_in(data)
+
+    async def resize(self, cols: int, rows: int) -> None:
+        if self._tty:
+            await self._execution.resize(h=max(rows, 2), w=max(cols, 10))
+
+    async def close(self) -> None:
+        await self._stream.close()
+
+
+_REPO_PART = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.\-]{0,99}$")
+
+
+def safe_repo_path(path: str) -> str:
+    """A path inside a service repo: relative, no `..`, nothing under .git, plain characters."""
+    parts = path.strip().split("/")
+    if (
+        not path.strip()
+        or len(path) > 300
+        or path.startswith("/")
+        or any(not _REPO_PART.match(part) for part in parts)
+        or parts[0] == ".git"
+    ):
+        raise ValueError(f"{path!r} is not a file in this repo")
+    return "/".join(parts)
+
+
+def _parse_log(service: str, raw: str) -> LogLine | None:
+    match = _LOG_TS.match(raw.rstrip("\r"))
+    if not match:
+        return None
+    stamp, frac, text = match.groups()
+    ts = datetime.fromisoformat(stamp).replace(tzinfo=UTC)
+    if frac:
+        ts = ts.replace(microsecond=int(frac[:6].ljust(6, "0")))
+    return LogLine(ts, service, text)
+
+
+# One round trip for the Database panel: the busiest statements (pg_stat_statements),
+# connections by state, and sessions waiting on locks with who blocks them.
+_DB_INSIGHTS_SQL = """
+SELECT json_build_object(
+  'max_connections', current_setting('max_connections')::int,
+  'connections', (SELECT coalesce(json_agg(c), '[]') FROM (
+      SELECT coalesce(state, 'background') AS state, count(*) AS n
+      FROM pg_stat_activity WHERE datname = current_database() GROUP BY 1 ORDER BY 2 DESC) c),
+  'top', (SELECT coalesce(json_agg(t), '[]') FROM (
+      SELECT left(regexp_replace(query, '\\s+', ' ', 'g'), 300) AS query, calls,
+             round(mean_exec_time::numeric, 2) AS mean_ms,
+             round(total_exec_time::numeric, 1) AS total_ms, rows
+      FROM pg_stat_statements
+      WHERE dbid = (SELECT oid FROM pg_database WHERE datname = current_database())
+        AND query NOT ILIKE '%pg_stat_%'
+      ORDER BY calls DESC LIMIT 10) t),
+  'active', (SELECT coalesce(json_agg(a), '[]') FROM (
+      SELECT pid, usename AS "user", state, wait_event_type, wait_event,
+             round(extract(epoch FROM now() - query_start)::numeric, 1) AS seconds,
+             left(regexp_replace(query, '\\s+', ' ', 'g'), 200) AS query,
+             pg_blocking_pids(pid) AS blocked_by
+      FROM pg_stat_activity
+      WHERE datname = current_database() AND state <> 'idle' AND pid <> pg_backend_pid()
+      ORDER BY query_start NULLS LAST LIMIT 15) a)
+)::text
+"""
 
 
 def _read_env_file(path: Path) -> dict[str, str]:

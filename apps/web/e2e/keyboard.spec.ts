@@ -8,7 +8,7 @@ async function open(page: Page, url: string) {
 
 const mod = process.platform === "darwin" ? "Meta" : "Control";
 
-for (const route of ["/", "/drills", "/incident/inc-4021", "/incident/inc-4021/debrief", "/quickfire"]) {
+for (const route of ["/", "/drills", "/incident/demo", "/incident/demo/debrief", "/quickfire"]) {
   test(`skip link is the first stop on ${route} and targets the main landmark`, async ({ page }) => {
     await page.goto(route);
     await page.keyboard.press("Tab");
@@ -43,7 +43,7 @@ test("theme choice persists across reloads", async ({ page }) => {
 
 test.describe("incident workspace", () => {
   test("number keys switch tools, but not while typing", async ({ page }) => {
-    await open(page, "/incident/inc-4021");
+    await open(page, "/incident/demo");
     await page.getByRole("tab", { name: /Overview/ }).waitFor();
     await expect(async () => {
       await page.keyboard.press("2");
@@ -57,7 +57,7 @@ test.describe("incident workspace", () => {
   });
 
   test("layout presets switch with Ctrl/Cmd + number", async ({ page }) => {
-    await open(page, "/incident/inc-4021");
+    await open(page, "/incident/demo");
     await page.getByRole("tab", { name: /Overview/ }).waitFor();
     // Retry the key until the listener is attached (hydration timing on a busy dev server).
     await expect(async () => {
@@ -69,7 +69,7 @@ test.describe("incident workspace", () => {
   });
 
   test("collapsed panels leave the tab order", async ({ page }) => {
-    await open(page, "/incident/inc-4021");
+    await open(page, "/incident/demo");
     await page.getByRole("button", { name: "Postmortem" }).click();
     // The Postmortem preset collapses the terminal to 0px: it must not hold focusable content.
     const inert = page.locator("[inert]");
@@ -80,7 +80,7 @@ test.describe("incident workspace", () => {
   });
 
   test("splitters resize with the keyboard (WAI-ARIA window splitter)", async ({ page }) => {
-    await open(page, "/incident/inc-4021");
+    await open(page, "/incident/demo");
     const separator = page.getByRole("separator").first();
     const before = Number(await separator.getAttribute("aria-valuenow"));
     await separator.focus();
@@ -90,7 +90,7 @@ test.describe("incident workspace", () => {
   });
 
   test("F maximises the focused panel and Escape restores it", async ({ page }) => {
-    await open(page, "/incident/inc-4021");
+    await open(page, "/incident/demo");
     await page.getByRole("tab", { name: /Overview/ }).waitFor();
     // Focus the primary panel's scrollable body (a focusable region), then press F.
     await page.getByRole("region", { name: "Overview" }).focus();
@@ -102,7 +102,7 @@ test.describe("incident workspace", () => {
 
   test("below 1024 px it offers alternatives instead of a cramped workspace", async ({ page }) => {
     await page.setViewportSize({ width: 900, height: 800 });
-    await open(page, "/incident/inc-4021");
+    await open(page, "/incident/demo");
     await expect(page.getByRole("heading", { name: "This incident needs a bigger screen" })).toBeVisible();
     await expect(page.getByRole("link", { name: "Play Quick Fire" })).toBeVisible();
   });
@@ -128,7 +128,7 @@ test.describe("reduced motion", () => {
   test("OS setting: the debrief jumps straight to the final rating", async ({ page }) => {
     await page.emulateMedia({ reducedMotion: "reduce" });
     await recordRatingValues(page);
-    await page.goto("/incident/inc-4021/debrief");
+    await page.goto("/incident/demo/debrief");
     await expect(page.getByText("+52", { exact: true })).toBeVisible();
     expect((await ratingValues(page)).filter((v) => v !== "+0" && v !== "+52")).toEqual([]);
   });
@@ -137,7 +137,7 @@ test.describe("reduced motion", () => {
     await page.emulateMedia({ reducedMotion: "no-preference" });
     await page.addInitScript(() => localStorage.setItem("devgrill-motion", "reduce"));
     await recordRatingValues(page);
-    await page.goto("/incident/inc-4021/debrief");
+    await page.goto("/incident/demo/debrief");
     await expect(page.getByText("+52", { exact: true })).toBeVisible();
     expect((await ratingValues(page)).filter((v) => v !== "+0" && v !== "+52")).toEqual([]);
   });
@@ -145,7 +145,7 @@ test.describe("reduced motion", () => {
   test("full motion counts up through intermediate values", async ({ page }) => {
     await page.emulateMedia({ reducedMotion: "no-preference" });
     await recordRatingValues(page);
-    await page.goto("/incident/inc-4021/debrief");
+    await page.goto("/incident/demo/debrief");
     await expect(page.getByText("+52", { exact: true })).toBeVisible();
     expect((await ratingValues(page)).filter((v) => v !== "+0" && v !== "+52").length).toBeGreaterThan(0);
   });

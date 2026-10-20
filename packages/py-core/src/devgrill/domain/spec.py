@@ -201,7 +201,11 @@ class Beat(_Strict):
     say: str = Field(max_length=400)
     at: str | None = Field(default=None, pattern=_OFFSET.pattern)
     #: An event name, e.g. "state:mitigated". (Not `on`: YAML 1.1 reads that key as true.)
-    when: str | None = Field(default=None, pattern=r"^[a-z_.]+(:[a-z_]+)?$", max_length=60)
+    when: str | None = Field(default=None, pattern=r"^[a-z0-9_.\-]+(:[a-z0-9_]+)?$", max_length=60)
+
+    @property
+    def at_seconds(self) -> int:
+        return parse_offset(self.at) if self.at else 0
 
     @model_validator(mode="after")
     def _one_trigger(self) -> Beat:

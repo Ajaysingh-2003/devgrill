@@ -16,6 +16,9 @@ def main() -> None:
         port=int(os.environ.get("GATEWAY_PORT", "8100")),
         reload=reload,
         reload_dirs=["apps/gateway/src", "packages/py-core/src"] if reload else None,
+        # asyncio's default loop: with reload, uvicorn would pick the selector loop on Windows,
+        # and the Docker named pipe needs the proactor loop.
+        loop="none",
     )
 
 

@@ -1,0 +1,84 @@
+#!/usr/bin/env python3
+"""dg-cache HOST: cache insights as JSON.
+
+- stats: hits, misses, hit rate, ops/s, memory, evictions, keys (INFO)
+- keys: a sample of stored keys with their TTLs (SCAN)
+- asked: the keys clients requested during a short MONITOR window, with how often and
+  whether each exists. "Asked for but missing" is how a key-format change shows itself.
+"""
+
+import json
+import sys
+import time
+from collections import Counter
+
+import redis
+
+SAMPLE_KEYS = 50
+MONITOR_S = 1.5
+
+
+def main() -> int:
+    host = sys.argv[1]
+    client = redis.Redis(host=host, port=6379, socket_timeout=3, decode_responses=True)
+    info = client.info()
+    hits, misses = info.get("keyspace_hits", 0), info.get("keyspace_misses", 0)
+    keys = 0
+    for name, value in info.items():
+        if name.startswith("db") and isinstance(value, dict):
+            keys += int(value.get("keys", 0))
+    stats = {
+        "hits": hits,
+        "misses": misses,
+        "hit_rate": round(hits / (hits + misses), 4) if hits + misses else None,
+        "ops_per_sec": info.get("instantaneous_ops_per_sec", 0),
+        "used_memory": info.get("used_memory", 0),
+        "maxmemory": info.get("maxmemory", 0),
+        "evicted_keys": info.get("evicted_keys", 0),
+        "keys": keys,
+        "clients": info.get("connected_clients", 0),
+    }
+
+    sample = []
+    for key in client.scan_iter(count=200):
+        sample.append({"key": key, "ttl": client.ttl(key)})
+        if len(sample) >= SAMPLE_KEYS:
+            break
+
+    asked: Counter[str] = Counter()
+    monitor_client = redis.Redis(host=host, port=6379, socket_timeout=0.25, decode_responses=True)
+    deadline = time.monotonic() + MONITOR_S
+    try:
+        with monitor_client.monitor() as monitor:
+            while time.monotonic() < deadline:
+                try:
+                    command = monitor.next_command()
+                except (redis.TimeoutError, TimeoutError):
+                    continue
+                parts = command.get("command", "").split(" ")
+                if len(parts) >= 2 and parts[0].upper() == "GET":
+                    asked[parts[1].strip('"')] += 1
+    except redis.RedisError:
+        pass
+    top = asked.most_common(20)
+    exists = {}
+    if top:
+        pipe = client.pipeline()
+        for key, _ in top:
+            pipe.exists(key)
+        exists = {key: bool(found) for (key, _), found in zip(top, pipe.execute(), strict=True)}
+    print(
+        json.dumps(
+            {
+                "stats": stats,
+                "keys": sample,
+                "asked": [{"key": k, "count": n, "exists": exists.get(k, False)} for k, n in top],
+                "window_s": MONITOR_S,
+            }
+        )
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

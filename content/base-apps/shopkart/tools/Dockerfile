@@ -7,6 +7,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 RUN pip install --quiet "httpx==0.28.1" "redis==8.1.0"
 COPY devgrill /usr/local/bin/devgrill
+COPY tmux.conf /etc/tmux.conf
 RUN chmod +x /usr/local/bin/devgrill \
     && git config --system user.email "oncall@shopkart.test" && git config --system user.name "On-call" \
     && git config --system safe.directory '*' \

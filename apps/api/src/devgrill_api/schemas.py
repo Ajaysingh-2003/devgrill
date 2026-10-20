@@ -270,6 +270,218 @@ class AttemptOut(Model):
     expires_at: datetime | None
 
 
+ToolId = Literal["overview", "logs", "terminal", "database", "cache", "code", "deploys", "war_room"]
+
+
+class PageOut(Model):
+    severity: Literal["SEV1", "SEV2", "SEV3", "SEV4"]
+    title: str
+
+
+class SloTarget(Model):
+    lt: float | None = None
+    gt: float | None = None
+
+
+class HintOut(Model):
+    tier: int
+    text: str
+
+
+class WorkspaceOut(Model):
+    """Everything the incident workspace needs to render before the live streams connect."""
+
+    attempt: AttemptOut
+    scenario_title: str
+    track_slug: str
+    difficulty: Difficulty
+    page: PageOut | None
+    unlocked_tools: list[ToolId]
+    #: Metrics the telemetry stream carries, and the SLO the charts draw.
+    metrics: list[str]
+    slo: dict[str, SloTarget]
+    #: Services whose source the player can edit and deploy.
+    deployable: list[str]
+    hints_total: int
+    hints: list[HintOut]
+    extend_minutes: int
+    extends_left: int
+    #: Minutes without player activity before the sandbox is torn down (warn before it).
+    idle_minutes: int
+    gateway_url: str
+
+
+class TicketIn(Input):
+    kind: Literal["terminal", "telemetry"]
+
+
+class TicketOut(Model):
+    ticket: str
+    url: str
+    expires_in: int
+
+
+class MessageIn(Input):
+    text: str = Field(min_length=1, max_length=1000)
+
+
+class MitigationOut(Model):
+    """A "declare mitigated" claim, scored against the real state the workflow detected."""
+
+    declared: bool
+    real_state: AttemptState
+    correct: bool
+
+
+class ServiceStatus(Model):
+    name: str
+    state: str | None
+    health: str | None
+    restarts: int
+    oom_killed: bool
+    started_at: str | None
+
+
+class StatusOut(Model):
+    services: list[ServiceStatus]
+
+
+class FilesOut(Model):
+    service: str
+    files: list[str]
+
+
+class FileOut(Model):
+    service: str
+    path: str
+    content: str
+
+
+class FileIn(Input):
+    content: str = Field(max_length=256 * 1024)
+
+
+class FileSaved(Model):
+    service: str
+    path: str
+    saved: bool
+
+
+class Commit(Model):
+    sha: str
+    short: str
+    author: str
+    at: int
+    message: str
+
+
+class DeployHistoryOut(Model):
+    service: str
+    commits: list[Commit]
+    live: str | None
+    live_dirty: bool
+
+
+class DeployIn(Input):
+    service: str | None = Field(default=None, max_length=40)
+
+
+class RollbackIn(Input):
+    service: str | None = Field(default=None, max_length=40)
+    ref: str = Field(pattern=r"^[0-9a-f]{4,40}$")
+
+
+class RestartIn(Input):
+    service: str = Field(max_length=40)
+
+
+class DeployOut(Model):
+    ok: bool
+    sha: str
+    message: str
+    log: str
+
+
+class RestartOut(Model):
+    message: str
+
+
+class DbStatement(Model):
+    query: str
+    calls: int
+    mean_ms: float
+    total_ms: float
+    rows: int
+
+
+class DbConnections(Model):
+    state: str
+    n: int
+
+
+class DbSession(Model):
+    pid: int
+    user: str | None
+    state: str | None
+    wait_event_type: str | None
+    wait_event: str | None
+    seconds: float | None
+    query: str | None
+    blocked_by: list[int]
+
+
+class DbInsightsOut(Model):
+    max_connections: int
+    connections: list[DbConnections]
+    top: list[DbStatement]
+    active: list[DbSession]
+
+
+class QueryIn(Input):
+    sql: str = Field(min_length=1, max_length=4000)
+
+
+Cell = str | int | float | bool | None
+
+
+class QueryOut(Model):
+    columns: list[str] = Field(default_factory=list)
+    rows: list[list[Cell]] = Field(default_factory=list)
+    truncated: bool = False
+    ms: float | None = None
+    error: str | None = None
+
+
+class CacheStats(Model):
+    hits: int
+    misses: int
+    hit_rate: float | None
+    ops_per_sec: int
+    used_memory: int
+    maxmemory: int
+    evicted_keys: int
+    keys: int
+    clients: int
+
+
+class CacheKey(Model):
+    key: str
+    ttl: int
+
+
+class AskedKey(Model):
+    key: str
+    count: int
+    exists: bool
+
+
+class CacheOut(Model):
+    stats: CacheStats
+    keys: list[CacheKey]
+    asked: list[AskedKey]
+    window_s: float
+
+
 class Quota(Model):
     used: float
     limit: int

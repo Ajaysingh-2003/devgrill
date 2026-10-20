@@ -1,0 +1,54 @@
+#!/usr/bin/env python3
+"""dg-sql DSN [QUERY]: run one read-only query, print JSON {columns, rows, truncated, ms} or {error}.
+
+The query comes from argv or stdin. Runs as the base app's read-only role, inside a read-only
+transaction with a statement timeout, and returns at most MAX_ROWS rows.
+"""
+
+import json
+import sys
+import time
+
+import psycopg
+
+MAX_ROWS = 200
+TIMEOUT_MS = 5000
+
+
+def cell(value):
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    return str(value)
+
+
+def main() -> int:
+    dsn = sys.argv[1]
+    query = sys.argv[2] if len(sys.argv) > 2 else sys.stdin.read()
+    started = time.perf_counter()
+    try:
+        with psycopg.connect(dsn, connect_timeout=5, autocommit=False) as conn:
+            # Read-only must be the transaction's first statement.
+            conn.execute("SET TRANSACTION READ ONLY")
+            conn.execute(f"SET LOCAL statement_timeout = {TIMEOUT_MS}")
+            cur = conn.execute(query)
+            columns = [c.name for c in cur.description] if cur.description else []
+            rows = cur.fetchmany(MAX_ROWS + 1) if columns else []
+            conn.rollback()
+    except psycopg.Error as exc:
+        print(json.dumps({"error": str(exc).strip().splitlines()[0][:500]}))
+        return 0
+    print(
+        json.dumps(
+            {
+                "columns": columns,
+                "rows": [[cell(v) for v in row] for row in rows[:MAX_ROWS]],
+                "truncated": len(rows) > MAX_ROWS,
+                "ms": round((time.perf_counter() - started) * 1000, 1),
+            }
+        )
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

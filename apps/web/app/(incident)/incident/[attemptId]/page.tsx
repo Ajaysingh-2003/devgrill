@@ -1,16 +1,24 @@
+import { getWorkspace } from "@devgrill/api-client";
 import type { Metadata } from "next";
+import { notFound } from "next/navigation";
 import { Suspense } from "react";
-import { Workspace } from "@/components/workspace/workspace";
+import { DEMO_ID } from "@/components/workspace/ids";
+import { DemoWorkspace, LiveWorkspace } from "@/components/workspace/entry";
+import { api, unwrap } from "@/lib/api";
 
 export const metadata: Metadata = { title: "Incident" };
 
-export function generateStaticParams() {
-  return [{ attemptId: "inc-4021" }];
-}
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 async function WorkspaceRoute({ params }: { params: PageProps<"/incident/[attemptId]">["params"] }) {
   const { attemptId } = await params;
-  return <Workspace attemptId={attemptId} />;
+  if (attemptId === DEMO_ID) return <DemoWorkspace />;
+  if (!UUID.test(attemptId)) notFound();
+  // Owned by the caller (user or guest), else 404: another player's incident doesn't exist.
+  const info = await unwrap(getWorkspace({ client: await api(), path: { attempt_id: attemptId } }));
+  return (
+    <LiveWorkspace info={info} briefingHref={`/drills/${info.track_slug}/${info.attempt.scenario_slug}`} />
+  );
 }
 
 /** T5 incident workspace (full-bleed; no app top bar). */

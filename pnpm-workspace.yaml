@@ -37,3 +37,4 @@ minimumReleaseAgeExclude:
   - "@storybook/react-vite@10.6.2"
   - "@storybook/react@10.6.2"
   - storybook@10.6.2
+  - "@codemirror/view@6.43.15"

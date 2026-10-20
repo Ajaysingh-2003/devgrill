@@ -4,8 +4,9 @@
   devgrill status             services and health
   devgrill logs <svc> [-n N]  recent logs of a service
   devgrill restart <svc>      restart a service
-  devgrill deploy             rebuild and restart the api from /workspace/api (your working tree)
-  devgrill rollback <sha>     check out that deploy and redeploy
+  devgrill deploy [svc]       deploy your working tree (/workspace/api) and restart the service
+  devgrill rollback <sha> [svc]  deploy an earlier commit (your working tree is left alone)
+  devgrill history [svc]      deploy history, newest first, with what is live
   devgrill flags [key value]  show or set a feature flag
 
 Every call is recorded as an attempt event. The control endpoint is injected by the driver.
@@ -59,12 +60,25 @@ def main(argv: list[str]) -> int:
     elif cmd == "restart":
         print(call("POST", f"/restart/{rest[0]}").get("message", "restarted"))
     elif cmd == "deploy":
-        print(call("POST", "/deploy").get("message", "deployed"))
+        result = call("POST", "/deploy", service=rest[0] if rest else None)
+        print(result.get("message", "deployed"))
+        if not result.get("ok", True):
+            print(result.get("log", ""), file=sys.stderr)
+            return 1
     elif cmd == "rollback":
         if not rest:
-            print("usage: devgrill rollback <sha>", file=sys.stderr)
+            print("usage: devgrill rollback <sha> [service]", file=sys.stderr)
             return 2
-        print(call("POST", "/rollback", sha=rest[0]).get("message", "rolled back"))
+        result = call("POST", "/rollback", sha=rest[0], service=rest[1] if len(rest) > 1 else None)
+        print(result.get("message", "rolled back"))
+        if not result.get("ok", True):
+            return 1
+    elif cmd == "history":
+        query = f"?service={rest[0]}" if rest else ""
+        history = call("GET", f"/history{query}")
+        for commit in history.get("commits", []):
+            live = "  <- live" if commit["sha"] == history.get("live") else ""
+            print(f"{commit['short']}  {commit['author']:<10} {commit['message']}{live}")
     elif cmd == "flags":
         if len(rest) == 2:
             print(json.dumps(call("POST", "/flags", key=rest[0], value=rest[1])))

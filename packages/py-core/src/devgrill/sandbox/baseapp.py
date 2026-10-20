@@ -38,6 +38,10 @@ class SourceSpec(_Strict):
 class SqlSpec(_Strict):
     user: str = Field(pattern=r"^[a-z_][a-z0-9_]{0,30}$")
     database: str = Field(pattern=r"^[a-z_][a-z0-9_]{0,30}$")
+    #: A read-only role (pg_read_all_stats) for the verifier, the Database panel and its console.
+    readonly_user: str = Field(default="verifier", pattern=r"^[a-z_][a-z0-9_]{0,30}$")
+    readonly_password: str = Field(default="verifier", max_length=64)
+    port: int = 5432
 
 
 class ToxiproxySpec(_Strict):
@@ -62,6 +66,8 @@ class ServiceSpec(_Strict):
     cache: bool = False
     #: The player's shell. Exactly one service has it.
     shell: bool = False
+    #: Streamed to the workspace's Logs panel (exporters and the shell are noise there).
+    logs: bool = True
     #: The HTTP port the app serves (the load target) and its metrics path.
     port: int | None = Field(default=None, ge=1, le=65535)
     metrics: str | None = Field(default=None, pattern=r"^/[A-Za-z0-9_/-]*$")
@@ -162,6 +168,22 @@ class BaseAppSpec(_Strict):
     @property
     def cache_service(self) -> str | None:
         return next((n for n, s in self.services.items() if s.cache), None)
+
+    @property
+    def sql_service(self) -> str | None:
+        return next((n for n, s in self.services.items() if s.sql), None)
+
+    @property
+    def patchable_services(self) -> list[str]:
+        return [n for n, s in self.services.items() if s.source]
+
+    def readonly_dsn(self) -> str | None:
+        name = self.sql_service
+        if name is None:
+            return None
+        sql = self.services[name].sql
+        assert sql is not None
+        return f"postgresql://{sql.readonly_user}:{sql.readonly_password}@{name}:{sql.port}/{sql.database}"
 
     def image_for(self, service: str) -> str:
         spec = self.services[service]

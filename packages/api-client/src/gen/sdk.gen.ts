@@ -2,7 +2,7 @@
 
 import type { Client, ClientMeta, Options as Options2, RequestResult, ServerSentEventsResult, TDataShape } from './client';
 import { client } from './client.gen';
-import type { AbandonAttemptData, AbandonAttemptErrors, AbandonAttemptResponses, AdminScenariosData, AdminScenariosErrors, AdminScenariosResponses, AttemptEventsData, AttemptEventsErrors, AttemptEventsResponses, ClaimGuestData, ClaimGuestErrors, ClaimGuestResponses, CreateGuestTokenData, CreateGuestTokenErrors, CreateGuestTokenResponses, DailyChallengeData, DailyChallengeErrors, DailyChallengeResponses, ExtendAttemptData, ExtendAttemptErrors, ExtendAttemptResponses, GetApproachesData, GetApproachesErrors, GetApproachesResponses, GetAttemptData, GetAttemptErrors, GetAttemptResponses, GetMeData, GetMeErrors, GetMeResponses, GetScenarioData, GetScenarioErrors, GetScenarioResponses, GetTrackData, GetTrackErrors, GetTrackResponses, HealthzData, HealthzResponses, ListScenariosData, ListScenariosErrors, ListScenariosResponses, ListTracksData, ListTracksErrors, ListTracksResponses, MyAttemptsData, MyAttemptsErrors, MyAttemptsResponses, MyProgressData, MyProgressErrors, MyProgressResponses, MyRatingsData, MyRatingsErrors, MyRatingsResponses, MyStreakData, MyStreakErrors, MyStreakResponses, MyUsageData, MyUsageErrors, MyUsageResponses, PatchMeData, PatchMeErrors, PatchMeResponses, PublicProfileData, PublicProfileErrors, PublicProfileResponses, ReadyzData, ReadyzErrors, ReadyzResponses, ResetAttemptData, ResetAttemptErrors, ResetAttemptResponses, StartAttemptData, StartAttemptErrors, StartAttemptResponses, VerifyAttemptData, VerifyAttemptErrors, VerifyAttemptResponses, WeeklyChallengeData, WeeklyChallengeErrors, WeeklyChallengeResponses } from './types.gen';
+import type { AbandonAttemptData, AbandonAttemptErrors, AbandonAttemptResponses, AdminScenariosData, AdminScenariosErrors, AdminScenariosResponses, AttemptEventsData, AttemptEventsErrors, AttemptEventsResponses, CacheInsightsData, CacheInsightsErrors, CacheInsightsResponses, ClaimGuestData, ClaimGuestErrors, ClaimGuestResponses, CreateGuestTokenData, CreateGuestTokenErrors, CreateGuestTokenResponses, CreateWsTicketData, CreateWsTicketErrors, CreateWsTicketResponses, DailyChallengeData, DailyChallengeErrors, DailyChallengeResponses, DbInsightsData, DbInsightsErrors, DbInsightsResponses, DbQueryData, DbQueryErrors, DbQueryResponses, DeclareMitigatedData, DeclareMitigatedErrors, DeclareMitigatedResponses, DeployData, DeployErrors, DeployResponses, ExtendAttemptData, ExtendAttemptErrors, ExtendAttemptResponses, GetApproachesData, GetApproachesErrors, GetApproachesResponses, GetAttemptData, GetAttemptErrors, GetAttemptResponses, GetMeData, GetMeErrors, GetMeResponses, GetScenarioData, GetScenarioErrors, GetScenarioResponses, GetTrackData, GetTrackErrors, GetTrackResponses, GetWorkspaceData, GetWorkspaceErrors, GetWorkspaceResponses, HealthzData, HealthzResponses, ListDeploysData, ListDeploysErrors, ListDeploysResponses, ListFilesData, ListFilesErrors, ListFilesResponses, ListHintsData, ListHintsErrors, ListHintsResponses, ListScenariosData, ListScenariosErrors, ListScenariosResponses, ListTracksData, ListTracksErrors, ListTracksResponses, MyAttemptsData, MyAttemptsErrors, MyAttemptsResponses, MyProgressData, MyProgressErrors, MyProgressResponses, MyRatingsData, MyRatingsErrors, MyRatingsResponses, MyStreakData, MyStreakErrors, MyStreakResponses, MyUsageData, MyUsageErrors, MyUsageResponses, PatchMeData, PatchMeErrors, PatchMeResponses, PostMessageData, PostMessageErrors, PostMessageResponses, PublicProfileData, PublicProfileErrors, PublicProfileResponses, ReadFileData, ReadFileErrors, ReadFileResponses, ReadyzData, ReadyzErrors, ReadyzResponses, ResetAttemptData, ResetAttemptErrors, ResetAttemptResponses, RestartServiceData, RestartServiceErrors, RestartServiceResponses, RollbackData, RollbackErrors, RollbackResponses, SandboxStatusData, SandboxStatusErrors, SandboxStatusResponses, StartAttemptData, StartAttemptErrors, StartAttemptResponses, TakeHintData, TakeHintErrors, TakeHintResponses, TouchAttemptData, TouchAttemptErrors, TouchAttemptResponses, VerifyAttemptData, VerifyAttemptErrors, VerifyAttemptResponses, WeeklyChallengeData, WeeklyChallengeErrors, WeeklyChallengeResponses, WriteFileData, WriteFileErrors, WriteFileResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -62,6 +62,53 @@ export const abandonAttempt = <ThrowOnError extends boolean = false>(options: Op
 export const getAttempt = <ThrowOnError extends boolean = false>(options: Options<GetAttemptData, ThrowOnError>): RequestResult<GetAttemptResponses, GetAttemptErrors, ThrowOnError> => (options.client ?? client).get<GetAttemptResponses, GetAttemptErrors, ThrowOnError>({ url: '/v1/attempts/{attempt_id}', ...options });
 
 /**
+ * Cache Insights
+ *
+ * Hit rate and memory, a sample of stored keys, and the keys clients ask for.
+ */
+export const cacheInsights = <ThrowOnError extends boolean = false>(options: Options<CacheInsightsData, ThrowOnError>): RequestResult<CacheInsightsResponses, CacheInsightsErrors, ThrowOnError> => (options.client ?? client).get<CacheInsightsResponses, CacheInsightsErrors, ThrowOnError>({ url: '/v1/attempts/{attempt_id}/cache', ...options });
+
+/**
+ * Db Insights
+ *
+ * Busiest statements, connections by state, sessions waiting on locks.
+ */
+export const dbInsights = <ThrowOnError extends boolean = false>(options: Options<DbInsightsData, ThrowOnError>): RequestResult<DbInsightsResponses, DbInsightsErrors, ThrowOnError> => (options.client ?? client).get<DbInsightsResponses, DbInsightsErrors, ThrowOnError>({ url: '/v1/attempts/{attempt_id}/db', ...options });
+
+/**
+ * Db Query
+ *
+ * One read-only statement (read-only role and transaction, 5 s timeout, 200 rows).
+ */
+export const dbQuery = <ThrowOnError extends boolean = false>(options: Options<DbQueryData, ThrowOnError>): RequestResult<DbQueryResponses, DbQueryErrors, ThrowOnError> => (options.client ?? client).post<DbQueryResponses, DbQueryErrors, ThrowOnError>({
+    url: '/v1/attempts/{attempt_id}/db/query',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * List Deploys
+ */
+export const listDeploys = <ThrowOnError extends boolean = false>(options: Options<ListDeploysData, ThrowOnError>): RequestResult<ListDeploysResponses, ListDeploysErrors, ThrowOnError> => (options.client ?? client).get<ListDeploysResponses, ListDeploysErrors, ThrowOnError>({ url: '/v1/attempts/{attempt_id}/deploys', ...options });
+
+/**
+ * Deploy
+ *
+ * Deploy a service's working tree; it restarts, and `ok` says whether it came back healthy.
+ */
+export const deploy = <ThrowOnError extends boolean = false>(options: Options<DeployData, ThrowOnError>): RequestResult<DeployResponses, DeployErrors, ThrowOnError> => (options.client ?? client).post<DeployResponses, DeployErrors, ThrowOnError>({
+    url: '/v1/attempts/{attempt_id}/deploys',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
  * Attempt Events
  *
  * State changes and sandbox events as SSE. Resumable with Last-Event-ID.
@@ -76,6 +123,61 @@ export const attemptEvents = <ThrowOnError extends boolean = false>(options: Opt
 export const extendAttempt = <ThrowOnError extends boolean = false>(options: Options<ExtendAttemptData, ThrowOnError>): RequestResult<ExtendAttemptResponses, ExtendAttemptErrors, ThrowOnError> => (options.client ?? client).post<ExtendAttemptResponses, ExtendAttemptErrors, ThrowOnError>({ url: '/v1/attempts/{attempt_id}/extend', ...options });
 
 /**
+ * Read File
+ */
+export const readFile = <ThrowOnError extends boolean = false>(options: Options<ReadFileData, ThrowOnError>): RequestResult<ReadFileResponses, ReadFileErrors, ThrowOnError> => (options.client ?? client).get<ReadFileResponses, ReadFileErrors, ThrowOnError>({ url: '/v1/attempts/{attempt_id}/file', ...options });
+
+/**
+ * Write File
+ */
+export const writeFile = <ThrowOnError extends boolean = false>(options: Options<WriteFileData, ThrowOnError>): RequestResult<WriteFileResponses, WriteFileErrors, ThrowOnError> => (options.client ?? client).put<WriteFileResponses, WriteFileErrors, ThrowOnError>({
+    url: '/v1/attempts/{attempt_id}/file',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * List Files
+ */
+export const listFiles = <ThrowOnError extends boolean = false>(options: Options<ListFilesData, ThrowOnError>): RequestResult<ListFilesResponses, ListFilesErrors, ThrowOnError> => (options.client ?? client).get<ListFilesResponses, ListFilesErrors, ThrowOnError>({ url: '/v1/attempts/{attempt_id}/files', ...options });
+
+/**
+ * List Hints
+ */
+export const listHints = <ThrowOnError extends boolean = false>(options: Options<ListHintsData, ThrowOnError>): RequestResult<ListHintsResponses, ListHintsErrors, ThrowOnError> => (options.client ?? client).get<ListHintsResponses, ListHintsErrors, ThrowOnError>({ url: '/v1/attempts/{attempt_id}/hints', ...options });
+
+/**
+ * Take Hint
+ *
+ * Reveal the next hint tier (1 nudge, 2 direction, 3 near-answer). Hint use is scored.
+ */
+export const takeHint = <ThrowOnError extends boolean = false>(options: Options<TakeHintData, ThrowOnError>): RequestResult<TakeHintResponses, TakeHintErrors, ThrowOnError> => (options.client ?? client).post<TakeHintResponses, TakeHintErrors, ThrowOnError>({ url: '/v1/attempts/{attempt_id}/hints', ...options });
+
+/**
+ * Post Message
+ *
+ * A status update from the player to the war room (teammates reply from phase 6).
+ */
+export const postMessage = <ThrowOnError extends boolean = false>(options: Options<PostMessageData, ThrowOnError>): RequestResult<PostMessageResponses, PostMessageErrors, ThrowOnError> => (options.client ?? client).post<PostMessageResponses, PostMessageErrors, ThrowOnError>({
+    url: '/v1/attempts/{attempt_id}/messages',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Declare Mitigated
+ *
+ * Declare the incident mitigated; the claim is checked against the detected state.
+ */
+export const declareMitigated = <ThrowOnError extends boolean = false>(options: Options<DeclareMitigatedData, ThrowOnError>): RequestResult<DeclareMitigatedResponses, DeclareMitigatedErrors, ThrowOnError> => (options.client ?? client).post<DeclareMitigatedResponses, DeclareMitigatedErrors, ThrowOnError>({ url: '/v1/attempts/{attempt_id}/mitigation', ...options });
+
+/**
  * Reset Attempt
  *
  * Rebuild the sandbox in its initial broken state (the session's deadline stays).
@@ -83,11 +185,70 @@ export const extendAttempt = <ThrowOnError extends boolean = false>(options: Opt
 export const resetAttempt = <ThrowOnError extends boolean = false>(options: Options<ResetAttemptData, ThrowOnError>): RequestResult<ResetAttemptResponses, ResetAttemptErrors, ThrowOnError> => (options.client ?? client).post<ResetAttemptResponses, ResetAttemptErrors, ThrowOnError>({ url: '/v1/attempts/{attempt_id}/reset', ...options });
 
 /**
+ * Restart Service
+ */
+export const restartService = <ThrowOnError extends boolean = false>(options: Options<RestartServiceData, ThrowOnError>): RequestResult<RestartServiceResponses, RestartServiceErrors, ThrowOnError> => (options.client ?? client).post<RestartServiceResponses, RestartServiceErrors, ThrowOnError>({
+    url: '/v1/attempts/{attempt_id}/restarts',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Rollback
+ *
+ * Deploy an earlier commit (the working tree is left as it is).
+ */
+export const rollback = <ThrowOnError extends boolean = false>(options: Options<RollbackData, ThrowOnError>): RequestResult<RollbackResponses, RollbackErrors, ThrowOnError> => (options.client ?? client).post<RollbackResponses, RollbackErrors, ThrowOnError>({
+    url: '/v1/attempts/{attempt_id}/rollbacks',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Sandbox Status
+ */
+export const sandboxStatus = <ThrowOnError extends boolean = false>(options: Options<SandboxStatusData, ThrowOnError>): RequestResult<SandboxStatusResponses, SandboxStatusErrors, ThrowOnError> => (options.client ?? client).get<SandboxStatusResponses, SandboxStatusErrors, ThrowOnError>({ url: '/v1/attempts/{attempt_id}/status', ...options });
+
+/**
+ * Touch Attempt
+ *
+ * The player is here (reading counts): resets the idle timeout. Sent at most once a minute.
+ */
+export const touchAttempt = <ThrowOnError extends boolean = false>(options: Options<TouchAttemptData, ThrowOnError>): RequestResult<TouchAttemptResponses, TouchAttemptErrors, ThrowOnError> => (options.client ?? client).post<TouchAttemptResponses, TouchAttemptErrors, ThrowOnError>({ url: '/v1/attempts/{attempt_id}/touch', ...options });
+
+/**
  * Verify Attempt
  *
  * Run the verifier's probes against the sandbox (results arrive as a `verify` event).
  */
 export const verifyAttempt = <ThrowOnError extends boolean = false>(options: Options<VerifyAttemptData, ThrowOnError>): RequestResult<VerifyAttemptResponses, VerifyAttemptErrors, ThrowOnError> => (options.client ?? client).post<VerifyAttemptResponses, VerifyAttemptErrors, ThrowOnError>({ url: '/v1/attempts/{attempt_id}/verify', ...options });
+
+/**
+ * Get Workspace
+ *
+ * Everything the workspace renders before its streams connect (ended attempts too).
+ */
+export const getWorkspace = <ThrowOnError extends boolean = false>(options: Options<GetWorkspaceData, ThrowOnError>): RequestResult<GetWorkspaceResponses, GetWorkspaceErrors, ThrowOnError> => (options.client ?? client).get<GetWorkspaceResponses, GetWorkspaceErrors, ThrowOnError>({ url: '/v1/attempts/{attempt_id}/workspace', ...options });
+
+/**
+ * Create Ws Ticket
+ *
+ * A single-use, one-minute ticket for the terminal or telemetry WebSocket.
+ */
+export const createWsTicket = <ThrowOnError extends boolean = false>(options: Options<CreateWsTicketData, ThrowOnError>): RequestResult<CreateWsTicketResponses, CreateWsTicketErrors, ThrowOnError> => (options.client ?? client).post<CreateWsTicketResponses, CreateWsTicketErrors, ThrowOnError>({
+    url: '/v1/attempts/{attempt_id}/ws-ticket',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
 
 /**
  * Daily Challenge

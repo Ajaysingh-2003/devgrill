@@ -7,7 +7,7 @@ import { TIMELINE } from "@/lib/mock";
 export const metadata: Metadata = { title: "Postmortem" };
 
 export function generateStaticParams() {
-  return [{ attemptId: "inc-4021" }];
+  return [{ attemptId: "demo" }];
 }
 
 const SECTIONS = [

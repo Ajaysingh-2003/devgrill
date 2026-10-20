@@ -3,19 +3,27 @@
 import {
   Code2,
   Database,
-  GitBranch,
+  DoorOpen,
+  Eye,
+  EyeOff,
+  Filter,
   Gauge,
+  GitBranch,
+  Laptop,
   LayoutPanelLeft,
   Lightbulb,
+  RotateCcw,
   ScrollText,
   ShieldCheck,
+  Timer,
   Zap,
-  Laptop,
 } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useState } from "react";
-import { toast } from "sonner";
+import { useRouter } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
 import { CommandPalette, type PaletteCommand } from "@devgrill/ui/components/devgrill/command-palette";
+import { EmptyState } from "@devgrill/ui/components/devgrill/empty-state";
+import { PanelFrame } from "@devgrill/ui/components/devgrill/panel-frame";
 import { SevBadge } from "@devgrill/ui/components/devgrill/sev-badge";
 import { ToolRail, type Tool } from "@devgrill/ui/components/devgrill/tool-rail";
 import {
@@ -23,28 +31,46 @@ import {
   WorkspaceLayout,
   requestPreset,
 } from "@devgrill/ui/components/devgrill/workspace-layout";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@devgrill/ui/components/ui/dialog";
 import { isTypingTarget, useHotkey } from "@devgrill/ui/hooks/use-hotkey";
 import { DevGrillMark } from "@devgrill/ui/icons";
 import { cn } from "@devgrill/ui/lib/utils";
-import { INCIDENT, scenario } from "@/lib/mock";
-import { SidePanel } from "./side-panel";
+import { useActivityTouch } from "./activity";
+import { SourceProvider, useAction, useIncident, useSource } from "./context";
+import { ENDED, type WorkspaceSource } from "./model";
 import {
-  CachePanel,
-  CodePanel,
-  DatabasePanel,
-  DeploysPanel,
-  LogsPanel,
-  OverviewPanel,
-  TerminalPanel,
-} from "./tool-panels";
+  BootOverlay,
+  EndedOverlay,
+  ExpiryBanner,
+  HintsDialog,
+  IdleBanner,
+  NetworkBanner,
+  VerifyDialog,
+  useOverlayShown,
+} from "./overlays";
+import { CachePanel } from "./panels/cache";
+import { CodePanel } from "./panels/code";
+import { DatabasePanel } from "./panels/database";
+import { DeploysPanel } from "./panels/deploys";
+import { LogsPanel } from "./panels/logs";
+import { OverviewPanel } from "./panels/overview";
+import { TerminalPanel } from "./panels/terminal";
+import { SidePanel } from "./side-panel";
 
-const TOOLS: Tool[] = [
-  { id: "overview", label: "Overview", icon: Gauge, badge: 2 },
-  { id: "logs", label: "Logs", icon: ScrollText },
-  { id: "database", label: "Database", icon: Database },
-  { id: "cache", label: "Cache", icon: Zap },
-  { id: "code", label: "Code", icon: Code2 },
-  { id: "deploys", label: "Deploys", icon: GitBranch },
+const TOOLS: (Tool & { key: string })[] = [
+  { id: "overview", key: "overview", label: "Overview", icon: Gauge },
+  { id: "logs", key: "logs", label: "Logs", icon: ScrollText },
+  { id: "database", key: "database", label: "Database", icon: Database },
+  { id: "cache", key: "cache", label: "Cache", icon: Zap },
+  { id: "code", key: "code", label: "Code", icon: Code2 },
+  { id: "deploys", key: "deploys", label: "Deploys", icon: GitBranch },
 ];
 
 const PANELS: Record<string, () => React.ReactNode> = {
@@ -57,35 +83,86 @@ const PANELS: Record<string, () => React.ReactNode> = {
 };
 
 const PHASES = ["Triage", "Investigate", "Mitigate", "Fix", "Verify", "Postmortem"];
-const CURRENT_PHASE = 1;
 
-export function Workspace({ attemptId }: { attemptId: string }) {
-  const s = scenario(INCIDENT.scenario)!;
-  const [tool, setTool] = useState("overview");
+export function Workspace({ source, briefingHref }: { source: WorkspaceSource; briefingHref: string }) {
+  return (
+    <SourceProvider source={source}>
+      <Shell briefingHref={briefingHref} />
+    </SourceProvider>
+  );
+}
+
+function Shell({ briefingHref }: { briefingHref: string }) {
+  const { info, actions } = useSource();
+  const incident = useIncident();
+  const router = useRouter();
+  const unlocked = new Set<string>(info.unlocked_tools);
+  const tools = TOOLS.map((t) => ({ ...t, disabled: !unlocked.has(t.key) }));
+  const [tool, setTool] = useState(tools.find((t) => !t.disabled)?.id ?? "overview");
   const [preset, setPreset] = useState(WORKSPACE_PRESETS[0]!.id);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [hintsOpen, setHintsOpen] = useState(false);
+  const [verifyOpen, setVerifyOpen] = useState(false);
+  const [confirm, setConfirm] = useState<"reset" | "leave" | null>(null);
+  const [claim, setClaim] = useState("");
+  // Guided mode hides the clock by default (no pressure); on-call shows it (PLAN §8.4).
+  const [showClock, setShowClock] = useState(info.attempt.mode !== "guided");
   const Active = PANELS[tool]!;
+  const ended = ENDED.has(incident.state);
+  const sev = Number(info.page?.severity.replace("SEV", "") ?? 3) as 1 | 2 | 3 | 4;
 
-  // The alert region starts empty and the page text is inserted after mount: text that is
-  // already in a server-rendered alert is often not announced.
+  // The page is the only assertive announcement in the workspace (inserted after mount:
+  // text already in a server-rendered alert is often not announced).
   const [paged, setPaged] = useState("");
   useEffect(() => {
-    const id = window.setTimeout(() => setPaged(`Paged: ${INCIDENT.page}`), 400);
+    if (!info.page || incident.state === "provisioning") return;
+    const id = window.setTimeout(() => setPaged(`Paged: ${info.page!.title}`), 400);
     return () => window.clearTimeout(id);
-  }, []);
+  }, [info.page, incident.state]);
 
-  // Number keys 1–6 switch tools (not while typing in the terminal, editor or inputs).
+  // Number keys switch tools (not while typing in the terminal, editor or inputs).
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       if (event.ctrlKey || event.metaKey || event.altKey || isTypingTarget(event.target)) return;
-      const next = TOOLS[Number(event.key) - 1];
-      if (next) setTool(next.id);
+      const next = tools[Number(event.key) - 1];
+      if (next && !next.disabled) setTool(next.id);
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, []);
+  }, [tools]);
 
-  // Incident actions: listed in the palette and bound to the shortcuts it shows.
+  const mitigate = useAction(actions.mitigate);
+  const declareMitigated = async () => {
+    const out = await mitigate.run();
+    if (out) {
+      setClaim(
+        out.correct
+          ? "Declared mitigated, and the metrics agree."
+          : "Declared mitigated, but the SLO still breaches. Keep going: the claim is on your timeline.",
+      );
+    }
+  };
+  const reset = useAction(actions.reset);
+  const verify = useAction(actions.verify);
+  const [verifyFrom, setVerifyFrom] = useState(0);
+  const openVerify = () => {
+    setVerifyFrom(Date.now());
+    setVerifyOpen(true);
+    void verify.run();
+  };
+  const leave = useAction(actions.abandon);
+
+  // Triage while it boots; investigating once paged; mitigating once you act on the system.
+  const phase = useMemo(() => {
+    if (incident.state === "resolved") return 5;
+    if (incident.state === "verifying") return 4;
+    if (incident.state === "mitigated") return 3;
+    if (incident.state === "provisioning") return 0;
+    return incident.events.some((e) => e.type === "deploy" || e.type === "rollback" || e.type === "action")
+      ? 2
+      : 1;
+  }, [incident]);
+
   const incidentCommands: PaletteCommand[] = [
     {
       id: "hint",
@@ -93,7 +170,7 @@ export function Workspace({ attemptId }: { attemptId: string }) {
       label: "Request a hint",
       icon: Lightbulb,
       shortcut: "h",
-      onSelect: () => toast("Hints arrive in phase 4"),
+      onSelect: () => setHintsOpen(true),
     },
     {
       id: "mitigated",
@@ -101,7 +178,7 @@ export function Workspace({ attemptId }: { attemptId: string }) {
       label: "Declare mitigated",
       icon: ShieldCheck,
       shortcut: "m",
-      onSelect: () => toast("Mitigation is checked against real recovery from phase 4"),
+      onSelect: () => void declareMitigated(),
     },
     {
       id: "verify",
@@ -109,10 +186,55 @@ export function Workspace({ attemptId }: { attemptId: string }) {
       label: "Run verify",
       icon: ShieldCheck,
       shortcut: "mod+shift+v",
-      onSelect: () => toast("Verify runs from phase 5"),
+      onSelect: () => openVerify(),
+    },
+    {
+      id: "filter-logs",
+      group: "Incident",
+      label: "Filter logs by…",
+      icon: Filter,
+      onSelect: () => {
+        setTool("logs");
+        window.setTimeout(() => document.getElementById("log-query")?.focus(), 50);
+      },
+    },
+    {
+      id: "rollback",
+      group: "Incident",
+      label: "Roll back…",
+      icon: RotateCcw,
+      onSelect: () => setTool("deploys"),
+    },
+    ...(incident.extendsLeft > 0 && info.extend_minutes > 0
+      ? [
+          {
+            id: "extend",
+            group: "Incident",
+            label: `Extend by ${info.extend_minutes} minutes`,
+            icon: Timer,
+            onSelect: () => void actions.extend(),
+          },
+        ]
+      : []),
+    {
+      id: "reset",
+      group: "Incident",
+      label: "Reset the sandbox",
+      icon: RotateCcw,
+      onSelect: () => setConfirm("reset"),
+    },
+    {
+      id: "leave",
+      group: "Incident",
+      label: "Leave the incident",
+      icon: DoorOpen,
+      onSelect: () => setConfirm("leave"),
     },
   ];
-  const runCommand = (id: string) => incidentCommands.find((c) => c.id === id)?.onSelect();
+  const runCommand = (id: string) => {
+    if (ended || incident.state === "provisioning") return;
+    incidentCommands.find((c) => c.id === id)?.onSelect();
+  };
   useHotkey("h", () => runCommand("hint"));
   useHotkey("m", () => runCommand("mitigated"));
   useHotkey("mod+shift+v", (event) => {
@@ -121,14 +243,16 @@ export function Workspace({ attemptId }: { attemptId: string }) {
   });
 
   const commands: PaletteCommand[] = [
-    ...TOOLS.map((t, i) => ({
-      id: `tool-${t.id}`,
-      group: "Panels",
-      label: `Open ${t.label}`,
-      icon: t.icon,
-      shortcut: String(i + 1),
-      onSelect: () => setTool(t.id),
-    })),
+    ...tools
+      .filter((t) => !t.disabled)
+      .map((t) => ({
+        id: `tool-${t.id}`,
+        group: "Panels",
+        label: `Open ${t.label}`,
+        icon: t.icon,
+        shortcut: String(tools.indexOf(t) + 1),
+        onSelect: () => setTool(t.id),
+      })),
     ...WORKSPACE_PRESETS.map((p, i) => ({
       id: `preset-${p.id}`,
       group: "Layout",
@@ -137,9 +261,12 @@ export function Workspace({ attemptId }: { attemptId: string }) {
       shortcut: `mod+${i + 1}`,
       onSelect: () => requestPreset(p.id),
     })),
-    ...incidentCommands,
+    ...(ended ? [] : incidentCommands),
   ];
 
+  const busy = incident.state === "provisioning" || ended;
+  const covered = useOverlayShown();
+  const lastTouch = useActivityTouch(actions.touch, !busy);
   return (
     <>
       {/* Below 1024 px the workspace is not shrunk: offer the right alternatives instead. */}
@@ -166,38 +293,55 @@ export function Workspace({ attemptId }: { attemptId: string }) {
         </div>
       </div>
 
-      <div className="hidden h-dvh min-h-[40rem] flex-col lg:flex">
+      <div className="relative hidden h-dvh min-h-[40rem] flex-col lg:flex">
         <header className="flex h-12 shrink-0 items-center gap-3 border-b border-border bg-surface px-3">
           <Link
             href="/drills"
-            aria-label="Leave the incident and go to drills"
+            aria-label="Back to drills (the incident keeps running)"
             className="rounded-sm p-1 text-fg"
           >
             <DevGrillMark className="size-5" />
           </Link>
-          <SevBadge sev={INCIDENT.sev} size="md" />
-          <h1 className="truncate text-body font-semibold text-fg">{s.title}</h1>
-          <span className="hidden truncate text-label text-fg-muted xl:inline">{INCIDENT.page}</span>
-          <ElapsedClock startSeconds={492} />
+          {info.page ? <SevBadge sev={sev} size="md" /> : null}
+          <h1 className="truncate text-body font-semibold text-fg">{info.scenario_title}</h1>
+          {info.page ? (
+            <span className="hidden truncate text-label text-fg-muted xl:inline">{info.page.title}</span>
+          ) : null}
+          {showClock ? <ElapsedClock activeAt={incident.activeAt} stopped={ended} /> : null}
+          {info.attempt.mode === "guided" ? (
+            <button
+              type="button"
+              onClick={() => setShowClock((v) => !v)}
+              aria-pressed={!showClock}
+              aria-label={showClock ? "Hide the clock" : "Show the clock"}
+              className="rounded-sm p-1 text-fg-subtle hover:bg-raised hover:text-fg"
+            >
+              {showClock ? (
+                <EyeOff className="size-4" aria-hidden="true" />
+              ) : (
+                <Eye className="size-4" aria-hidden="true" />
+              )}
+            </button>
+          ) : null}
           <p className="ml-2 text-caption text-fg-muted 2xl:hidden">
-            Step {CURRENT_PHASE + 1} of {PHASES.length}:{" "}
-            <span className="font-semibold text-brand-text">{PHASES[CURRENT_PHASE]}</span>
+            Step {phase + 1} of {PHASES.length}:{" "}
+            <span className="font-semibold text-brand-text">{PHASES[phase]}</span>
           </p>
 
           <ol aria-label="Incident phases" className="ml-auto hidden items-center gap-1 2xl:flex">
             {PHASES.map((p, i) => (
               <li
                 key={p}
-                aria-current={i === CURRENT_PHASE ? "step" : undefined}
+                aria-current={i === phase ? "step" : undefined}
                 className={cn(
                   "rounded-full px-2 py-0.5 text-caption",
-                  i < CURRENT_PHASE && "text-success-text",
-                  i === CURRENT_PHASE && "bg-brand-subtle font-semibold text-brand-text",
-                  i > CURRENT_PHASE && "text-fg-subtle",
+                  i < phase && "text-success-text",
+                  i === phase && "bg-brand-subtle font-semibold text-brand-text",
+                  i > phase && "text-fg-subtle",
                 )}
               >
                 {p}
-                {i < CURRENT_PHASE ? <span className="sr-only"> (done)</span> : null}
+                {i < phase ? <span className="sr-only"> (done)</span> : null}
               </li>
             ))}
           </ol>
@@ -222,35 +366,69 @@ export function Workspace({ attemptId }: { attemptId: string }) {
               </button>
             ))}
           </div>
+          {info.hints_total > 0 ? (
+            <button
+              type="button"
+              onClick={() => setHintsOpen(true)}
+              disabled={busy}
+              aria-keyshortcuts="h"
+              className="inline-flex h-8 items-center gap-1.5 rounded-sm border border-border-input px-2.5 text-label font-medium text-fg hover:bg-raised disabled:opacity-50"
+            >
+              <Lightbulb className="size-3.5" aria-hidden="true" />
+              Hint
+              {incident.hints.length ? (
+                <span className="text-fg-subtle tabular-nums">
+                  {incident.hints.length}/{info.hints_total}
+                </span>
+              ) : null}
+            </button>
+          ) : null}
           <button
             type="button"
-            onClick={() => toast("Hints arrive in phase 4")}
-            className="inline-flex h-8 items-center gap-1.5 rounded-sm border border-border-input px-2.5 text-label font-medium text-fg hover:bg-raised"
+            onClick={() => void declareMitigated()}
+            disabled={busy || mitigate.busy}
+            aria-keyshortcuts="m"
+            className="inline-flex h-8 items-center gap-1.5 rounded-sm border border-border-input px-2.5 text-label font-medium text-fg hover:bg-raised disabled:opacity-50"
           >
-            <Lightbulb className="size-3.5" aria-hidden="true" />
-            Hint
+            <ShieldCheck className="size-3.5" aria-hidden="true" />
+            Mitigated
           </button>
-          <Link
-            href={`/incident/${attemptId}/debrief`}
-            className="inline-flex h-8 items-center rounded-sm bg-brand px-3 text-label font-semibold text-on-brand hover:bg-brand-hover"
+          <button
+            type="button"
+            onClick={openVerify}
+            disabled={busy || incident.state === "verifying"}
+            aria-keyshortcuts="Control+Shift+V Meta+Shift+V"
+            className="inline-flex h-8 items-center rounded-sm bg-brand px-3 text-label font-semibold text-on-brand hover:bg-brand-hover disabled:opacity-60"
           >
-            Verify
-          </Link>
+            {incident.state === "verifying" ? "Verifying…" : "Verify"}
+          </button>
         </header>
+        <NetworkBanner />
+        <ExpiryBanner />
+        <IdleBanner lastTouch={lastTouch} />
+        <p className="sr-only" role="status">
+          {claim || mitigate.error || ""}
+        </p>
 
-        <div className="flex min-h-0 flex-1">
+        <div className="relative flex min-h-0 flex-1">
           {/* A tablist, not navigation: it switches the panel in place. */}
-          <aside aria-label="Incident tools" className="w-44 shrink-0 border-r border-border bg-surface">
-            <ToolRail tools={TOOLS} value={tool} onValueChange={setTool} panelId="tool-panel" />
+          <aside
+            inert={covered}
+            aria-label="Incident tools"
+            className="w-44 shrink-0 border-r border-border bg-surface"
+          >
+            <ToolRail tools={tools} value={tool} onValueChange={setTool} panelId="tool-panel" />
           </aside>
-          <main id="main" className="min-w-0 flex-1">
+          <main id="main" inert={covered} className="min-w-0 flex-1">
             <WorkspaceLayout
               primary={<Active />}
-              secondary={<TerminalPanel />}
+              secondary={unlocked.has("terminal") ? <TerminalPanel /> : <LockedTerminal />}
               side={<SidePanel />}
               onPresetChange={(p) => setPreset(p.id)}
             />
           </main>
+          <BootOverlay />
+          <EndedOverlay briefingHref={briefingHref} />
         </div>
       </div>
 
@@ -259,16 +437,76 @@ export function Workspace({ attemptId }: { attemptId: string }) {
         {paged}
       </p>
       <CommandPalette commands={commands} open={paletteOpen} onOpenChange={setPaletteOpen} />
+      <HintsDialog open={hintsOpen} onOpenChange={setHintsOpen} />
+      <VerifyDialog
+        open={verifyOpen}
+        onOpenChange={setVerifyOpen}
+        startedAt={verifyFrom}
+        error={verify.error}
+      />
+      <Dialog open={confirm !== null} onOpenChange={(open) => !open && setConfirm(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>{confirm === "reset" ? "Reset the sandbox?" : "Leave this incident?"}</DialogTitle>
+            <DialogDescription>
+              {confirm === "reset"
+                ? "The system goes back to its initial broken state: your deploys and data changes are lost. The clock keeps running."
+                : "The sandbox is torn down and the attempt ends. You can start the incident again from its briefing."}
+            </DialogDescription>
+          </DialogHeader>
+          {reset.error || leave.error ? (
+            <p className="text-body text-danger-text">{reset.error ?? leave.error}</p>
+          ) : null}
+          <DialogFooter>
+            <button
+              type="button"
+              onClick={() => setConfirm(null)}
+              className="h-10 rounded-sm px-4 text-body font-medium text-fg hover:bg-raised"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              disabled={reset.busy || leave.busy}
+              onClick={async () => {
+                if (confirm === "reset") {
+                  await reset.run();
+                  setConfirm(null);
+                } else {
+                  await leave.run();
+                  setConfirm(null);
+                  router.push(briefingHref);
+                }
+              }}
+              className="h-10 rounded-sm bg-danger-solid px-4 text-body font-semibold text-on-danger disabled:opacity-60"
+            >
+              {confirm === "reset" ? "Reset" : "Leave"}
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }
 
-function ElapsedClock({ startSeconds }: { startSeconds: number }) {
-  const [seconds, setSeconds] = useState(startSeconds);
+function LockedTerminal() {
+  return (
+    <PanelFrame id="terminal" title="Terminal" bodyClassName="bg-sunken">
+      <EmptyState icon={ScrollText} title="The terminal unlocks in a later tutorial" compact>
+        For this one, the panels on the left are enough.
+      </EmptyState>
+    </PanelFrame>
+  );
+}
+
+function ElapsedClock({ activeAt, stopped }: { activeAt: number | null; stopped: boolean }) {
+  const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
-    const id = setInterval(() => setSeconds((s) => s + 1), 1000);
+    if (stopped) return;
+    const id = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(id);
-  }, []);
+  }, [stopped]);
+  const seconds = activeAt ? Math.max(0, Math.floor((now - activeAt) / 1000)) : 0;
   const mm = String(Math.floor(seconds / 60)).padStart(2, "0");
   const ss = String(seconds % 60).padStart(2, "0");
   return (

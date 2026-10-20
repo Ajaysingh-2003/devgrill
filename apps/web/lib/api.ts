@@ -1,9 +1,11 @@
 import "server-only";
+import { cookies } from "next/headers";
 import { notFound } from "next/navigation";
 import { connection } from "next/server";
 import { cache } from "react";
 import { createClient, createConfig, type Client, type Problem } from "@devgrill/api-client";
 import { getApiToken } from "./auth";
+import { GUEST_COOKIE } from "./guest";
 
 /** An API error that isn't a 404, carrying the RFC 9457 problem for error boundaries. */
 export class ApiError extends Error {
@@ -20,17 +22,25 @@ export class ApiError extends Error {
 /** One id per page render, sent to the API so web and API logs line up (X-Request-ID). */
 const requestId = cache(() => crypto.randomUUID().replaceAll("-", ""));
 
-/** A client for this request: server-to-server base URL, plus the user's JWT if signed in. */
+/** Who the API should see: the user's JWT, or else the guest token from its httpOnly cookie. */
+export async function callerHeaders(): Promise<Record<string, string>> {
+  const token = await getApiToken();
+  if (token) return { Authorization: `Bearer ${token}` };
+  const guest = (await cookies()).get(GUEST_COOKIE)?.value;
+  return guest ? { "x-guest-token": guest } : {};
+}
+
+/** A client for this request: server-to-server base URL, plus the caller's credentials. */
 export async function api(): Promise<Client> {
   // API data is per request (and the request id is random): never part of a prerender.
   await connection();
-  const token = await getApiToken();
+  const caller = await callerHeaders();
   return createClient(
     createConfig({
       baseUrl: process.env.API_INTERNAL_URL ?? "http://localhost:8000",
       headers: {
         "x-request-id": requestId(),
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...caller,
       },
       cache: "no-store",
     }),

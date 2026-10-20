@@ -29,6 +29,22 @@ def events_channel(attempt_id: str) -> str:
     return f"attempt:{attempt_id}:events"
 
 
+def telemetry_channel(attempt_id: str) -> str:
+    """Valkey pub/sub channel carrying each metrics sample as JSON (the worker's monitor)."""
+    return f"attempt:{attempt_id}:telemetry"
+
+
+def samples_key(attempt_id: str) -> str:
+    """Valkey list of recent samples, newest first (charts' history after a reload)."""
+    return f"attempt:{attempt_id}:samples"
+
+
+#: Metrics are sampled every SAMPLE_EVERY_S; history keeps HISTORY_SAMPLES (30 minutes).
+SAMPLE_EVERY_S = 2.0
+HISTORY_SAMPLES = 900
+SIGNAL_HEALTH = "health"
+
+
 @dataclass(slots=True)
 class LifecycleInput:
     attempt_id: str
@@ -51,9 +67,18 @@ class LaterFault:
 
 
 @dataclass(slots=True)
+class TimedBeat:
+    """A teammate message due at T + at_seconds (index into the scenario's beats)."""
+
+    at_seconds: int
+    index: int
+
+
+@dataclass(slots=True)
 class Provisioned:
     ref: str
     later_faults: list[LaterFault] = field(default_factory=list)
+    timed_beats: list[TimedBeat] = field(default_factory=list)
 
 
 @dataclass(slots=True)

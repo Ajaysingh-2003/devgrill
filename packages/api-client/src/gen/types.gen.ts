@@ -87,6 +87,24 @@ export type ApproachOut = {
 export type ApproachOutcome = 'full' | 'partial' | 'fails';
 
 /**
+ * AskedKey
+ */
+export type AskedKey = {
+    /**
+     * Count
+     */
+    count: number;
+    /**
+     * Exists
+     */
+    exists: boolean;
+    /**
+     * Key
+     */
+    key: string;
+};
+
+/**
  * AttemptIn
  */
 export type AttemptIn = {
@@ -268,6 +286,81 @@ export type BriefingSpec = {
 };
 
 /**
+ * CacheKey
+ */
+export type CacheKey = {
+    /**
+     * Key
+     */
+    key: string;
+    /**
+     * Ttl
+     */
+    ttl: number;
+};
+
+/**
+ * CacheOut
+ */
+export type CacheOut = {
+    /**
+     * Asked
+     */
+    asked: Array<AskedKey>;
+    /**
+     * Keys
+     */
+    keys: Array<CacheKey>;
+    stats: CacheStats;
+    /**
+     * Window S
+     */
+    window_s: number;
+};
+
+/**
+ * CacheStats
+ */
+export type CacheStats = {
+    /**
+     * Clients
+     */
+    clients: number;
+    /**
+     * Evicted Keys
+     */
+    evicted_keys: number;
+    /**
+     * Hit Rate
+     */
+    hit_rate: number | null;
+    /**
+     * Hits
+     */
+    hits: number;
+    /**
+     * Keys
+     */
+    keys: number;
+    /**
+     * Maxmemory
+     */
+    maxmemory: number;
+    /**
+     * Misses
+     */
+    misses: number;
+    /**
+     * Ops Per Sec
+     */
+    ops_per_sec: number;
+    /**
+     * Used Memory
+     */
+    used_memory: number;
+};
+
+/**
  * ChallengeKind
  */
 export type ChallengeKind = 'daily' | 'weekly';
@@ -331,6 +424,186 @@ export type ClaimGuestOut = {
 };
 
 /**
+ * Commit
+ */
+export type Commit = {
+    /**
+     * At
+     */
+    at: number;
+    /**
+     * Author
+     */
+    author: string;
+    /**
+     * Message
+     */
+    message: string;
+    /**
+     * Sha
+     */
+    sha: string;
+    /**
+     * Short
+     */
+    short: string;
+};
+
+/**
+ * DbConnections
+ */
+export type DbConnections = {
+    /**
+     * N
+     */
+    n: number;
+    /**
+     * State
+     */
+    state: string;
+};
+
+/**
+ * DbInsightsOut
+ */
+export type DbInsightsOut = {
+    /**
+     * Active
+     */
+    active: Array<DbSession>;
+    /**
+     * Connections
+     */
+    connections: Array<DbConnections>;
+    /**
+     * Max Connections
+     */
+    max_connections: number;
+    /**
+     * Top
+     */
+    top: Array<DbStatement>;
+};
+
+/**
+ * DbSession
+ */
+export type DbSession = {
+    /**
+     * Blocked By
+     */
+    blocked_by: Array<number>;
+    /**
+     * Pid
+     */
+    pid: number;
+    /**
+     * Query
+     */
+    query: string | null;
+    /**
+     * Seconds
+     */
+    seconds: number | null;
+    /**
+     * State
+     */
+    state: string | null;
+    /**
+     * User
+     */
+    user: string | null;
+    /**
+     * Wait Event
+     */
+    wait_event: string | null;
+    /**
+     * Wait Event Type
+     */
+    wait_event_type: string | null;
+};
+
+/**
+ * DbStatement
+ */
+export type DbStatement = {
+    /**
+     * Calls
+     */
+    calls: number;
+    /**
+     * Mean Ms
+     */
+    mean_ms: number;
+    /**
+     * Query
+     */
+    query: string;
+    /**
+     * Rows
+     */
+    rows: number;
+    /**
+     * Total Ms
+     */
+    total_ms: number;
+};
+
+/**
+ * DeployHistoryOut
+ */
+export type DeployHistoryOut = {
+    /**
+     * Commits
+     */
+    commits: Array<Commit>;
+    /**
+     * Live
+     */
+    live: string | null;
+    /**
+     * Live Dirty
+     */
+    live_dirty: boolean;
+    /**
+     * Service
+     */
+    service: string;
+};
+
+/**
+ * DeployIn
+ */
+export type DeployIn = {
+    /**
+     * Service
+     */
+    service?: string | null;
+};
+
+/**
+ * DeployOut
+ */
+export type DeployOut = {
+    /**
+     * Log
+     */
+    log: string;
+    /**
+     * Message
+     */
+    message: string;
+    /**
+     * Ok
+     */
+    ok: boolean;
+    /**
+     * Sha
+     */
+    sha: string;
+};
+
+/**
  * Difficulty
  *
  * Severity of an incident. SEV1 is the hardest.
@@ -358,6 +631,66 @@ export type FieldError = {
      * Type
      */
     type: string;
+};
+
+/**
+ * FileIn
+ */
+export type FileIn = {
+    /**
+     * Content
+     */
+    content: string;
+};
+
+/**
+ * FileOut
+ */
+export type FileOut = {
+    /**
+     * Content
+     */
+    content: string;
+    /**
+     * Path
+     */
+    path: string;
+    /**
+     * Service
+     */
+    service: string;
+};
+
+/**
+ * FileSaved
+ */
+export type FileSaved = {
+    /**
+     * Path
+     */
+    path: string;
+    /**
+     * Saved
+     */
+    saved: boolean;
+    /**
+     * Service
+     */
+    service: string;
+};
+
+/**
+ * FilesOut
+ */
+export type FilesOut = {
+    /**
+     * Files
+     */
+    files: Array<string>;
+    /**
+     * Service
+     */
+    service: string;
 };
 
 /**
@@ -400,6 +733,20 @@ export type Health = {
      * Version
      */
     version?: string;
+};
+
+/**
+ * HintOut
+ */
+export type HintOut = {
+    /**
+     * Text
+     */
+    text: string;
+    /**
+     * Tier
+     */
+    tier: number;
 };
 
 /**
@@ -466,6 +813,47 @@ export type MePatch = {
      * Prefs
      */
     prefs?: PrefsPatch;
+};
+
+/**
+ * MessageIn
+ */
+export type MessageIn = {
+    /**
+     * Text
+     */
+    text: string;
+};
+
+/**
+ * MitigationOut
+ *
+ * A "declare mitigated" claim, scored against the real state the workflow detected.
+ */
+export type MitigationOut = {
+    /**
+     * Correct
+     */
+    correct: boolean;
+    /**
+     * Declared
+     */
+    declared: boolean;
+    real_state: AttemptState;
+};
+
+/**
+ * PageOut
+ */
+export type PageOut = {
+    /**
+     * Severity
+     */
+    severity: 'SEV1' | 'SEV2' | 'SEV3' | 'SEV4';
+    /**
+     * Title
+     */
+    title: string;
 };
 
 /**
@@ -581,6 +969,42 @@ export type PublicProfile = {
 };
 
 /**
+ * QueryIn
+ */
+export type QueryIn = {
+    /**
+     * Sql
+     */
+    sql: string;
+};
+
+/**
+ * QueryOut
+ */
+export type QueryOut = {
+    /**
+     * Columns
+     */
+    columns?: Array<string>;
+    /**
+     * Error
+     */
+    error?: string | null;
+    /**
+     * Ms
+     */
+    ms?: number | null;
+    /**
+     * Rows
+     */
+    rows?: Array<Array<string | number | number | boolean | null>>;
+    /**
+     * Truncated
+     */
+    truncated?: boolean;
+};
+
+/**
  * Quota
  */
 export type Quota = {
@@ -630,6 +1054,40 @@ export type Readiness = {
      * Status
      */
     status: 'ok' | 'degraded';
+};
+
+/**
+ * RestartIn
+ */
+export type RestartIn = {
+    /**
+     * Service
+     */
+    service: string;
+};
+
+/**
+ * RestartOut
+ */
+export type RestartOut = {
+    /**
+     * Message
+     */
+    message: string;
+};
+
+/**
+ * RollbackIn
+ */
+export type RollbackIn = {
+    /**
+     * Ref
+     */
+    ref: string;
+    /**
+     * Service
+     */
+    service?: string | null;
 };
 
 /**
@@ -717,6 +1175,60 @@ export type ScenarioStats = {
 export type ScenarioStatus = 'draft' | 'review' | 'published' | 'retired';
 
 /**
+ * ServiceStatus
+ */
+export type ServiceStatus = {
+    /**
+     * Health
+     */
+    health: string | null;
+    /**
+     * Name
+     */
+    name: string;
+    /**
+     * Oom Killed
+     */
+    oom_killed: boolean;
+    /**
+     * Restarts
+     */
+    restarts: number;
+    /**
+     * Started At
+     */
+    started_at: string | null;
+    /**
+     * State
+     */
+    state: string | null;
+};
+
+/**
+ * SloTarget
+ */
+export type SloTarget = {
+    /**
+     * Gt
+     */
+    gt?: number | null;
+    /**
+     * Lt
+     */
+    lt?: number | null;
+};
+
+/**
+ * StatusOut
+ */
+export type StatusOut = {
+    /**
+     * Services
+     */
+    services: Array<ServiceStatus>;
+};
+
+/**
  * StreakMode
  */
 export type StreakMode = 'daily' | 'weekly';
@@ -772,6 +1284,34 @@ export type SystemNode = {
      * Role
      */
     role?: 'path' | 'side';
+};
+
+/**
+ * TicketIn
+ */
+export type TicketIn = {
+    /**
+     * Kind
+     */
+    kind: 'terminal' | 'telemetry';
+};
+
+/**
+ * TicketOut
+ */
+export type TicketOut = {
+    /**
+     * Expires In
+     */
+    expires_in: number;
+    /**
+     * Ticket
+     */
+    ticket: string;
+    /**
+     * Url
+     */
+    url: string;
 };
 
 /**
@@ -1013,6 +1553,67 @@ export type UsageOut = {
      * Tier
      */
     tier: 'guest' | 'free' | 'pro' | 'team';
+};
+
+/**
+ * WorkspaceOut
+ *
+ * Everything the incident workspace needs to render before the live streams connect.
+ */
+export type WorkspaceOut = {
+    attempt: AttemptOut;
+    /**
+     * Deployable
+     */
+    deployable: Array<string>;
+    difficulty: Difficulty;
+    /**
+     * Extend Minutes
+     */
+    extend_minutes: number;
+    /**
+     * Extends Left
+     */
+    extends_left: number;
+    /**
+     * Gateway Url
+     */
+    gateway_url: string;
+    /**
+     * Hints
+     */
+    hints: Array<HintOut>;
+    /**
+     * Hints Total
+     */
+    hints_total: number;
+    /**
+     * Idle Minutes
+     */
+    idle_minutes: number;
+    /**
+     * Metrics
+     */
+    metrics: Array<string>;
+    page: PageOut | null;
+    /**
+     * Scenario Title
+     */
+    scenario_title: string;
+    /**
+     * Slo
+     */
+    slo: {
+        [key: string]: SloTarget;
+    };
+    /**
+     * Track Slug
+     */
+    track_slug: string;
+    /**
+     * Unlocked Tools
+     */
+    unlocked_tools: Array<'overview' | 'logs' | 'terminal' | 'database' | 'cache' | 'code' | 'deploys' | 'war_room'>;
 };
 
 export type HealthzData = {
@@ -1347,6 +1948,371 @@ export type GetAttemptResponses = {
 
 export type GetAttemptResponse = GetAttemptResponses[keyof GetAttemptResponses];
 
+export type CacheInsightsData = {
+    body?: never;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+        /**
+         * X-Guest-Token
+         */
+        'x-guest-token'?: string | null;
+    };
+    path: {
+        /**
+         * Attempt Id
+         */
+        attempt_id: string;
+    };
+    query?: never;
+    url: '/v1/attempts/{attempt_id}/cache';
+};
+
+export type CacheInsightsErrors = {
+    /**
+     * Bad request (e.g. an invalid cursor).
+     */
+    400: Problem;
+    /**
+     * Missing or invalid credentials.
+     */
+    401: Problem;
+    /**
+     * Signed in, but not allowed.
+     */
+    403: Problem;
+    /**
+     * Not found.
+     */
+    404: Problem;
+    /**
+     * Conflict (e.g. a request with this Idempotency-Key is still running).
+     */
+    409: Problem;
+    /**
+     * The request is invalid; see `errors`.
+     */
+    422: Problem;
+    /**
+     * Rate limited; see Retry-After.
+     */
+    429: Problem;
+    /**
+     * Server error.
+     */
+    500: Problem;
+    /**
+     * Temporarily unavailable.
+     */
+    503: Problem;
+};
+
+export type CacheInsightsError = CacheInsightsErrors[keyof CacheInsightsErrors];
+
+export type CacheInsightsResponses = {
+    /**
+     * Successful Response
+     */
+    200: CacheOut;
+};
+
+export type CacheInsightsResponse = CacheInsightsResponses[keyof CacheInsightsResponses];
+
+export type DbInsightsData = {
+    body?: never;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+        /**
+         * X-Guest-Token
+         */
+        'x-guest-token'?: string | null;
+    };
+    path: {
+        /**
+         * Attempt Id
+         */
+        attempt_id: string;
+    };
+    query?: never;
+    url: '/v1/attempts/{attempt_id}/db';
+};
+
+export type DbInsightsErrors = {
+    /**
+     * Bad request (e.g. an invalid cursor).
+     */
+    400: Problem;
+    /**
+     * Missing or invalid credentials.
+     */
+    401: Problem;
+    /**
+     * Signed in, but not allowed.
+     */
+    403: Problem;
+    /**
+     * Not found.
+     */
+    404: Problem;
+    /**
+     * Conflict (e.g. a request with this Idempotency-Key is still running).
+     */
+    409: Problem;
+    /**
+     * The request is invalid; see `errors`.
+     */
+    422: Problem;
+    /**
+     * Rate limited; see Retry-After.
+     */
+    429: Problem;
+    /**
+     * Server error.
+     */
+    500: Problem;
+    /**
+     * Temporarily unavailable.
+     */
+    503: Problem;
+};
+
+export type DbInsightsError = DbInsightsErrors[keyof DbInsightsErrors];
+
+export type DbInsightsResponses = {
+    /**
+     * Successful Response
+     */
+    200: DbInsightsOut;
+};
+
+export type DbInsightsResponse = DbInsightsResponses[keyof DbInsightsResponses];
+
+export type DbQueryData = {
+    body: QueryIn;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+        /**
+         * X-Guest-Token
+         */
+        'x-guest-token'?: string | null;
+    };
+    path: {
+        /**
+         * Attempt Id
+         */
+        attempt_id: string;
+    };
+    query?: never;
+    url: '/v1/attempts/{attempt_id}/db/query';
+};
+
+export type DbQueryErrors = {
+    /**
+     * Bad request (e.g. an invalid cursor).
+     */
+    400: Problem;
+    /**
+     * Missing or invalid credentials.
+     */
+    401: Problem;
+    /**
+     * Signed in, but not allowed.
+     */
+    403: Problem;
+    /**
+     * Not found.
+     */
+    404: Problem;
+    /**
+     * Conflict (e.g. a request with this Idempotency-Key is still running).
+     */
+    409: Problem;
+    /**
+     * The request is invalid; see `errors`.
+     */
+    422: Problem;
+    /**
+     * Rate limited; see Retry-After.
+     */
+    429: Problem;
+    /**
+     * Server error.
+     */
+    500: Problem;
+    /**
+     * Temporarily unavailable.
+     */
+    503: Problem;
+};
+
+export type DbQueryError = DbQueryErrors[keyof DbQueryErrors];
+
+export type DbQueryResponses = {
+    /**
+     * Successful Response
+     */
+    200: QueryOut;
+};
+
+export type DbQueryResponse = DbQueryResponses[keyof DbQueryResponses];
+
+export type ListDeploysData = {
+    body?: never;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+        /**
+         * X-Guest-Token
+         */
+        'x-guest-token'?: string | null;
+    };
+    path: {
+        /**
+         * Attempt Id
+         */
+        attempt_id: string;
+    };
+    query?: {
+        /**
+         * Service
+         */
+        service?: string | null;
+    };
+    url: '/v1/attempts/{attempt_id}/deploys';
+};
+
+export type ListDeploysErrors = {
+    /**
+     * Bad request (e.g. an invalid cursor).
+     */
+    400: Problem;
+    /**
+     * Missing or invalid credentials.
+     */
+    401: Problem;
+    /**
+     * Signed in, but not allowed.
+     */
+    403: Problem;
+    /**
+     * Not found.
+     */
+    404: Problem;
+    /**
+     * Conflict (e.g. a request with this Idempotency-Key is still running).
+     */
+    409: Problem;
+    /**
+     * The request is invalid; see `errors`.
+     */
+    422: Problem;
+    /**
+     * Rate limited; see Retry-After.
+     */
+    429: Problem;
+    /**
+     * Server error.
+     */
+    500: Problem;
+    /**
+     * Temporarily unavailable.
+     */
+    503: Problem;
+};
+
+export type ListDeploysError = ListDeploysErrors[keyof ListDeploysErrors];
+
+export type ListDeploysResponses = {
+    /**
+     * Successful Response
+     */
+    200: DeployHistoryOut;
+};
+
+export type ListDeploysResponse = ListDeploysResponses[keyof ListDeploysResponses];
+
+export type DeployData = {
+    body: DeployIn;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+        /**
+         * X-Guest-Token
+         */
+        'x-guest-token'?: string | null;
+    };
+    path: {
+        /**
+         * Attempt Id
+         */
+        attempt_id: string;
+    };
+    query?: never;
+    url: '/v1/attempts/{attempt_id}/deploys';
+};
+
+export type DeployErrors = {
+    /**
+     * Bad request (e.g. an invalid cursor).
+     */
+    400: Problem;
+    /**
+     * Missing or invalid credentials.
+     */
+    401: Problem;
+    /**
+     * Signed in, but not allowed.
+     */
+    403: Problem;
+    /**
+     * Not found.
+     */
+    404: Problem;
+    /**
+     * Conflict (e.g. a request with this Idempotency-Key is still running).
+     */
+    409: Problem;
+    /**
+     * The request is invalid; see `errors`.
+     */
+    422: Problem;
+    /**
+     * Rate limited; see Retry-After.
+     */
+    429: Problem;
+    /**
+     * Server error.
+     */
+    500: Problem;
+    /**
+     * Temporarily unavailable.
+     */
+    503: Problem;
+};
+
+export type DeployError = DeployErrors[keyof DeployErrors];
+
+export type DeployResponses = {
+    /**
+     * Successful Response
+     */
+    200: DeployOut;
+};
+
+export type DeployResponse = DeployResponses[keyof DeployResponses];
+
 export type AttemptEventsData = {
     body?: never;
     headers?: {
@@ -1493,6 +2459,535 @@ export type ExtendAttemptResponses = {
 
 export type ExtendAttemptResponse = ExtendAttemptResponses[keyof ExtendAttemptResponses];
 
+export type ReadFileData = {
+    body?: never;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+        /**
+         * X-Guest-Token
+         */
+        'x-guest-token'?: string | null;
+    };
+    path: {
+        /**
+         * Attempt Id
+         */
+        attempt_id: string;
+    };
+    query: {
+        /**
+         * Path
+         */
+        path: string;
+        /**
+         * Service
+         */
+        service?: string | null;
+    };
+    url: '/v1/attempts/{attempt_id}/file';
+};
+
+export type ReadFileErrors = {
+    /**
+     * Bad request (e.g. an invalid cursor).
+     */
+    400: Problem;
+    /**
+     * Missing or invalid credentials.
+     */
+    401: Problem;
+    /**
+     * Signed in, but not allowed.
+     */
+    403: Problem;
+    /**
+     * Not found.
+     */
+    404: Problem;
+    /**
+     * Conflict (e.g. a request with this Idempotency-Key is still running).
+     */
+    409: Problem;
+    /**
+     * The request is invalid; see `errors`.
+     */
+    422: Problem;
+    /**
+     * Rate limited; see Retry-After.
+     */
+    429: Problem;
+    /**
+     * Server error.
+     */
+    500: Problem;
+    /**
+     * Temporarily unavailable.
+     */
+    503: Problem;
+};
+
+export type ReadFileError = ReadFileErrors[keyof ReadFileErrors];
+
+export type ReadFileResponses = {
+    /**
+     * Successful Response
+     */
+    200: FileOut;
+};
+
+export type ReadFileResponse = ReadFileResponses[keyof ReadFileResponses];
+
+export type WriteFileData = {
+    body: FileIn;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+        /**
+         * X-Guest-Token
+         */
+        'x-guest-token'?: string | null;
+    };
+    path: {
+        /**
+         * Attempt Id
+         */
+        attempt_id: string;
+    };
+    query: {
+        /**
+         * Path
+         */
+        path: string;
+        /**
+         * Service
+         */
+        service?: string | null;
+    };
+    url: '/v1/attempts/{attempt_id}/file';
+};
+
+export type WriteFileErrors = {
+    /**
+     * Bad request (e.g. an invalid cursor).
+     */
+    400: Problem;
+    /**
+     * Missing or invalid credentials.
+     */
+    401: Problem;
+    /**
+     * Signed in, but not allowed.
+     */
+    403: Problem;
+    /**
+     * Not found.
+     */
+    404: Problem;
+    /**
+     * Conflict (e.g. a request with this Idempotency-Key is still running).
+     */
+    409: Problem;
+    /**
+     * The request is invalid; see `errors`.
+     */
+    422: Problem;
+    /**
+     * Rate limited; see Retry-After.
+     */
+    429: Problem;
+    /**
+     * Server error.
+     */
+    500: Problem;
+    /**
+     * Temporarily unavailable.
+     */
+    503: Problem;
+};
+
+export type WriteFileError = WriteFileErrors[keyof WriteFileErrors];
+
+export type WriteFileResponses = {
+    /**
+     * Successful Response
+     */
+    200: FileSaved;
+};
+
+export type WriteFileResponse = WriteFileResponses[keyof WriteFileResponses];
+
+export type ListFilesData = {
+    body?: never;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+        /**
+         * X-Guest-Token
+         */
+        'x-guest-token'?: string | null;
+    };
+    path: {
+        /**
+         * Attempt Id
+         */
+        attempt_id: string;
+    };
+    query?: {
+        /**
+         * Service
+         */
+        service?: string | null;
+    };
+    url: '/v1/attempts/{attempt_id}/files';
+};
+
+export type ListFilesErrors = {
+    /**
+     * Bad request (e.g. an invalid cursor).
+     */
+    400: Problem;
+    /**
+     * Missing or invalid credentials.
+     */
+    401: Problem;
+    /**
+     * Signed in, but not allowed.
+     */
+    403: Problem;
+    /**
+     * Not found.
+     */
+    404: Problem;
+    /**
+     * Conflict (e.g. a request with this Idempotency-Key is still running).
+     */
+    409: Problem;
+    /**
+     * The request is invalid; see `errors`.
+     */
+    422: Problem;
+    /**
+     * Rate limited; see Retry-After.
+     */
+    429: Problem;
+    /**
+     * Server error.
+     */
+    500: Problem;
+    /**
+     * Temporarily unavailable.
+     */
+    503: Problem;
+};
+
+export type ListFilesError = ListFilesErrors[keyof ListFilesErrors];
+
+export type ListFilesResponses = {
+    /**
+     * Successful Response
+     */
+    200: FilesOut;
+};
+
+export type ListFilesResponse = ListFilesResponses[keyof ListFilesResponses];
+
+export type ListHintsData = {
+    body?: never;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+        /**
+         * X-Guest-Token
+         */
+        'x-guest-token'?: string | null;
+    };
+    path: {
+        /**
+         * Attempt Id
+         */
+        attempt_id: string;
+    };
+    query?: never;
+    url: '/v1/attempts/{attempt_id}/hints';
+};
+
+export type ListHintsErrors = {
+    /**
+     * Bad request (e.g. an invalid cursor).
+     */
+    400: Problem;
+    /**
+     * Missing or invalid credentials.
+     */
+    401: Problem;
+    /**
+     * Signed in, but not allowed.
+     */
+    403: Problem;
+    /**
+     * Not found.
+     */
+    404: Problem;
+    /**
+     * Conflict (e.g. a request with this Idempotency-Key is still running).
+     */
+    409: Problem;
+    /**
+     * The request is invalid; see `errors`.
+     */
+    422: Problem;
+    /**
+     * Rate limited; see Retry-After.
+     */
+    429: Problem;
+    /**
+     * Server error.
+     */
+    500: Problem;
+    /**
+     * Temporarily unavailable.
+     */
+    503: Problem;
+};
+
+export type ListHintsError = ListHintsErrors[keyof ListHintsErrors];
+
+export type ListHintsResponses = {
+    /**
+     * Response List Hints
+     *
+     * Successful Response
+     */
+    200: Array<HintOut>;
+};
+
+export type ListHintsResponse = ListHintsResponses[keyof ListHintsResponses];
+
+export type TakeHintData = {
+    body?: never;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+        /**
+         * X-Guest-Token
+         */
+        'x-guest-token'?: string | null;
+    };
+    path: {
+        /**
+         * Attempt Id
+         */
+        attempt_id: string;
+    };
+    query?: never;
+    url: '/v1/attempts/{attempt_id}/hints';
+};
+
+export type TakeHintErrors = {
+    /**
+     * Bad request (e.g. an invalid cursor).
+     */
+    400: Problem;
+    /**
+     * Missing or invalid credentials.
+     */
+    401: Problem;
+    /**
+     * Signed in, but not allowed.
+     */
+    403: Problem;
+    /**
+     * Not found.
+     */
+    404: Problem;
+    /**
+     * Conflict (e.g. a request with this Idempotency-Key is still running).
+     */
+    409: Problem;
+    /**
+     * The request is invalid; see `errors`.
+     */
+    422: Problem;
+    /**
+     * Rate limited; see Retry-After.
+     */
+    429: Problem;
+    /**
+     * Server error.
+     */
+    500: Problem;
+    /**
+     * Temporarily unavailable.
+     */
+    503: Problem;
+};
+
+export type TakeHintError = TakeHintErrors[keyof TakeHintErrors];
+
+export type TakeHintResponses = {
+    /**
+     * Successful Response
+     */
+    201: HintOut;
+};
+
+export type TakeHintResponse = TakeHintResponses[keyof TakeHintResponses];
+
+export type PostMessageData = {
+    body: MessageIn;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+        /**
+         * X-Guest-Token
+         */
+        'x-guest-token'?: string | null;
+    };
+    path: {
+        /**
+         * Attempt Id
+         */
+        attempt_id: string;
+    };
+    query?: never;
+    url: '/v1/attempts/{attempt_id}/messages';
+};
+
+export type PostMessageErrors = {
+    /**
+     * Bad request (e.g. an invalid cursor).
+     */
+    400: Problem;
+    /**
+     * Missing or invalid credentials.
+     */
+    401: Problem;
+    /**
+     * Signed in, but not allowed.
+     */
+    403: Problem;
+    /**
+     * Not found.
+     */
+    404: Problem;
+    /**
+     * Conflict (e.g. a request with this Idempotency-Key is still running).
+     */
+    409: Problem;
+    /**
+     * The request is invalid; see `errors`.
+     */
+    422: Problem;
+    /**
+     * Rate limited; see Retry-After.
+     */
+    429: Problem;
+    /**
+     * Server error.
+     */
+    500: Problem;
+    /**
+     * Temporarily unavailable.
+     */
+    503: Problem;
+};
+
+export type PostMessageError = PostMessageErrors[keyof PostMessageErrors];
+
+export type PostMessageResponses = {
+    /**
+     * Successful Response
+     */
+    204: void;
+};
+
+export type PostMessageResponse = PostMessageResponses[keyof PostMessageResponses];
+
+export type DeclareMitigatedData = {
+    body?: never;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+        /**
+         * X-Guest-Token
+         */
+        'x-guest-token'?: string | null;
+    };
+    path: {
+        /**
+         * Attempt Id
+         */
+        attempt_id: string;
+    };
+    query?: never;
+    url: '/v1/attempts/{attempt_id}/mitigation';
+};
+
+export type DeclareMitigatedErrors = {
+    /**
+     * Bad request (e.g. an invalid cursor).
+     */
+    400: Problem;
+    /**
+     * Missing or invalid credentials.
+     */
+    401: Problem;
+    /**
+     * Signed in, but not allowed.
+     */
+    403: Problem;
+    /**
+     * Not found.
+     */
+    404: Problem;
+    /**
+     * Conflict (e.g. a request with this Idempotency-Key is still running).
+     */
+    409: Problem;
+    /**
+     * The request is invalid; see `errors`.
+     */
+    422: Problem;
+    /**
+     * Rate limited; see Retry-After.
+     */
+    429: Problem;
+    /**
+     * Server error.
+     */
+    500: Problem;
+    /**
+     * Temporarily unavailable.
+     */
+    503: Problem;
+};
+
+export type DeclareMitigatedError = DeclareMitigatedErrors[keyof DeclareMitigatedErrors];
+
+export type DeclareMitigatedResponses = {
+    /**
+     * Successful Response
+     */
+    200: MitigationOut;
+};
+
+export type DeclareMitigatedResponse = DeclareMitigatedResponses[keyof DeclareMitigatedResponses];
+
 export type ResetAttemptData = {
     body?: never;
     headers?: {
@@ -1565,6 +3060,294 @@ export type ResetAttemptResponses = {
 
 export type ResetAttemptResponse = ResetAttemptResponses[keyof ResetAttemptResponses];
 
+export type RestartServiceData = {
+    body: RestartIn;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+        /**
+         * X-Guest-Token
+         */
+        'x-guest-token'?: string | null;
+    };
+    path: {
+        /**
+         * Attempt Id
+         */
+        attempt_id: string;
+    };
+    query?: never;
+    url: '/v1/attempts/{attempt_id}/restarts';
+};
+
+export type RestartServiceErrors = {
+    /**
+     * Bad request (e.g. an invalid cursor).
+     */
+    400: Problem;
+    /**
+     * Missing or invalid credentials.
+     */
+    401: Problem;
+    /**
+     * Signed in, but not allowed.
+     */
+    403: Problem;
+    /**
+     * Not found.
+     */
+    404: Problem;
+    /**
+     * Conflict (e.g. a request with this Idempotency-Key is still running).
+     */
+    409: Problem;
+    /**
+     * The request is invalid; see `errors`.
+     */
+    422: Problem;
+    /**
+     * Rate limited; see Retry-After.
+     */
+    429: Problem;
+    /**
+     * Server error.
+     */
+    500: Problem;
+    /**
+     * Temporarily unavailable.
+     */
+    503: Problem;
+};
+
+export type RestartServiceError = RestartServiceErrors[keyof RestartServiceErrors];
+
+export type RestartServiceResponses = {
+    /**
+     * Successful Response
+     */
+    200: RestartOut;
+};
+
+export type RestartServiceResponse = RestartServiceResponses[keyof RestartServiceResponses];
+
+export type RollbackData = {
+    body: RollbackIn;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+        /**
+         * X-Guest-Token
+         */
+        'x-guest-token'?: string | null;
+    };
+    path: {
+        /**
+         * Attempt Id
+         */
+        attempt_id: string;
+    };
+    query?: never;
+    url: '/v1/attempts/{attempt_id}/rollbacks';
+};
+
+export type RollbackErrors = {
+    /**
+     * Bad request (e.g. an invalid cursor).
+     */
+    400: Problem;
+    /**
+     * Missing or invalid credentials.
+     */
+    401: Problem;
+    /**
+     * Signed in, but not allowed.
+     */
+    403: Problem;
+    /**
+     * Not found.
+     */
+    404: Problem;
+    /**
+     * Conflict (e.g. a request with this Idempotency-Key is still running).
+     */
+    409: Problem;
+    /**
+     * The request is invalid; see `errors`.
+     */
+    422: Problem;
+    /**
+     * Rate limited; see Retry-After.
+     */
+    429: Problem;
+    /**
+     * Server error.
+     */
+    500: Problem;
+    /**
+     * Temporarily unavailable.
+     */
+    503: Problem;
+};
+
+export type RollbackError = RollbackErrors[keyof RollbackErrors];
+
+export type RollbackResponses = {
+    /**
+     * Successful Response
+     */
+    200: DeployOut;
+};
+
+export type RollbackResponse = RollbackResponses[keyof RollbackResponses];
+
+export type SandboxStatusData = {
+    body?: never;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+        /**
+         * X-Guest-Token
+         */
+        'x-guest-token'?: string | null;
+    };
+    path: {
+        /**
+         * Attempt Id
+         */
+        attempt_id: string;
+    };
+    query?: never;
+    url: '/v1/attempts/{attempt_id}/status';
+};
+
+export type SandboxStatusErrors = {
+    /**
+     * Bad request (e.g. an invalid cursor).
+     */
+    400: Problem;
+    /**
+     * Missing or invalid credentials.
+     */
+    401: Problem;
+    /**
+     * Signed in, but not allowed.
+     */
+    403: Problem;
+    /**
+     * Not found.
+     */
+    404: Problem;
+    /**
+     * Conflict (e.g. a request with this Idempotency-Key is still running).
+     */
+    409: Problem;
+    /**
+     * The request is invalid; see `errors`.
+     */
+    422: Problem;
+    /**
+     * Rate limited; see Retry-After.
+     */
+    429: Problem;
+    /**
+     * Server error.
+     */
+    500: Problem;
+    /**
+     * Temporarily unavailable.
+     */
+    503: Problem;
+};
+
+export type SandboxStatusError = SandboxStatusErrors[keyof SandboxStatusErrors];
+
+export type SandboxStatusResponses = {
+    /**
+     * Successful Response
+     */
+    200: StatusOut;
+};
+
+export type SandboxStatusResponse = SandboxStatusResponses[keyof SandboxStatusResponses];
+
+export type TouchAttemptData = {
+    body?: never;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+        /**
+         * X-Guest-Token
+         */
+        'x-guest-token'?: string | null;
+    };
+    path: {
+        /**
+         * Attempt Id
+         */
+        attempt_id: string;
+    };
+    query?: never;
+    url: '/v1/attempts/{attempt_id}/touch';
+};
+
+export type TouchAttemptErrors = {
+    /**
+     * Bad request (e.g. an invalid cursor).
+     */
+    400: Problem;
+    /**
+     * Missing or invalid credentials.
+     */
+    401: Problem;
+    /**
+     * Signed in, but not allowed.
+     */
+    403: Problem;
+    /**
+     * Not found.
+     */
+    404: Problem;
+    /**
+     * Conflict (e.g. a request with this Idempotency-Key is still running).
+     */
+    409: Problem;
+    /**
+     * The request is invalid; see `errors`.
+     */
+    422: Problem;
+    /**
+     * Rate limited; see Retry-After.
+     */
+    429: Problem;
+    /**
+     * Server error.
+     */
+    500: Problem;
+    /**
+     * Temporarily unavailable.
+     */
+    503: Problem;
+};
+
+export type TouchAttemptError = TouchAttemptErrors[keyof TouchAttemptErrors];
+
+export type TouchAttemptResponses = {
+    /**
+     * Successful Response
+     */
+    204: void;
+};
+
+export type TouchAttemptResponse = TouchAttemptResponses[keyof TouchAttemptResponses];
+
 export type VerifyAttemptData = {
     body?: never;
     headers?: {
@@ -1636,6 +3419,150 @@ export type VerifyAttemptResponses = {
 };
 
 export type VerifyAttemptResponse = VerifyAttemptResponses[keyof VerifyAttemptResponses];
+
+export type GetWorkspaceData = {
+    body?: never;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+        /**
+         * X-Guest-Token
+         */
+        'x-guest-token'?: string | null;
+    };
+    path: {
+        /**
+         * Attempt Id
+         */
+        attempt_id: string;
+    };
+    query?: never;
+    url: '/v1/attempts/{attempt_id}/workspace';
+};
+
+export type GetWorkspaceErrors = {
+    /**
+     * Bad request (e.g. an invalid cursor).
+     */
+    400: Problem;
+    /**
+     * Missing or invalid credentials.
+     */
+    401: Problem;
+    /**
+     * Signed in, but not allowed.
+     */
+    403: Problem;
+    /**
+     * Not found.
+     */
+    404: Problem;
+    /**
+     * Conflict (e.g. a request with this Idempotency-Key is still running).
+     */
+    409: Problem;
+    /**
+     * The request is invalid; see `errors`.
+     */
+    422: Problem;
+    /**
+     * Rate limited; see Retry-After.
+     */
+    429: Problem;
+    /**
+     * Server error.
+     */
+    500: Problem;
+    /**
+     * Temporarily unavailable.
+     */
+    503: Problem;
+};
+
+export type GetWorkspaceError = GetWorkspaceErrors[keyof GetWorkspaceErrors];
+
+export type GetWorkspaceResponses = {
+    /**
+     * Successful Response
+     */
+    200: WorkspaceOut;
+};
+
+export type GetWorkspaceResponse = GetWorkspaceResponses[keyof GetWorkspaceResponses];
+
+export type CreateWsTicketData = {
+    body: TicketIn;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+        /**
+         * X-Guest-Token
+         */
+        'x-guest-token'?: string | null;
+    };
+    path: {
+        /**
+         * Attempt Id
+         */
+        attempt_id: string;
+    };
+    query?: never;
+    url: '/v1/attempts/{attempt_id}/ws-ticket';
+};
+
+export type CreateWsTicketErrors = {
+    /**
+     * Bad request (e.g. an invalid cursor).
+     */
+    400: Problem;
+    /**
+     * Missing or invalid credentials.
+     */
+    401: Problem;
+    /**
+     * Signed in, but not allowed.
+     */
+    403: Problem;
+    /**
+     * Not found.
+     */
+    404: Problem;
+    /**
+     * Conflict (e.g. a request with this Idempotency-Key is still running).
+     */
+    409: Problem;
+    /**
+     * The request is invalid; see `errors`.
+     */
+    422: Problem;
+    /**
+     * Rate limited; see Retry-After.
+     */
+    429: Problem;
+    /**
+     * Server error.
+     */
+    500: Problem;
+    /**
+     * Temporarily unavailable.
+     */
+    503: Problem;
+};
+
+export type CreateWsTicketError = CreateWsTicketErrors[keyof CreateWsTicketErrors];
+
+export type CreateWsTicketResponses = {
+    /**
+     * Successful Response
+     */
+    201: TicketOut;
+};
+
+export type CreateWsTicketResponse = CreateWsTicketResponses[keyof CreateWsTicketResponses];
 
 export type DailyChallengeData = {
     body?: never;

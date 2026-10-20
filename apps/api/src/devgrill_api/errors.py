@@ -93,12 +93,16 @@ class AppError(Exception):
         detail: str | None = None,
         *,
         headers: dict[str, str] | None = None,
+        instance: str | None = None,
     ) -> None:
         super().__init__(detail or code)
         self.status = status
         self.code = code
         self.detail = detail
         self.headers = headers
+        #: Overrides the problem's `instance` (default: the request path), e.g. to point a 409
+        #: at the resource it conflicts with.
+        self.instance = instance
 
 
 def _allowed_methods(request: Request) -> str:
@@ -125,7 +129,7 @@ def install_error_handlers(app: FastAPI) -> None:
             exc.status,
             code=exc.code,
             detail=exc.detail,
-            instance=request.url.path,
+            instance=exc.instance or request.url.path,
             headers=exc.headers,
         )
 

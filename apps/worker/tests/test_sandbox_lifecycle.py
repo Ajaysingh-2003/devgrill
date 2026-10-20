@@ -21,8 +21,14 @@ from temporalio.worker import Worker
 
 from devgrill.config import Settings
 from devgrill.infra.workflows import connect_temporal
-from devgrill.sandbox.lifecycle import LaterFault, LifecycleInput, Provisioned
-from devgrill_worker.sandbox_activities import ApplyFaultInput, ExtendInput, TeardownInput
+from devgrill.sandbox.lifecycle import LaterFault, LifecycleInput, Provisioned, TimedBeat
+from devgrill_worker.sandbox_activities import (
+    ApplyFaultInput,
+    BeatInput,
+    ExtendInput,
+    SetStateInput,
+    TeardownInput,
+)
 from devgrill_worker.sandbox_lifecycle import SandboxLifecycle
 
 
@@ -35,6 +41,7 @@ class Fakes:
         provision_fails: int = 0,
         verify_passes: bool = True,
         later: list[LaterFault] | None = None,
+        beats: list[TimedBeat] | None = None,
     ) -> None:
         self.calls: Counter[str] = Counter()
         self.teardowns: list[TeardownInput] = []
@@ -43,6 +50,9 @@ class Fakes:
         self.provision_fails = provision_fails
         self.verify_passes = verify_passes
         self.later = later or []
+        self.beats = beats or []
+        self.states: list[str] = []
+        self.fired: list[int] = []
         self.provisioned_at: datetime | None = None
         self.provisioned = asyncio.Event()
         self.torn_down_at: datetime | None = None
@@ -62,7 +72,7 @@ class Fakes:
             self.provisioned.set()
             if self.calls["provision"] <= self.provision_fails:
                 raise ApplicationError("docker is down")
-            return Provisioned("dg-test", list(self.later))
+            return Provisioned("dg-test", list(self.later), list(self.beats))
 
         @activity.defn(name="sandbox.reset")
         async def reset(inp: LifecycleInput) -> Provisioned:
@@ -87,7 +97,21 @@ class Fakes:
             self.teardowns.append(inp)
             self.torn_down_at = activity.info().scheduled_time
 
-        return [provision, reset, apply_fault, extended, verify, teardown]
+        @activity.defn(name="sandbox.monitor")
+        async def monitor(inp: LifecycleInput) -> None:
+            # The real one samples until cancelled; a running activity would stop the test
+            # server skipping time, so tests send health signals themselves.
+            self.calls["monitor"] += 1
+
+        @activity.defn(name="sandbox.set_state")
+        async def set_state(inp: SetStateInput) -> None:
+            self.states.append(inp.state)
+
+        @activity.defn(name="sandbox.beat")
+        async def beat(inp: BeatInput) -> None:
+            self.fired.append(inp.index)
+
+        return [provision, reset, apply_fault, extended, verify, teardown, monitor, set_state, beat]
 
 
 def lifecycle_input(**kw: object) -> LifecycleInput:
@@ -290,3 +314,41 @@ async def test_worker_crash_mid_provision() -> None:
         assert await handle.result() == "abandoned"
     assert second.calls["provision"] == 1
     assert [t.outcome for t in second.teardowns] == ["abandoned"]
+
+
+async def test_health_signals_move_between_active_and_mitigated(env):
+    fakes = Fakes()
+
+    async def recover_regress_recover(handle):
+        for healthy in (True, False, True):
+            await env.sleep(timedelta(minutes=1))
+            await handle.signal("health", healthy)
+        await env.sleep(timedelta(seconds=5))
+        assert (await handle.query(SandboxLifecycle.status)).state == "mitigated"
+        await handle.signal("abandon")
+
+    assert (
+        await run(env, fakes, lifecycle_input(idle_minutes=60), recover_regress_recover)
+        == "abandoned"
+    )
+    assert fakes.states == ["mitigated", "active", "mitigated"]
+    assert fakes.calls["monitor"] == 1
+
+
+async def test_health_reports_that_change_nothing_are_ignored(env):
+    fakes = Fakes()
+
+    async def noise(handle):
+        await env.sleep(timedelta(minutes=1))
+        await handle.signal("health", False)  # not mitigated yet: nothing to regress
+        await env.sleep(timedelta(seconds=5))
+        await handle.signal("abandon")
+
+    assert await run(env, fakes, lifecycle_input(idle_minutes=60), noise) == "abandoned"
+    assert fakes.states == []
+
+
+async def test_timed_beats_fire_in_order(env):
+    fakes = Fakes(beats=[TimedBeat(180, 2), TimedBeat(20, 0)])
+    assert await run(env, fakes, lifecycle_input(ttl_minutes=10, idle_minutes=60)) == "expired"
+    assert fakes.fired == [0, 2]

@@ -83,6 +83,7 @@ services:
     image: prometheuscommunity/postgres-exporter:v0.20.1
     env:
       DATA_SOURCE_NAME: postgresql://shopkart:shopkart@postgres-db:5432/shopkart?sslmode=disable
+    logs: false
     metrics_port: 9187
     depends_on: [postgres-db]
     cpus: 0.25
@@ -92,6 +93,7 @@ services:
     image: oliver006/redis_exporter:v1.94.0
     env:
       REDIS_ADDR: redis://redis-db:6379
+    logs: false
     metrics_port: 9121
     depends_on: [redis-db]
     cpus: 0.25
@@ -100,6 +102,7 @@ services:
   tools:
     build: tools
     shell: true
+    logs: false
     depends_on: [api]
     cpus: 1.0
     memory_mb: 512

@@ -13,9 +13,9 @@ const ROUTES = [
   "/drills/caching",
   "/drills/caching/big-sale-meltdown",
   "/daily",
-  "/incident/inc-4021",
-  "/incident/inc-4021/debrief",
-  "/incident/inc-4021/postmortem",
+  "/incident/demo",
+  "/incident/demo/debrief",
+  "/incident/demo/postmortem",
   "/quickfire",
   "/this-page-does-not-exist",
 ];

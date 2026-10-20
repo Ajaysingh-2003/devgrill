@@ -1,0 +1,109 @@
+#!/usr/bin/env python3
+"""dg-relay: the in-sandbox control endpoint (`control:7000`), with no network route out.
+
+The `devgrill` CLI in the player's shell sends HTTP requests here. Each request is written to
+stdout as one JSON line; the gateway, which holds this process's stdin and stdout through a
+Docker exec, performs it and writes the answer back on stdin as one JSON line. The sandbox
+network stays internal: the only way out is the exec channel the platform opened.
+
+  -> {"id": 1, "method": "POST", "path": "/restart/api", "body": {...}}
+  <- {"id": 1, "status": 200, "body": {...}}
+
+Exits when stdin closes (the gateway went away), so a new gateway can start a fresh relay.
+"""
+
+import asyncio
+import json
+import os
+import sys
+
+PORT = 7000
+TOKEN = os.environ.get("DEVGRILL_CONTROL_TOKEN", "")
+TIMEOUT_S = 180
+MAX_BODY = 64 * 1024
+
+pending: dict[int, asyncio.Future] = {}
+counter = 0
+
+
+def respond(writer: asyncio.StreamWriter, status: int, body: object) -> None:
+    data = json.dumps(body).encode()
+    reason = {200: "OK", 400: "Bad Request", 401: "Unauthorized", 413: "Too Large", 504: "Timeout"}
+    writer.write(
+        f"HTTP/1.1 {status} {reason.get(status, 'Error')}\r\n"
+        f"Content-Type: application/json\r\nContent-Length: {len(data)}\r\n"
+        "Connection: close\r\n\r\n".encode()
+        + data
+    )
+
+
+async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+    global counter
+    try:
+        head = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), 10)
+        lines = head.decode("latin-1").split("\r\n")
+        method, target, _ = lines[0].split(" ", 2)
+        headers = {}
+        for line in lines[1:]:
+            if ":" in line:
+                name, value = line.split(":", 1)
+                headers[name.strip().lower()] = value.strip()
+        length = int(headers.get("content-length", "0"))
+        if length > MAX_BODY:
+            respond(writer, 413, {"error": "request too large"})
+            return
+        raw = await reader.readexactly(length) if length else b""
+        if TOKEN and headers.get("authorization") != f"Bearer {TOKEN}":
+            respond(writer, 401, {"error": "bad control token"})
+            return
+        try:
+            body = json.loads(raw) if raw else None
+        except json.JSONDecodeError:
+            respond(writer, 400, {"error": "body must be JSON"})
+            return
+        counter += 1
+        request_id = counter
+        future = asyncio.get_running_loop().create_future()
+        pending[request_id] = future
+        line = {"id": request_id, "method": method, "path": target, "body": body}
+        sys.stdout.write(json.dumps(line) + "\n")
+        sys.stdout.flush()
+        try:
+            status, answer = await asyncio.wait_for(future, TIMEOUT_S)
+        except TimeoutError:
+            status, answer = 504, {"error": "the control plane did not answer"}
+        finally:
+            pending.pop(request_id, None)
+        respond(writer, status, answer)
+    except (asyncio.IncompleteReadError, asyncio.LimitOverrunError, TimeoutError, ValueError):
+        respond(writer, 400, {"error": "bad request"})
+    finally:
+        try:
+            await writer.drain()
+        except ConnectionError:
+            pass
+        writer.close()
+
+
+async def answers() -> None:
+    loop = asyncio.get_running_loop()
+    reader = asyncio.StreamReader(limit=4 * 1024 * 1024)
+    await loop.connect_read_pipe(lambda: asyncio.StreamReaderProtocol(reader), sys.stdin)
+    while line := await reader.readline():
+        try:
+            message = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        future = pending.get(message.get("id"))
+        if future is not None and not future.done():
+            future.set_result((int(message.get("status", 200)), message.get("body")))
+
+
+async def main() -> None:
+    server = await asyncio.start_server(handle, "0.0.0.0", PORT)
+    async with server:
+        await answers()  # returns when stdin closes
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

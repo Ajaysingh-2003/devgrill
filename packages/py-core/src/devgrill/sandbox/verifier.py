@@ -216,9 +216,8 @@ class Verifier:
         env = {"TARGET": app.load.target}
         if app.cache_service:
             env["CACHE_HOST"] = app.cache_service
-        sql = next(((n, s.sql) for n, s in app.services.items() if s.sql), None)
-        if sql:
-            env["PG_DSN"] = f"postgresql://verifier:verifier@{sql[0]}:5432/{sql[1].database}"
+        if (dsn := app.readonly_dsn()) is not None:
+            env["PG_DSN"] = dsn
         exports = " ".join(f"{k}={shlex.quote(v)}" for k, v in env.items())
         runner = "python3" if probe.script.endswith(".py") else "sh"
         res = await self.driver.probe(

@@ -11,6 +11,9 @@ on:
       - "infra/sandbox/**"
       - "packages/py-core/src/devgrill/sandbox/**"
       - "packages/py-content/**"
+      - "apps/gateway/**"
+      - "apps/worker/**"
+      - "apps/web/components/workspace/**"
       - ".github/workflows/content.yml"
   pull_request:
     paths:
@@ -18,6 +21,9 @@ on:
       - "infra/sandbox/**"
       - "packages/py-core/src/devgrill/sandbox/**"
       - "packages/py-content/**"
+      - "apps/gateway/**"
+      - "apps/worker/**"
+      - "apps/web/components/workspace/**"
   schedule:
     - cron: "30 20 * * *" # 02:00 IST
   workflow_dispatch:
@@ -53,3 +59,59 @@ jobs:
           name: content-reports
           path: content/.reports/
           retention-days: 14
+
+  workspace:
+    # Phase 4 gate: the core loop in a real browser on the real stack (web, API, worker,
+    # gateway, Temporal, Docker sandboxes): start, terminal, logs and metrics, roll back,
+    # mitigated (detected), edit and deploy, the in-sandbox CLI, leave.
+    name: workspace · real sandbox, browser end to end
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.13.0"
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: docker compose -f infra/compose/docker-compose.dev.yml up -d --wait
+      - run: uv sync --all-packages --locked
+      - run: pnpm install --frozen-lockfile
+      - run: uv run python scripts/setup.py --env-only
+      - name: database
+        run: |
+          uv run python -m alembic -c apps/api/alembic.ini upgrade head
+          node apps/web/scripts/auth-migrate.mts
+          uv run python -m devgrill_content.cli seed
+      - run: uv run python -m devgrill_content.cli build
+      - run: pnpm exec playwright install --with-deps chromium
+      - name: core loop in the browser
+        timeout-minutes: 15
+        run: |
+          # Own process group, no stdin: the stack stops when this step ends, pass or fail.
+          setsid uv run python scripts/dev.py > dev.log 2>&1 < /dev/null &
+          STACK_PID=$!
+          trap 'kill -TERM -- -"$STACK_PID" 2>/dev/null || true' EXIT
+          for i in $(seq 1 60); do
+            curl -sf http://localhost:3000/drills/caching/ttl-zero > /dev/null \
+              && curl -sf http://localhost:8100/healthz > /dev/null && break
+            sleep 5
+          done
+          mkdir -p apps/web/test-results
+          cd apps/web && node e2e/live-flow.mjs
+      - name: dev log on failure
+        if: failure()
+        run: tail -200 dev.log || true
+      - name: screenshots
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: workspace-e2e
+          path: apps/web/test-results/
+          retention-days: 14
+      - name: leftover sandboxes
+        if: always()
+        run: uv run python -m devgrill_content.cli sandboxes --sweep
