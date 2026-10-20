@@ -56,7 +56,9 @@ def guest_headers(client: httpx.Client) -> dict[str, str]:
     return {"X-Guest-Token": token}
 
 
-def wait_for_state(client: httpx.Client, url: str, headers: dict[str, str], states: set[str], timeout_s: float) -> dict[str, Any]:
+def wait_for_state(
+    client: httpx.Client, url: str, headers: dict[str, str], states: set[str], timeout_s: float
+) -> dict[str, Any]:
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
         body = client.get(url, headers=headers).raise_for_status().json()
@@ -69,7 +71,9 @@ def wait_for_state(client: httpx.Client, url: str, headers: dict[str, str], stat
 def events(client: httpx.Client, attempt_id: str, headers: dict[str, str]) -> list[dict[str, Any]]:
     """The whole SSE stream (it ends after the sandbox is destroyed)."""
     out = []
-    with client.stream("GET", f"/v1/attempts/{attempt_id}/events", headers=headers, timeout=120) as res:
+    with client.stream(
+        "GET", f"/v1/attempts/{attempt_id}/events", headers=headers, timeout=120
+    ) as res:
         for line in res.iter_lines():
             if line.startswith("data:"):
                 out.append(json.loads(line[5:]))
@@ -91,7 +95,12 @@ def seconds_between(stream: list[dict[str, Any]], first: str, second: str) -> fl
         return None
     from datetime import datetime
 
-    return round((datetime.fromisoformat(stamps[second]) - datetime.fromisoformat(stamps[first])).total_seconds(), 1)
+    return round(
+        (
+            datetime.fromisoformat(stamps[second]) - datetime.fromisoformat(stamps[first])
+        ).total_seconds(),
+        1,
+    )
 
 
 def torn_down(stream: list[dict[str, Any]]) -> bool:
@@ -109,7 +118,9 @@ async def apply_solution(attempt_id: str, slug: str) -> None:
         handle = SandboxHandle(attempt_id, project_name(attempt_id))
         for step in solution.steps:
             assert step.patch
-            result = await driver.patch(handle, bundle, step.service, (folder / step.patch).read_bytes(), step.message)
+            result = await driver.patch(
+                handle, bundle, step.service, (folder / step.patch).read_bytes(), step.message
+            )
             assert result.ok, result
     finally:
         await driver.close()
@@ -166,11 +177,15 @@ def crash() -> dict[str, Any]:
             from devgrill.sandbox.compose import project_name
 
             ref = project_name(attempt_id)
+            docker_ps = ["docker", "ps", "-a", "--filter", f"label=devgrill.sandbox={ref}"]
             deadline = time.monotonic() + 120
+            names: list[str] = []
             while time.monotonic() < deadline:
                 names = subprocess.run(  # noqa: S603
-                    ["docker", "ps", "-a", "--filter", f"label=devgrill.sandbox={ref}", "--format", "{{.Names}}"],  # noqa: S607
-                    capture_output=True, text=True, check=False,
+                    [*docker_ps, "--format", "{{.Names}}"],
+                    capture_output=True,
+                    text=True,
+                    check=False,
                 ).stdout.split()
                 if len(names) >= 3:
                     break
@@ -190,7 +205,9 @@ def crash() -> dict[str, Any]:
             "final_state": final["state"],
             "torn_down": torn_down(stream),
             "leftovers": asyncio.run(leftovers()),
-            "ok": active["state"] == "active" and final["state"] == "abandoned" and torn_down(stream),
+            "ok": active["state"] == "active"
+            and final["state"] == "abandoned"
+            and torn_down(stream),
         }
     finally:
         worker.kill()
@@ -202,7 +219,11 @@ def crash() -> dict[str, Any]:
 def main() -> int:
     which = sys.argv[1] if len(sys.argv) > 1 else "happy"
     result = happy() if which == "happy" else crash()
-    result["ok"] = result["ok"] and result["leftovers"]["containers"] == 0 and result["leftovers"]["networks"] == 0
+    result["ok"] = (
+        result["ok"]
+        and result["leftovers"]["containers"] == 0
+        and result["leftovers"]["networks"] == 0
+    )
     print(json.dumps(result, indent=2))
     return 0 if result["ok"] else 1
 

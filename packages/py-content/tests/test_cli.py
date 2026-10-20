@@ -32,7 +32,9 @@ def test_validate_catches_a_patch_that_no_longer_applies(
     root = tmp_path / "content"
     shutil.copytree(CONTENT, root, ignore=shutil.ignore_patterns(".reports", ".schema"))
     cache = root / "base-apps" / "shopkart" / "api" / "app" / "cache.py"
-    cache.write_text(cache.read_text(encoding="utf-8").replace("def key(", "def cache_key("), encoding="utf-8")
+    cache.write_text(
+        cache.read_text(encoding="utf-8").replace("def key(", "def cache_key("), encoding="utf-8"
+    )
     assert main(["--root", str(root), "validate"]) == 1
     err = capsys.readouterr().err
     assert "cache/key-format-change" in err

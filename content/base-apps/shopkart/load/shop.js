@@ -56,7 +56,9 @@ export function handleSummary(data) {
     p95_ms: metric("http_req_duration").values?.["p(95)"] ?? null,
     error_rate: metric("http_req_failed").values?.rate ?? null,
     requests: metric("http_reqs").values?.count ?? 0,
-    thresholds_passed: Object.values(data.metrics).every((m) => !m.thresholds || Object.values(m.thresholds).every((t) => t.ok)),
+    thresholds_passed: Object.values(data.metrics).every(
+      (m) => !m.thresholds || Object.values(m.thresholds).every((t) => t.ok),
+    ),
   };
   return { stdout: JSON.stringify(out) + "\n" };
 }

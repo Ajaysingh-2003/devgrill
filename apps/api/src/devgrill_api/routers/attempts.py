@@ -343,7 +343,8 @@ async def attempt_events(
                 if (
                     attempt.ended_at is not None
                     and not events
-                    and (datetime.now(UTC) - attempt.ended_at).total_seconds() > _SSE_TEARDOWN_GRACE_S
+                    and (datetime.now(UTC) - attempt.ended_at).total_seconds()
+                    > _SSE_TEARDOWN_GRACE_S
                 ):
                     return
                 # Sleep until the worker announces new events; poll anyway in case one was missed.

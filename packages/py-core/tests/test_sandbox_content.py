@@ -159,7 +159,9 @@ def test_slo_targets_merge_thresholds() -> None:
 def test_fault_deploys_must_be_the_newest(tmp_path: Path) -> None:
     spec = load_bundle(CONTENT, "ttl-zero").scenario.model_dump(by_alias=True)
     spec["deploy_history"] = [
-        DeployEntry(message="old fault", minutes_before=500, from_fault="cache/ttl-zero").model_dump(),
+        DeployEntry(
+            message="old fault", minutes_before=500, from_fault="cache/ttl-zero"
+        ).model_dump(),
         DeployEntry(message="newer plain deploy", minutes_before=5).model_dump(),
     ]
     with pytest.raises(ValidationError, match="newer"):

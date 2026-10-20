@@ -899,7 +899,7 @@ class ComposeDriver:
             try:
                 # `one-shot` answers immediately instead of waiting a second for a second
                 # sample; aiodocker's stats() can't pass it, so call the endpoint directly.
-                sample = await self._docker._query_json(  # noqa: SLF001
+                sample = await self._docker._query_json(
                     f"containers/{container_id}/stats", params={"stream": "0", "one-shot": "1"}
                 )
             except DockerError:
