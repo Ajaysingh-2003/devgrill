@@ -1,0 +1,33 @@
+diff --git app/main.py app/main.py
+--- app/main.py
++++ app/main.py
+@@ -57,6 +57,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+ 
+ app = FastAPI(title="ShopKart", lifespan=lifespan)
+ 
++# Per-process memo of product responses: skips Redis entirely for repeat reads. Never evicted,
++# and keyed by the second, so every second of traffic adds new entries to every worker.
++_memo: dict[tuple[int, int], dict[str, Any]] = {}
++
+ 
+ def _route_name(request: Request) -> str:
+     route = request.scope.get("route")
+@@ -114,6 +118,10 @@ def metrics() -> Response:
+ 
+ @app.get("/products/{product_id}")
+ def get_product(product_id: int) -> dict[str, Any]:
++    memo_key = (product_id, int(time.time()))
++    if memo_key in _memo:
++        CACHE_OPS.labels("hit").inc()
++        return _memo[memo_key]
+     product = cache.get(product_id)
+     if product is not None:
+         CACHE_OPS.labels("hit").inc()
+@@ -124,6 +132,7 @@ def get_product(product_id: int) -> dict[str, Any]:
+     if product is None:
+         raise HTTPException(404, "no such product")
+     cache.set(product_id, product)
++    _memo[memo_key] = dict(product, _memo=[0] * 50_000)
+     return product
+ 
+ 

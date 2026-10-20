@@ -1,0 +1,19 @@
+schema: devgrill/fault@1
+name: db/lock-migration
+kind: data
+summary: A migration takes an ACCESS EXCLUSIVE lock on orders inside an open transaction and never commits; every checkout waits behind it.
+base_apps: [shopkart]
+params: {}
+apply:
+  script: lock.sql
+  detach: true
+  service: postgres-db
+revert:
+  script: unlock.sql
+  service: postgres-db
+deploy_message: "migration: add fulfilment columns to orders"
+symptom:
+  metric: error_rate
+  op: gt
+  value: 0.05
+  within_s: 90

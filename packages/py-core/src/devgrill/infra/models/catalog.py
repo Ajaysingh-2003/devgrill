@@ -20,6 +20,7 @@ from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from devgrill.domain.enums import (
+    Access,
     ApproachOutcome,
     Difficulty,
     FaultKind,
@@ -124,6 +125,10 @@ class Scenario(Base):
     source: Mapped[ScenarioSource] = mapped_column(
         pg_enum(ScenarioSource, "scenario_source"),
         server_default=ScenarioSource.HANDWRITTEN.value,
+    )
+    #: Which plans may play it live (ADR 013). Mirrors the current version's spec.
+    access: Mapped[Access] = mapped_column(
+        pg_enum(Access, "access"), server_default=Access.PRO.value
     )
     # Circular with scenario_versions.scenario_id, so the constraint is added after both tables.
     current_version_id: Mapped[uuid.UUID | None] = mapped_column(

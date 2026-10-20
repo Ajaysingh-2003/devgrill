@@ -146,6 +146,7 @@ async def seed(session: AsyncSession, root: Path, *, now: datetime | None = None
             "difficulty": spec.difficulty,
             "est_minutes": spec.est_minutes,
             "status": spec.status,
+            "access": spec.access,
             "tags": spec.tags,
         }
         stmt = insert(Scenario).values(**values)

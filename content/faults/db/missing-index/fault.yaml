@@ -1,0 +1,18 @@
+schema: devgrill/fault@1
+name: db/missing-index
+kind: data
+summary: A migration dropped the index that order history queries depend on; every lookup scans the table.
+base_apps: [shopkart]
+params: {}
+apply:
+  script: drop.sql
+  service: postgres-db
+revert:
+  script: restore.sql
+  service: postgres-db
+deploy_message: "migration: rebuild orders indexes"
+symptom:
+  metric: p99_latency_ms
+  op: gt
+  value: 500
+  within_s: 90

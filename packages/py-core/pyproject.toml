@@ -16,6 +16,9 @@ dependencies = [
     "pyyaml>=6.0.2",
     # IANA time zones for zoneinfo (Windows ships none); streak days roll over in IST.
     "tzdata>=2025.2",
+    # Docker Engine API (ComposeDriver); talks npipe on Windows, unix socket elsewhere.
+    "aiodocker==0.27.0",
+    "httpx2>=2.13",
 ]
 
 [project.optional-dependencies]

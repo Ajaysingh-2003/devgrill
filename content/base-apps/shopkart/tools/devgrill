@@ -1,0 +1,80 @@
+#!/usr/bin/env python3
+"""`devgrill` inside the sandbox: a thin client for the sandbox-control API.
+
+  devgrill status             services and health
+  devgrill logs <svc> [-n N]  recent logs of a service
+  devgrill restart <svc>      restart a service
+  devgrill deploy             rebuild and restart the api from /workspace/api (your working tree)
+  devgrill rollback <sha>     check out that deploy and redeploy
+  devgrill flags [key value]  show or set a feature flag
+
+Every call is recorded as an attempt event. The control endpoint is injected by the driver.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import sys
+
+import httpx
+
+CONTROL = os.environ.get("DEVGRILL_CONTROL_URL", "http://control:7000")
+TOKEN = os.environ.get("DEVGRILL_CONTROL_TOKEN", "")
+
+
+def call(method: str, path: str, **payload):
+    try:
+        res = httpx.request(
+            method,
+            CONTROL + path,
+            json=payload or None,
+            headers={"authorization": f"Bearer {TOKEN}"},
+            timeout=180,
+        )
+    except httpx.HTTPError as exc:
+        print(f"devgrill: control plane unreachable ({type(exc).__name__})", file=sys.stderr)
+        sys.exit(2)
+    if res.status_code >= 400:
+        print(f"devgrill: {res.status_code} {res.text}", file=sys.stderr)
+        sys.exit(1)
+    return res.json() if res.content else {}
+
+
+def main(argv: list[str]) -> int:
+    if not argv or argv[0] in ("-h", "--help"):
+        print(__doc__)
+        return 0
+    cmd, *rest = argv
+    if cmd == "status":
+        for svc in call("GET", "/status")["services"]:
+            print(f"{svc['name']:<12} {svc['state']:<10} {svc.get('health', '')}")
+    elif cmd == "logs":
+        if not rest:
+            print("usage: devgrill logs <service> [-n N]", file=sys.stderr)
+            return 2
+        n = int(rest[rest.index("-n") + 1]) if "-n" in rest else 100
+        for line in call("GET", f"/logs/{rest[0]}?tail={n}")["lines"]:
+            print(line)
+    elif cmd == "restart":
+        print(call("POST", f"/restart/{rest[0]}").get("message", "restarted"))
+    elif cmd == "deploy":
+        print(call("POST", "/deploy").get("message", "deployed"))
+    elif cmd == "rollback":
+        if not rest:
+            print("usage: devgrill rollback <sha>", file=sys.stderr)
+            return 2
+        print(call("POST", "/rollback", sha=rest[0]).get("message", "rolled back"))
+    elif cmd == "flags":
+        if len(rest) == 2:
+            print(json.dumps(call("POST", "/flags", key=rest[0], value=rest[1])))
+        else:
+            print(json.dumps(call("GET", "/flags"), indent=2))
+    else:
+        print(__doc__)
+        return 2
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

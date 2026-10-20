@@ -1,4 +1,6 @@
-# Scenario metadata and briefing. Phase 3 adds faults, probes, hints and the rubric.
+# Library entry only: not yet runnable (playable: false). Authoring it means adding faults,
+# load, slo, probes, hints and a page (see docs/adr/012-scenario-spec-v1.md).
+schema: devgrill/scenario@1
 slug: ghost-reads
 title: Ghost reads
 track: databases
@@ -11,6 +13,7 @@ tags:
   - postgres
   - replication
 base_app: shopkart
+playable: false
 briefing:
   story: Customers place an order, refresh the page and it is gone. A minute later it is back. Support
     is drowning.

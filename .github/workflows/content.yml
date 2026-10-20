@@ -1,0 +1,55 @@
+name: content
+
+# Every playable scenario must break as declared and be fixed by its reference solution
+# (ADR 012). Real sandboxes on Docker, so it runs when content or the sandbox layer changes,
+# nightly, and on demand: not on every push.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "content/**"
+      - "infra/sandbox/**"
+      - "packages/py-core/src/devgrill/sandbox/**"
+      - "packages/py-content/**"
+      - ".github/workflows/content.yml"
+  pull_request:
+    paths:
+      - "content/**"
+      - "infra/sandbox/**"
+      - "packages/py-core/src/devgrill/sandbox/**"
+      - "packages/py-content/**"
+  schedule:
+    - cron: "30 20 * * *" # 02:00 IST
+  workflow_dispatch:
+
+concurrency:
+  group: content-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  break-fix:
+    name: content · break, fix, verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.13.0"
+      - run: uv sync --all-packages --locked
+      - run: uv run python -m devgrill_content.cli validate
+      - run: uv run python -m devgrill_content.cli build
+      - run: uv run python -m devgrill_content.cli test
+      - name: leftover sandboxes
+        if: always()
+        run: uv run python -m devgrill_content.cli sandboxes --sweep
+      - name: reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: content-reports
+          path: content/.reports/
+          retention-days: 14

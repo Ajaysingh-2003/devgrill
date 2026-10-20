@@ -1,0 +1,12 @@
+diff --git app/cache.py app/cache.py
+--- app/cache.py
++++ app/cache.py
+@@ -48,7 +48,7 @@ def set(product_id: int, product: dict[str, Any]) -> None:
+     if settings.CACHE_TTL_SECONDS <= 0:
+         return
+     try:
+-        client.set(key(product_id), json.dumps(product, default=str), ex=settings.CACHE_TTL_SECONDS)
++        client.set(versioned_key(product_id), json.dumps(product, default=str), ex=settings.CACHE_TTL_SECONDS)
+     except redis.RedisError as exc:
+         log.warning("cache write failed", extra=fields(error=type(exc).__name__))
+ 

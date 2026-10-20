@@ -1,4 +1,6 @@
-# Scenario metadata and briefing. Phase 3 adds faults, probes, hints and the rubric.
+# Library entry only: not yet runnable (playable: false). Authoring it means adding faults,
+# load, slo, probes, hints and a page (see docs/adr/012-scenario-spec-v1.md).
+schema: devgrill/scenario@1
 slug: emails-sent-twice
 title: Emails sent twice
 track: queues
@@ -11,6 +13,7 @@ tags:
   - queue
   - idempotency
 base_app: shopkart
+playable: false
 briefing:
   story: Since this afternoon every customer gets two receipt emails. Finance has noticed some refunds
     were issued twice too.

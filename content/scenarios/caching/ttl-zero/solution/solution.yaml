@@ -1,0 +1,8 @@
+schema: devgrill/solution@1
+summary: >-
+  The ops deploy set CACHE_TTL_SECONDS=0, which the app treats as "don't cache", so every
+  product read went to Postgres. Restore a positive TTL in config/app.env and deploy.
+steps:
+  - patch: fix.diff
+    service: api
+    message: "config: restore product cache TTL (0 disables caching)"

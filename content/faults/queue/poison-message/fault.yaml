@@ -1,0 +1,21 @@
+schema: devgrill/fault@1
+name: queue/poison-message
+kind: data
+summary: A malformed order sits at the head of the queue; with retries set to forever, the worker reprocesses it and nothing behind it moves.
+base_apps: [shopkart]
+params: {}
+# Two steps in one fault: the worker config that never drops an order, and the bad order
+# itself. The driver applies `apply` then `also`.
+apply:
+  env:
+    MAX_ATTEMPTS: "0"
+  service: worker
+also:
+  script: poison.py
+  service: tools
+deploy_message: "worker: never drop an order (retry until it succeeds)"
+symptom:
+  metric: orders_queue_depth
+  op: gt
+  value: 50
+  within_s: 120

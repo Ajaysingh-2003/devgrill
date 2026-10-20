@@ -1,0 +1,15 @@
+schema: devgrill/fault@1
+name: cache/key-format-change
+kind: code_patch
+summary: A refactor versions the cache key on the read path but not on the write path, so the cache is written and never read; every product read lands on Postgres.
+base_apps: [shopkart]
+params: {}
+apply:
+  patch: patch.diff
+  service: api
+deploy_message: "refactor: add version prefix to cache keys"
+symptom:
+  metric: cache_hit_rate
+  op: lt
+  value: 0.2
+  within_s: 60

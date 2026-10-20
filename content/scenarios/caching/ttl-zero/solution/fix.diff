@@ -1,0 +1,8 @@
+--- config/app.env
++++ config/app.env
+@@ -10,4 +10,4 @@
+
+ # Product cache lifetime in seconds. 0 disables caching.
+-CACHE_TTL_SECONDS=0
++CACHE_TTL_SECONDS=300
+ CACHE_KEY_PREFIX=

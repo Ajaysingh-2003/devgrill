@@ -1,4 +1,6 @@
-# Scenario metadata and briefing. Phase 3 adds faults, probes, hints and the rubric.
+# Library entry only: not yet runnable (playable: false). Authoring it means adding faults,
+# load, slo, probes, hints and a page (see docs/adr/012-scenario-spec-v1.md).
+schema: devgrill/scenario@1
 slug: evicted-at-the-worst-time
 title: Evicted at the worst time
 track: caching
@@ -11,6 +13,7 @@ tags:
   - redis
   - memory
 base_app: shopkart
+playable: false
 briefing:
   story: It is Monday morning and every user is being logged out mid-checkout. Nobody deployed anything
     over the weekend.

@@ -106,7 +106,12 @@ def test_briefing_has_story_system_goals_and_no_solutions(
     body = api.get("/v1/scenarios/big-sale-meltdown").json()
     assert body["briefing"]["story"].startswith("You are on call for ShopKart")
     assert body["briefing"]["system"][0]["name"] == "load-gen"
-    assert len(body["briefing"]["goals"]) == 4
+    # Authored goals win over the defaults.
+    assert [g["title"] for g in body["briefing"]["goals"]] == [
+        "Stop the bleeding",
+        "Find what changed",
+        "Make it hold",
+    ]
     assert body["stats"]["solve_rate_pct"] is None  # too few attempts to show
     assert body["warmup"]["difficulty"] in {"sev4", "sev3"}
     assert "approaches" not in json.dumps(body)

@@ -253,6 +253,43 @@ class AttemptPage(Model):
     next_cursor: str | None
 
 
+class AttemptIn(Input):
+    scenario_slug: str = Field(pattern=r"^[a-z0-9]+(-[a-z0-9]+)*$", max_length=64)
+    mode: AttemptMode = AttemptMode.GUIDED
+
+
+class AttemptOut(Model):
+    id: uuid.UUID
+    scenario_slug: str
+    mode: AttemptMode
+    state: AttemptState
+    started_at: datetime
+    active_at: datetime | None
+    ended_at: datetime | None
+    #: When the sandbox is torn down unless extended (set once it is up).
+    expires_at: datetime | None
+
+
+class Quota(Model):
+    used: float
+    limit: int
+    period: Literal["day", "week", "ever"]
+    resets_at: datetime | None
+
+
+class UsageOut(Model):
+    """What the caller may still start (ADR 013). Guests are reported per guest token."""
+
+    tier: Literal["guest", "free", "pro", "team"]
+    live_starts: Quota
+    sandbox_minutes: Quota
+    session_minutes: int
+    idle_minutes: int
+    #: Free sandboxes are paused (daily budget spent, or switched off); cards and case files
+    #: stay open.
+    free_paused: bool
+
+
 class ClaimGuestIn(Input):
     guest_token: str = Field(min_length=20, max_length=2000)
 

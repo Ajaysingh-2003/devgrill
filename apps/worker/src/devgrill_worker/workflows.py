@@ -9,6 +9,8 @@ from temporalio import workflow
 with workflow.unsafe.imports_passed_through():
     from devgrill_worker.activities import pong
 
+from devgrill_worker.sandbox_lifecycle import SandboxLifecycle
+
 
 @workflow.defn
 class PingWorkflow:
@@ -21,5 +23,6 @@ class PingWorkflow:
         )
 
 
-WORKFLOWS = [PingWorkflow]
+WORKFLOWS = [PingWorkflow, SandboxLifecycle]
+#: Plain activities; the sandbox ones are bound to their dependencies in __main__.
 ACTIVITIES = [pong]

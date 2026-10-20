@@ -1,4 +1,6 @@
-# Scenario metadata and briefing. Phase 3 adds faults, probes, hints and the rubric.
+# Library entry only: not yet runnable (playable: false). Authoring it means adding faults,
+# load, slo, probes, hints and a page (see docs/adr/012-scenario-spec-v1.md).
+schema: devgrill/scenario@1
 slug: redis-restart-herd
 title: Redis restart herd
 track: caching
@@ -11,6 +13,7 @@ tags:
   - redis
   - postgres
 base_app: shopkart
+playable: false
 briefing:
   story: Platform restarted the Redis cluster for a minor version bump. It was supposed to take thirty
     seconds. The site has been down for six minutes.

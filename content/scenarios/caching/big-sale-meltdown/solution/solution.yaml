@@ -1,0 +1,9 @@
+schema: devgrill/solution@1
+summary: >-
+  The refactor made get() and invalidate() use versioned_key() while set() kept writing key(),
+  so nothing written was ever read back and every product read hit Postgres. Make set() write
+  the versioned key too. (Rolling back the deploy also works; this keeps the refactor.)
+steps:
+  - patch: fix.diff
+    service: api
+    message: "fix(cache): write with the versioned key so reads hit"

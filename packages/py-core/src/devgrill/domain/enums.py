@@ -123,6 +123,13 @@ class Role(StrEnum):
     ADMIN = "admin"
 
 
+class Access(StrEnum):
+    """Which plans may play a scenario live (ADR 013)."""
+
+    FREE = "free"
+    PRO = "pro"
+
+
 class Plan(StrEnum):
     FREE = "free"
     PRO = "pro"

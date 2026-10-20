@@ -1107,8 +1107,8 @@ flags: []
 deploy_history: [ { sha: 7bd21e0, msg: "update product images" }, { sha: a91f3c2, msg: "refactor: add version prefix to cache keys", from_fault: cache/key-format-change } ]
 beats:                               # deterministic teammate messages
   - at: "T+20s"   persona: priya   say: "Sale went live at 8 PM and product pages are dying…"
-  - on: "postgres.restarted"   persona: arjun   say: "Restart didn't hold. Something is *sending* it too many queries. What changed?"
-  - on: "state:mitigated"   persona: arjun   say: "Rollback holds. Make the read path stampede-proof, then verify."
+  - when: "postgres.restarted"   persona: arjun   say: "Restart didn't hold. Something is *sending* it too many queries. What changed?"
+  - when: "state:mitigated"   persona: arjun   say: "Rollback holds. Make the read path stampede-proof, then verify."
 mitigation:
   detect: { slo: "p99_latency_ms < 500 and error_rate < 0.01", for: "60s" }
 constraints:
@@ -1192,26 +1192,28 @@ draft (git branch) ──PR──▶ CI validation ──▶ review (admin conso
 
 ### 12.1 The `SandboxDriver` interface
 
+As built in Phase 3 (`devgrill/sandbox/driver.py`, ADR 012). The handle is derived from the attempt id, so teardown never depends on provisioning having returned:
+
 ```python
 class SandboxDriver(Protocol):
-    async def create(
-        self, spec: SandboxSpec
-    ) -> SandboxHandle: ...  # boot base app + overlays, isolated network
-    async def wait_healthy(self, h: SandboxHandle, timeout_s: int) -> None: ...
-    async def apply_fault(self, h: SandboxHandle, fault: FaultStep) -> None: ...
-    async def exec_pty(self, h: SandboxHandle, service: str, cols: int, rows: int) -> PtyStream: ...
-    async def exec(self, h: SandboxHandle, service: str, argv: list[str]) -> ExecResult: ...
-    async def read_file(self, h, service, path) -> bytes: ...
-    async def write_file(self, h, service, path, data: bytes) -> None: ...
-    async def deploy(
-        self, h, service, ref: str
-    ) -> DeployResult: ...  # rebuild/restart service from working tree
-    async def logs(self, h, since: datetime) -> AsyncIterator[LogLine]: ...
-    async def metrics(self, h) -> MetricSnapshot: ...  # scrape exporters
-    async def network_endpoint(self, h) -> str: ...  # for the external verifier
-    async def snapshot(self, h) -> SnapshotRef | None: ...  # firecracker later
-    async def destroy(self, h) -> None: ...
+    async def create(self, spec: SandboxSpec) -> SandboxHandle: ...  # idempotent: clean slate
+    async def wait_healthy(self, handle, timeout_s: int) -> None: ...
+    async def apply_fault(self, handle, bundle, use: str, params: dict) -> None: ...
+    async def revert_fault(self, handle, bundle, use: str, params: dict) -> None: ...
+    async def start_load(self, handle, bundle, *, multiplier: float = 1.0) -> None: ...
+    async def stop_load(self, handle) -> None: ...
+    async def exec(self, handle, service: str, argv: list[str], *, timeout_s: int = 60) -> ExecResult: ...
+    async def probe(self, handle, argv: list[str], *, timeout_s: int = 60) -> ExecResult: ...  # verifier side
+    async def deploy(self, handle, bundle, service: str, ref: str | None = None) -> DeployResult: ...
+    async def restart(self, handle, service: str) -> None: ...
+    def logs(self, handle, *, since=None, tail=200) -> AsyncIterator[LogLine]: ...
+    async def metrics(self, handle, bundle) -> MetricSnapshot: ...  # raw scrapes per job
+    async def usage(self, handle) -> ResourceUsage: ...  # cpu_seconds for cost tracking
+    async def destroy(self, handle) -> None: ...  # by label; safe to repeat
+    async def list_sandboxes(self) -> list[str]: ...  # orphan sweeper, leak checks
 ```
+
+`exec_pty`, `read_file` and `write_file` come with the gateway in Phase 4. Firecracker snapshots come later still.
 
 Every scenario is runtime-agnostic. Scenario content may also declare a **process mode** (services under supervisord in one VM, with no nested Docker). That lets scenarios run on hosted providers that can't do Docker-in-Docker.
 
@@ -1241,15 +1243,59 @@ Every scenario is runtime-agnostic. Scenario content may also declare a **proces
 - **Telemetry (scale):** Vector agent → VictoriaMetrics + VictoriaLogs (session ID as structured metadata, not a label). **Never expose raw Grafana to users.**
 - **The verifier runs outside the sandbox:** a k6 container attaches to the session network from the host side. Chaos steps run through Toxiproxy's API, and data invariants run as SQL through a read-only role. Root inside the sandbox cannot tamper with them.
 
-### 12.4 Capacity, cost and quotas
+### 12.4 Capacity, cost, quotas and access tiers (ADR 013)
 
-- **Session limits:** 45-minute hard TTL (configurable per scenario), 10-minute idle timeout, one live session per user, daily sandbox minutes per plan.
-- **Queue:** when the fleet is full, show "You're #3, about 40s", with an honest ETA.
-- **Cost tracking:**
-  - Per session: `cpu_seconds`, `est_cost_usd`.
-  - Dashboards: cost per resolved incident, cost per active user.
-  - Alerts at budget thresholds.
-- **Pre-warmed pool:** keep N booted sandboxes of the Daily Incident ready (driver-dependent).
+**Three content formats.** Only one of them needs a sandbox:
+
+| Format | Sandbox | Free plan |
+|---|---|---|
+| Quick Fire cards | no | unlimited |
+| **Case files**: recorded evidence from a real run of a live scenario (logs, metrics, deploys, code). The player names the root cause, the mitigation and the fix. Generated by `devgrill-content record` | no | unlimited |
+| Live incidents | yes | `access: free` scenarios plus the Daily Incident, within a weekly allowance |
+
+**Plan limits.** These are initial values. They live in `entitlements.limits`, with defaults in `devgrill.domain.entitlements`. Days and weeks roll over at 00:00 IST.
+
+| Limit | Guest (`/try`) | Free | Pro |
+|---|---|---|---|
+| Live scenarios | tutorial only | `access: free` + Daily | all |
+| Concurrent sandboxes | 1 | 1 | 1 |
+| Live starts | 1 per token, per-IP cap | 3 per week | fair use: 10 per day |
+| Sandbox minutes | 20 | 120 per week | 240 per day |
+| Session TTL / idle | 20 / 5 min | 30 / 8 min | 60 / 10 min |
+| `extend` | no | no | +15 min ×2 |
+| AI teammate messages | 10 | 20 per day | 200 per day |
+| AI postmortem reviews | 0 | 2 per week | 20 per day |
+
+**Bill guarantee: four independent layers.** Each layer caps cost even if the one before it fails.
+1. **Per sandbox:** cgroup CPU, memory and pids limits; no egress; TTL and idle teardown in the workflow's `finally`.
+2. **Per user:** the plan limits above, enforced at `POST /v1/attempts`:
+   - `403 upgrade_required` when the scenario isn't in the plan;
+   - `429 quota_exceeded` with `Retry-After` set to the next rollover.
+3. **Fleet:** `SANDBOX_MAX_LIVE` caps concurrent sandboxes. Past it, starts queue ("You're #3, about 40s") or get `503 capacity` with `Retry-After`.
+4. **Money:** `SANDBOX_DAILY_MINUTES_BUDGET` caps the total free and guest minutes per IST day.
+   - An alert fires at 80%.
+   - At 100%, free starts pause until midnight (`503 budget_paused`) with an honest message, and cards and case files stay open. Pro is unaffected.
+   - `SANDBOX_FREE_STARTS=false` is the kill switch.
+   - A matching LLM budget comes in Phase 6.
+
+**Metering:**
+- Minutes run from `active` to teardown. Provisioning time is tracked but not charged to the player.
+- The idle timer resets on player input: terminal keystrokes, actions and panel use. Sandbox CPU activity does not reset it.
+- Per session, `cpu_seconds` and `est_cost_usd` are recorded.
+
+**Cost tracking:**
+- Dashboards: cost per resolved incident, cost per active user.
+- Alerts at budget thresholds.
+
+**Unit cost** (research, 2026-10-20):
+- A Hetzner AX41 (64 GB, about €50/month) fits about 25–35 sandboxes by memory. That's about €0.01 per sandbox-hour at 30% utilisation, or under ₹1 per session.
+- **Measured in Phase 3** (`docs/perf/phase-3.md`): one ShopKart sandbox under sale load uses about 580 MiB but about 2.6 CPU cores, the load generator included. **CPU, not RAM, bounds density.**
+  - Before Track H, lower the play-time load to what still shows the incident.
+  - Measure density on the real host (Phase 8).
+- Cloud VMs are 5–15× more per sandbox-hour.
+- LLM calls, not sandboxes, are the larger variable cost.
+
+**Pre-warmed pool:** keep N booted sandboxes of the Daily Incident ready (driver-dependent).
 
 ---
 
@@ -1569,7 +1615,7 @@ Wk:  1  2 | 3  4  5 | 6  7  8 | 9 10 11 12 | 13 14 15 16 17 | 18 19 20 | 21 22 2
 
 ---
 
-### Phase 3: Scenario engine v1 (weeks 9–12)
+### Phase 3: Scenario engine v1 (weeks 9–12) ✅ done 2026-10-20 (see docs/qc/phase-3.md, ADR 012 and ADR 013)
 
 **Goal:** a real broken system boots locally on demand from content, with a guaranteed lifecycle. Still no UI beyond a debug page.
 
@@ -1593,11 +1639,16 @@ Wk:  1  2 | 3  4  5 | 6  7  8 | 9 10 11 12 | 13 14 15 16 17 | 18 19 20 | 21 22 2
    - `queue/poison-message`
    - `mem/leak-accelerated`
    - `config/bad-env`
-4. **`ComposeDriver`:**
-   - A per-attempt compose project name.
-   - An isolated `internal: true` network (no egress) plus a gateway-reachable network.
-   - Resource limits (`cpus`, `mem_limit`, `pids_limit`).
-   - Fault application, deploy (rebuild or restart from the working tree), logs, metric scrape, destroy.
+4. **`ComposeDriver`** (Docker Engine API through aiodocker; no compose CLI):
+   - A per-attempt project name. Every container and network is labelled, so a sweeper can find orphans.
+   - One isolated `internal: true` network (no egress).
+   - Nothing listens on the host. The platform reaches the sandbox only through the Docker API: exec, archive, logs, stats.
+   - A platform-owned **probe** container on the sandbox network (curl, psql, k6). The player never gets a shell in it. It runs scrapes, the load, Toxiproxy admin calls and verifier checks, so root in the player's shell can't tamper with them.
+   - Resource limits (`cpus`, memory, `pids_limit`). Image volumes become tmpfs, so a sandbox never leaves a volume behind.
+   - Patchable services are a git repo in the shell (`/workspace/<service>`).
+     - Deploy copies the working tree into the service and restarts it.
+     - Config faults edit a committed `config/app.env` (config-as-code), so a bad config shows in `git log` and can be reverted.
+   - Fault application (patch, env, toxic, script), logs, metric scrape, destroy.
 5. **Temporal `SandboxLifecycle` workflow:**
    - provision → healthy → inject faults (timed: T-2m deploys) → start load → active.
    - Signals: extend, reset, abandon, verify.
@@ -1610,8 +1661,19 @@ Wk:  1  2 | 3  4  5 | 6  7  8 | 9 10 11 12 | 13 14 15 16 17 | 18 19 20 | 21 22 2
    - `pool-party` (DB pool exhaustion, SEV3)
 8. **Attempt endpoints:** `POST /v1/attempts`, `GET`, `DELETE`, `/events` (SSE), `/extend`, `/reset`.
 9. **Cost and metrics:** `sandbox_sessions` timing and `cpu_seconds` capture.
+10. **Access and the bill guarantee (ADR 013):**
+    - An `access: free | pro` field in the scenario spec, also stored on `scenarios`.
+    - A pure policy, `devgrill.domain.entitlements`: plan limits and an allow-or-deny decision with a reason and `Retry-After`.
+    - Usage counted from `sandbox_sessions` (minutes and starts per IST day and week).
+    - Enforcement in `POST /v1/attempts`:
+      - plan access → `403 upgrade_required`;
+      - quotas → `429 quota_exceeded`;
+      - fleet cap `SANDBOX_MAX_LIVE` → `503 capacity`;
+      - free-minutes budget `SANDBOX_DAILY_MINUTES_BUDGET` and the `SANDBOX_FREE_STARTS` kill switch → `503 budget_paused`.
+    - The workflow's TTL and idle timers come from the plan.
+    - `GET /v1/me/usage` shows what is left.
 
-**Deliverables:** `devgrill-content up big-sale-meltdown` reproduces the incident locally; API-driven attempts boot and tear down reliably.
+**Deliverables:** `devgrill-content up big-sale-meltdown` reproduces the incident locally; API-driven attempts boot and tear down reliably; nobody can start more sandbox time than their plan and the global budget allow.
 
 **QC gate: Phase 3**
 
@@ -1623,7 +1685,8 @@ Wk:  1  2 | 3  4  5 | 6  7  8 | 9 10 11 12 | 13 14 15 16 17 | 18 19 20 | 21 22 2
 - [ ] Sandbox network has **no egress** (a `curl https://example.com` from inside fails); the platform network is unreachable from the sandbox.
 - [ ] Time to active < 45s on the dev machine with images pre-pulled; recorded in `docs/perf/phase-3.md`.
 - [ ] Resource limits enforced (a fork bomb inside a sandbox is contained by `pids_limit`; memory hog OOMs only its own container).
-- [ ] ADR for the fault-module contract and the scenario spec v1.
+- [ ] Entitlement policy unit-tested (every limit, IST rollover, Daily exception, guests). The API is tested for each refusal: 403, 429 and 503 return problem+json with `Retry-After`, and no sandbox is started.
+- [ ] ADR for the fault-module contract and the scenario spec v1 (ADR 012); ADR 013 for access tiers.
 
 ---
 
@@ -1759,6 +1822,11 @@ Wk:  1  2 | 3  4  5 | 6  7  8 | 9 10 11 12 | 13 14 15 16 17 | 18 19 20 | 21 22 2
 6. **Library polish:** service-map hero with mastery rings, topic primers, filters, list view toggle, "continue where you left off".
 7. **Admin console:** review queue with playtest (author mode), validation reports, scenario analytics with auto-flags, approach cluster review, publish/retire, LLM cost view, user lookup (support).
 8. **Pro mode** (hide gamification) and public profile opt-in.
+9. **Case files** (ADR 013): the free, sandbox-less format.
+   - `devgrill-content record <scenario>` boots the live scenario and captures evidence at fixed moments into `case-file/`: logs, metric series, deploy history, the diff, the config, and selected `psql` and `redis-cli` outputs.
+   - The player gets a read-only workspace (the same panels, fed from the recording) and answers three questions: root cause (choice), first mitigation (choice) and durable fix (choice plus an optional short write-up).
+   - Scoring is deterministic. AI review of the write-up counts against the plan's review allowance.
+   - Every one of the 20 live scenarios ships a case file.
 
 **Deliverables:** a content-complete beta candidate.
 
@@ -1829,9 +1897,10 @@ Wk:  1  2 | 3  4  5 | 6  7  8 | 9 10 11 12 | 13 14 15 16 17 | 18 19 20 | 21 22 2
 2. **Weekly Outage:** first 4 real-postmortem replays; weekly goal; private-cohort boards.
 3. **Cohorts:** invite codes, cohort leaderboards (per-scenario "segments"), cohort admin (for colleges and bootcamps).
 4. **Share cards:** result, rating milestone, postmortem excerpt (opt-in); LinkedIn-friendly sizes.
-5. **Entitlements plumbing without billing:**
-   - Plan limits enforced from the `entitlements` table with free defaults.
-   - The pricing page and payment providers wait for the owner's pricing decision.
+5. **Plans without billing:**
+   - Enforcement exists since Phase 3 (ADR 013).
+   - Add the plan comparison page, the upgrade prompts at each refusal (no dark patterns), and admin tools to grant Pro (founders, playtesters, cohorts).
+   - Payment providers wait for Track H.
 6. **Launch assets, drafted:** landing page with a live replay, a "How verify works" explainer, docs, an engineering deep-dive blog post.
 7. **SEO groundwork:** scenario and primer pages (SSR, structured data), sitemap, OG images.
 
@@ -1856,9 +1925,18 @@ These were in phases 8 and 9 before the owner chose to stay local. Nothing earli
    - cgroup v2 limits, disk quotas.
    - Ansible in `infra/sandbox-host`.
 3. **Control plane:** API, worker and web on a small VM with Caddy (or Fly/Render + Vercel); managed or self-managed Postgres with WAL-G backups; Valkey; Temporal on Postgres (or Temporal Cloud).
-4. **Public-facing abuse prevention:** Turnstile, GitHub account-age check, per-IP limits, mining heuristic + Falco, acceptable-use policy.
+4. **Public-facing abuse prevention:**
+   - Turnstile on guest starts.
+   - Live sandboxes need a GitHub account at least 30 days old (cards and case files don't).
+   - Per-IP limits.
+   - A mining heuristic (shell CPU over 90% for 5 minutes ends the session and flags the account) plus Falco.
+   - An acceptable-use policy.
 5. **Email provider** (Resend), legal pages published, domain and TLS.
-6. **Pricing and billing** (when decided): Stripe + Razorpay, regional pricing (India-first), upgrade flows with no dark patterns.
+6. **Pricing and billing** (ADR 013 direction):
+   - Razorpay for India (UPI Autopay, cards) and Paddle as merchant of record elsewhere. Stripe only if India onboarding reopens.
+   - Regional prices (about ₹249/month or ₹1,999/year; $8/month or $60/year).
+   - Upgrade flows with no dark patterns.
+   - GST and export LUT confirmed with a CA.
 7. **Public beta → launch:** waitlist, invite codes, then Product Hunt, HN, LinkedIn and X.
 
 **QC gate: Track H** (the former phase 8/9 hosted gates):
@@ -1940,10 +2018,11 @@ These are workstreams, prioritised by data from the beta.
   - Data export and delete.
   - Retention per §9.3.
   - DPDP (India) and GDPR basics.
-- **Abuse:**
+- **Abuse** (ADR 013):
+  - No egress on any plan.
   - Turnstile.
-  - Account-age checks.
-  - Quotas.
+  - Account-age checks (a GitHub login alone is not a gate: mining gangs automate thousands of accounts).
+  - Plan quotas plus a global daily free-minutes budget and kill switch.
   - Mining heuristics + Falco.
   - Acceptable-use policy and an abuse contact.
   - Card verification for heavy tiers if abuse appears.
@@ -1968,22 +2047,61 @@ These are workstreams, prioritised by data from the beta.
 **Events** (PostHog, typed in `packages/config/analytics.ts`):
 - `attempt_started`, `panel_opened`, `hint_used`, `mitigated`, `deploy`, `verify_started`, `verify_passed`
 - `postmortem_submitted`, `debrief_viewed`, `share_clicked`, `daily_completed`
-- `quickfire_run_completed`, `signup_completed`, `upgrade_clicked`
+- `quickfire_run_completed`, `case_file_completed`, `signup_completed`
+- `quota_hit` (which limit), `upgrade_prompt_shown`, `upgrade_clicked`, `budget_paused` (server-side)
 
 **Experiments** use PostHog flags (e.g. hint wording, onboarding calibration on or off).
 
 ---
 
-## 19. Business model (draft, **deferred**)
+## 19. Business model (tiers decided, prices **deferred**)
 
-> Owner decision (2026-10-12): pricing is decided later, together with hosting (Track H). Until then everything is free and local. The only pricing-related work in phases 0–9 is the `entitlements` table with free defaults, so limits can be enforced later without schema changes. The options below are reference material for that later decision.
+> **Owner decisions:**
+> - 2026-10-12: prices and payments are decided later, together with hosting (Track H).
+> - 2026-10-20: the **tier structure** is decided (ADR 013). Content that needs no sandbox is free. Live sandboxes are mostly Pro, and free users get a capped taste. Limits are enforced from Phase 3, so the bill is bounded before anyone pays.
 
-- **Free:** Daily Incident, Quick Fire, 3 scenarios/week, 1 concurrent sandbox, 45-minute sessions, authored hints plus limited AI teammate messages.
-- **Pro:** about ₹299–399/month in India with regional pricing, about $9–12/month globally. Unlimited library, weekly outages, full AI teammates and postmortem review, longer sessions, history and replays.
-- **Cohorts and Teams (later):** colleges, bootcamps and companies. Cohort analytics, custom drills, SSO.
-- **Hiring (later, careful):** assessment mode with integrity controls.
+**Free:**
+- Quick Fire and case files, unlimited.
+- The tutorial track and `access: free` live scenarios.
+- The Daily Incident.
+- 3 live starts and 120 sandbox-minutes a week.
+- 30-minute sessions.
+- Authored hints, 20 AI teammate messages a day, and 2 AI postmortem reviews a week.
 
-Benchmarks: SadServers $9–11/month; iximiuz about $4–12/month with regional discounts; Killercoda PLUS. Pricing is validated in the beta with a willingness-to-pay survey and a pricing-page experiment.
+**Pro:**
+- The whole live library and Weekly Outages.
+- 60-minute sessions with extend.
+- 240 sandbox-minutes a day.
+- Full AI teammates and postmortem reviews.
+- History and replays.
+
+**Price direction** (validated in the beta with a willingness-to-pay survey and a pricing-page experiment):
+- About ₹249/month or ₹1,999/year in India.
+- About $8/month or $60/year elsewhere.
+- Annual about 35% cheaper.
+
+**Payments:**
+- Razorpay for India (UPI Autopay, cards; no re-authentication up to ₹15,000 per debit).
+- Paddle as merchant of record elsewhere (it handles GST and VAT).
+- Stripe India is invite-only for new businesses.
+- Confirm GST registration and export LUT with a CA.
+
+**Later segments:**
+- **Cohorts and Teams:** colleges, bootcamps and companies. Cohort analytics, custom drills, SSO.
+- **Hiring (careful):** assessment mode with integrity controls.
+
+**Benchmarks** (2026-10-20):
+
+| Platform | Free tier | Paid |
+|---|---|---|
+| iximiuz Labs | 1 h a day, 1 playground, safe egress only | $2.40–4/mo with PPP and annual pricing |
+| SadServers | Daily-limited scenario selection, no internet | Pro $9/mo or $72/yr |
+| Killercoda | 1 h sessions, captcha | PLUS: 4 h sessions, skips queues |
+| TryHackMe | 1 h a day of AttackBox | Premium about €10.50/mo billed annually |
+
+**Planning:**
+- Conversion: model revenue on 2–3% free-to-paid. The developer-tool median is about 5%; edtech is lower.
+- Unit cost: under ₹1 per live session on a dedicated host (§12.4).
 
 ---
 
@@ -2019,6 +2137,7 @@ Benchmarks: SadServers $9–11/month; iximiuz about $4–12/month with regional 
 | 5 | Licence | **Fully closed / private** | Private repo, proprietary `LICENSE`; no public scenarios repo; invited authors only |
 | 6 | Market | **India-first, IST rollover** | Daily Incident resets at 00:00 IST; India-friendly defaults; global users welcome |
 | 7 | Sign-in | **GitHub only** | Better Auth with the GitHub provider; Google and email can be added later via config |
+| 8 | Access tiers (2026-10-20) | **Sandbox-free content is free; live sandboxes mostly Pro, with a capped free taste** | ADR 013: case files format (Phase 7), `access` field and quota/budget enforcement (Phase 3), prices still in Track H |
 
 **Still open (not blocking phase 0):**
 1. Register `devgrill.com` and `devgrill.dev` now as cheap insurance, or wait?
@@ -2078,8 +2197,10 @@ LLM_DAILY_BUDGET_USD=5
 LANGFUSE_HOST= / LANGFUSE_PUBLIC_KEY= / LANGFUSE_SECRET_KEY=
 # sandbox
 SANDBOX_DRIVER=compose
-SANDBOX_TTL_MINUTES=45
-SANDBOX_IDLE_MINUTES=10
+SANDBOX_MAX_LIVE=4                  # fleet cap
+SANDBOX_DAILY_MINUTES_BUDGET=600    # free + guest minutes per IST day
+SANDBOX_FREE_STARTS=true            # kill switch
+SANDBOX_GUEST_SCENARIOS=ttl-zero
 GATEWAY_PUBLIC_URL=ws://localhost:8100
 # corporate network (Windows)
 NODE_EXTRA_CA_CERTS=
@@ -2183,6 +2304,22 @@ Date: YYYY-MM-DD · Status: proposed | accepted | superseded by NNN
   - SEV0 conference conflict: https://incident.io/blog/sev0-2024
   - FireHydrant FireDrills: https://firehydrant.com/blog/what-a-successful-trial-looks-like/
   - Drillbit conflict: https://library.iimcal.ac.in/Drillbit/
+- **Tiers, pricing and abuse (checked 2026-10-20, ADR 013):**
+  - iximiuz Labs pricing: https://labs.iximiuz.com/pricing
+  - SadServers pricing and FAQ: https://sadservers.com/pricing , https://sadservers.com/faq
+  - Killercoda pricing: https://killercoda.com/pricing
+  - TryHackMe pricing: https://tryhackme.com/pricing
+  - Pluralsight sandboxes: https://www.pluralsight.com/product/sandboxes
+  - Railway trial (GitHub account checks): https://docs.railway.com/pricing/free-trial
+  - GitLab card verification against miners: https://portswigger.net/daily-swig/gitlab-tackles-crypto-mining-abuse-with-payment-card-checks-for-free-accounts
+  - PURPLEURCHIN mass-account mining: https://unit42.paloaltonetworks.com/purpleurchin-steals-cloud-resources/
+  - Hetzner April 2026 price change: https://www.it-daily.net/?p=170309
+  - Fly.io pricing: https://docs.fly.io/about/pricing
+  - Razorpay pricing: https://razorpay.com/pricing/
+  - Stripe India invite-only: https://support.stripe.com/questions/stripe-accounts-are-invite-only-in-india
+  - Paddle India: https://www.paddle.com/billing/india
+  - UPI Autopay limits: https://docs.stripe.com/payments/upi/upi-autopay
+  - Free-to-paid benchmarks: https://lennysnewsletter.com/p/what-is-a-good-free-to-paid-conversion
 - **Vendored skills:** see `.claude/skills/VENDORED.md` for repos, commits and licences.
 
 ---

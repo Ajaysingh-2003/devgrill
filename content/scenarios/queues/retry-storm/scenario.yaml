@@ -1,4 +1,6 @@
-# Scenario metadata and briefing. Phase 3 adds faults, probes, hints and the rubric.
+# Library entry only: not yet runnable (playable: false). Authoring it means adding faults,
+# load, slo, probes, hints and a page (see docs/adr/012-scenario-spec-v1.md).
+schema: devgrill/scenario@1
 slug: retry-storm
 title: Retry storm
 track: queues
@@ -12,6 +14,7 @@ tags:
   - retries
   - backoff
 base_app: shopkart
+playable: false
 briefing:
   story: The payment provider had a two-minute outage at 14:00. It recovered. Your system did not.
   system:

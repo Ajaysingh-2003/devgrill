@@ -1,4 +1,6 @@
-# Scenario metadata and briefing. Phase 3 adds faults, probes, hints and the rubric.
+# Library entry only: not yet runnable (playable: false). Authoring it means adding faults,
+# load, slo, probes, hints and a page (see docs/adr/012-scenario-spec-v1.md).
+schema: devgrill/scenario@1
 slug: one-celebrity-one-key
 title: One celebrity, one key
 track: caching
@@ -11,6 +13,7 @@ tags:
   - redis
   - hot-key
 base_app: shopkart
+playable: false
 briefing:
   story: A film star just posted a link to their profile on ShopKart. One Redis shard is at 100% CPU and
     timeouts are spreading.

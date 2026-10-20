@@ -23,7 +23,7 @@ from schemathesis.openapi import from_url
 from devgrill.config import Settings
 from devgrill_api.auth.jwks import JwksCache
 from devgrill_api.main import create_app
-from devgrill_api.testing import make_signer
+from devgrill_api.testing import NullOrchestrator, make_signer
 
 pytestmark = pytest.mark.integration
 
@@ -70,6 +70,7 @@ def live_api(migrated_database: str) -> Iterator[tuple[str, str]]:
     )
     app = create_app(settings)
     app.state.jwks = JwksCache(signer.fetch, min_refresh_s=0)
+    app.state.orchestrator = NullOrchestrator()  # starting attempts must not boot sandboxes
     port = _free_port()
     server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
     thread = threading.Thread(target=server.run, daemon=True)

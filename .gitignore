@@ -41,3 +41,10 @@ Thumbs.db
 # Local tooling
 *.log
 .devgrill/
+
+# devgrill-content test reports and exported schemas
+content/.reports/
+content/.schema/
+
+# scripts/attempt_e2e.py process logs
+.e2e-*.log

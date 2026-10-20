@@ -87,9 +87,52 @@ export type ApproachOut = {
 export type ApproachOutcome = 'full' | 'partial' | 'fails';
 
 /**
+ * AttemptIn
+ */
+export type AttemptIn = {
+    mode?: AttemptMode;
+    /**
+     * Scenario Slug
+     */
+    scenario_slug: string;
+};
+
+/**
  * AttemptMode
  */
 export type AttemptMode = 'tutorial' | 'guided' | 'oncall' | 'daily' | 'weekly';
+
+/**
+ * AttemptOut
+ */
+export type AttemptOut = {
+    /**
+     * Active At
+     */
+    active_at: string | null;
+    /**
+     * Ended At
+     */
+    ended_at: string | null;
+    /**
+     * Expires At
+     */
+    expires_at: string | null;
+    /**
+     * Id
+     */
+    id: string;
+    mode: AttemptMode;
+    /**
+     * Scenario Slug
+     */
+    scenario_slug: string;
+    /**
+     * Started At
+     */
+    started_at: string;
+    state: AttemptState;
+};
 
 /**
  * AttemptPage
@@ -538,6 +581,28 @@ export type PublicProfile = {
 };
 
 /**
+ * Quota
+ */
+export type Quota = {
+    /**
+     * Limit
+     */
+    limit: number;
+    /**
+     * Period
+     */
+    period: 'day' | 'week' | 'ever';
+    /**
+     * Resets At
+     */
+    resets_at: string | null;
+    /**
+     * Used
+     */
+    used: number;
+};
+
+/**
  * RatingPoint
  */
 export type RatingPoint = {
@@ -924,6 +989,32 @@ export type TrackSummary = {
     topics: Array<string>;
 };
 
+/**
+ * UsageOut
+ *
+ * What the caller may still start (ADR 013). Guests are reported per guest token.
+ */
+export type UsageOut = {
+    /**
+     * Free Paused
+     */
+    free_paused: boolean;
+    /**
+     * Idle Minutes
+     */
+    idle_minutes: number;
+    live_starts: Quota;
+    sandbox_minutes: Quota;
+    /**
+     * Session Minutes
+     */
+    session_minutes: number;
+    /**
+     * Tier
+     */
+    tier: 'guest' | 'free' | 'pro' | 'team';
+};
+
 export type HealthzData = {
     body?: never;
     path?: never;
@@ -1044,6 +1135,507 @@ export type AdminScenariosResponses = {
 };
 
 export type AdminScenariosResponse = AdminScenariosResponses[keyof AdminScenariosResponses];
+
+export type StartAttemptData = {
+    body: AttemptIn;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+        /**
+         * X-Guest-Token
+         */
+        'x-guest-token'?: string | null;
+    };
+    path?: never;
+    query?: never;
+    url: '/v1/attempts';
+};
+
+export type StartAttemptErrors = {
+    /**
+     * Bad request (e.g. an invalid cursor).
+     */
+    400: Problem;
+    /**
+     * Missing or invalid credentials.
+     */
+    401: Problem;
+    /**
+     * Signed in, but not allowed.
+     */
+    403: Problem;
+    /**
+     * Not found.
+     */
+    404: Problem;
+    /**
+     * Conflict (e.g. a request with this Idempotency-Key is still running).
+     */
+    409: Problem;
+    /**
+     * The request is invalid; see `errors`.
+     */
+    422: Problem;
+    /**
+     * Rate limited; see Retry-After.
+     */
+    429: Problem;
+    /**
+     * Server error.
+     */
+    500: Problem;
+    /**
+     * Temporarily unavailable.
+     */
+    503: Problem;
+};
+
+export type StartAttemptError = StartAttemptErrors[keyof StartAttemptErrors];
+
+export type StartAttemptResponses = {
+    /**
+     * Successful Response
+     */
+    202: AttemptOut;
+};
+
+export type StartAttemptResponse = StartAttemptResponses[keyof StartAttemptResponses];
+
+export type AbandonAttemptData = {
+    body?: never;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+        /**
+         * X-Guest-Token
+         */
+        'x-guest-token'?: string | null;
+    };
+    path: {
+        /**
+         * Attempt Id
+         */
+        attempt_id: string;
+    };
+    query?: never;
+    url: '/v1/attempts/{attempt_id}';
+};
+
+export type AbandonAttemptErrors = {
+    /**
+     * Bad request (e.g. an invalid cursor).
+     */
+    400: Problem;
+    /**
+     * Missing or invalid credentials.
+     */
+    401: Problem;
+    /**
+     * Signed in, but not allowed.
+     */
+    403: Problem;
+    /**
+     * Not found.
+     */
+    404: Problem;
+    /**
+     * Conflict (e.g. a request with this Idempotency-Key is still running).
+     */
+    409: Problem;
+    /**
+     * The request is invalid; see `errors`.
+     */
+    422: Problem;
+    /**
+     * Rate limited; see Retry-After.
+     */
+    429: Problem;
+    /**
+     * Server error.
+     */
+    500: Problem;
+    /**
+     * Temporarily unavailable.
+     */
+    503: Problem;
+};
+
+export type AbandonAttemptError = AbandonAttemptErrors[keyof AbandonAttemptErrors];
+
+export type AbandonAttemptResponses = {
+    /**
+     * Successful Response
+     */
+    202: AttemptOut;
+};
+
+export type AbandonAttemptResponse = AbandonAttemptResponses[keyof AbandonAttemptResponses];
+
+export type GetAttemptData = {
+    body?: never;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+        /**
+         * X-Guest-Token
+         */
+        'x-guest-token'?: string | null;
+    };
+    path: {
+        /**
+         * Attempt Id
+         */
+        attempt_id: string;
+    };
+    query?: never;
+    url: '/v1/attempts/{attempt_id}';
+};
+
+export type GetAttemptErrors = {
+    /**
+     * Bad request (e.g. an invalid cursor).
+     */
+    400: Problem;
+    /**
+     * Missing or invalid credentials.
+     */
+    401: Problem;
+    /**
+     * Signed in, but not allowed.
+     */
+    403: Problem;
+    /**
+     * Not found.
+     */
+    404: Problem;
+    /**
+     * Conflict (e.g. a request with this Idempotency-Key is still running).
+     */
+    409: Problem;
+    /**
+     * The request is invalid; see `errors`.
+     */
+    422: Problem;
+    /**
+     * Rate limited; see Retry-After.
+     */
+    429: Problem;
+    /**
+     * Server error.
+     */
+    500: Problem;
+    /**
+     * Temporarily unavailable.
+     */
+    503: Problem;
+};
+
+export type GetAttemptError = GetAttemptErrors[keyof GetAttemptErrors];
+
+export type GetAttemptResponses = {
+    /**
+     * Successful Response
+     */
+    200: AttemptOut;
+};
+
+export type GetAttemptResponse = GetAttemptResponses[keyof GetAttemptResponses];
+
+export type AttemptEventsData = {
+    body?: never;
+    headers?: {
+        /**
+         * Last-Event-Id
+         */
+        'last-event-id'?: string | null;
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+        /**
+         * X-Guest-Token
+         */
+        'x-guest-token'?: string | null;
+    };
+    path: {
+        /**
+         * Attempt Id
+         */
+        attempt_id: string;
+    };
+    query?: never;
+    url: '/v1/attempts/{attempt_id}/events';
+};
+
+export type AttemptEventsErrors = {
+    /**
+     * Bad request (e.g. an invalid cursor).
+     */
+    400: Problem;
+    /**
+     * Missing or invalid credentials.
+     */
+    401: Problem;
+    /**
+     * Signed in, but not allowed.
+     */
+    403: Problem;
+    /**
+     * Not found.
+     */
+    404: Problem;
+    /**
+     * Conflict (e.g. a request with this Idempotency-Key is still running).
+     */
+    409: Problem;
+    /**
+     * The request is invalid; see `errors`.
+     */
+    422: Problem;
+    /**
+     * Rate limited; see Retry-After.
+     */
+    429: Problem;
+    /**
+     * Server error.
+     */
+    500: Problem;
+    /**
+     * Temporarily unavailable.
+     */
+    503: Problem;
+};
+
+export type AttemptEventsError = AttemptEventsErrors[keyof AttemptEventsErrors];
+
+export type AttemptEventsResponses = {
+    /**
+     * Server-sent events
+     */
+    200: unknown;
+};
+
+export type ExtendAttemptData = {
+    body?: never;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+        /**
+         * X-Guest-Token
+         */
+        'x-guest-token'?: string | null;
+    };
+    path: {
+        /**
+         * Attempt Id
+         */
+        attempt_id: string;
+    };
+    query?: never;
+    url: '/v1/attempts/{attempt_id}/extend';
+};
+
+export type ExtendAttemptErrors = {
+    /**
+     * Bad request (e.g. an invalid cursor).
+     */
+    400: Problem;
+    /**
+     * Missing or invalid credentials.
+     */
+    401: Problem;
+    /**
+     * Signed in, but not allowed.
+     */
+    403: Problem;
+    /**
+     * Not found.
+     */
+    404: Problem;
+    /**
+     * Conflict (e.g. a request with this Idempotency-Key is still running).
+     */
+    409: Problem;
+    /**
+     * The request is invalid; see `errors`.
+     */
+    422: Problem;
+    /**
+     * Rate limited; see Retry-After.
+     */
+    429: Problem;
+    /**
+     * Server error.
+     */
+    500: Problem;
+    /**
+     * Temporarily unavailable.
+     */
+    503: Problem;
+};
+
+export type ExtendAttemptError = ExtendAttemptErrors[keyof ExtendAttemptErrors];
+
+export type ExtendAttemptResponses = {
+    /**
+     * Successful Response
+     */
+    202: AttemptOut;
+};
+
+export type ExtendAttemptResponse = ExtendAttemptResponses[keyof ExtendAttemptResponses];
+
+export type ResetAttemptData = {
+    body?: never;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+        /**
+         * X-Guest-Token
+         */
+        'x-guest-token'?: string | null;
+    };
+    path: {
+        /**
+         * Attempt Id
+         */
+        attempt_id: string;
+    };
+    query?: never;
+    url: '/v1/attempts/{attempt_id}/reset';
+};
+
+export type ResetAttemptErrors = {
+    /**
+     * Bad request (e.g. an invalid cursor).
+     */
+    400: Problem;
+    /**
+     * Missing or invalid credentials.
+     */
+    401: Problem;
+    /**
+     * Signed in, but not allowed.
+     */
+    403: Problem;
+    /**
+     * Not found.
+     */
+    404: Problem;
+    /**
+     * Conflict (e.g. a request with this Idempotency-Key is still running).
+     */
+    409: Problem;
+    /**
+     * The request is invalid; see `errors`.
+     */
+    422: Problem;
+    /**
+     * Rate limited; see Retry-After.
+     */
+    429: Problem;
+    /**
+     * Server error.
+     */
+    500: Problem;
+    /**
+     * Temporarily unavailable.
+     */
+    503: Problem;
+};
+
+export type ResetAttemptError = ResetAttemptErrors[keyof ResetAttemptErrors];
+
+export type ResetAttemptResponses = {
+    /**
+     * Successful Response
+     */
+    202: AttemptOut;
+};
+
+export type ResetAttemptResponse = ResetAttemptResponses[keyof ResetAttemptResponses];
+
+export type VerifyAttemptData = {
+    body?: never;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+        /**
+         * X-Guest-Token
+         */
+        'x-guest-token'?: string | null;
+    };
+    path: {
+        /**
+         * Attempt Id
+         */
+        attempt_id: string;
+    };
+    query?: never;
+    url: '/v1/attempts/{attempt_id}/verify';
+};
+
+export type VerifyAttemptErrors = {
+    /**
+     * Bad request (e.g. an invalid cursor).
+     */
+    400: Problem;
+    /**
+     * Missing or invalid credentials.
+     */
+    401: Problem;
+    /**
+     * Signed in, but not allowed.
+     */
+    403: Problem;
+    /**
+     * Not found.
+     */
+    404: Problem;
+    /**
+     * Conflict (e.g. a request with this Idempotency-Key is still running).
+     */
+    409: Problem;
+    /**
+     * The request is invalid; see `errors`.
+     */
+    422: Problem;
+    /**
+     * Rate limited; see Retry-After.
+     */
+    429: Problem;
+    /**
+     * Server error.
+     */
+    500: Problem;
+    /**
+     * Temporarily unavailable.
+     */
+    503: Problem;
+};
+
+export type VerifyAttemptError = VerifyAttemptErrors[keyof VerifyAttemptErrors];
+
+export type VerifyAttemptResponses = {
+    /**
+     * Successful Response
+     */
+    202: AttemptOut;
+};
+
+export type VerifyAttemptResponse = VerifyAttemptResponses[keyof VerifyAttemptResponses];
 
 export type DailyChallengeData = {
     body?: never;
@@ -1669,6 +2261,73 @@ export type MyStreakResponses = {
 };
 
 export type MyStreakResponse = MyStreakResponses[keyof MyStreakResponses];
+
+export type MyUsageData = {
+    body?: never;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+        /**
+         * X-Guest-Token
+         */
+        'x-guest-token'?: string | null;
+    };
+    path?: never;
+    query?: never;
+    url: '/v1/me/usage';
+};
+
+export type MyUsageErrors = {
+    /**
+     * Bad request (e.g. an invalid cursor).
+     */
+    400: Problem;
+    /**
+     * Missing or invalid credentials.
+     */
+    401: Problem;
+    /**
+     * Signed in, but not allowed.
+     */
+    403: Problem;
+    /**
+     * Not found.
+     */
+    404: Problem;
+    /**
+     * Conflict (e.g. a request with this Idempotency-Key is still running).
+     */
+    409: Problem;
+    /**
+     * The request is invalid; see `errors`.
+     */
+    422: Problem;
+    /**
+     * Rate limited; see Retry-After.
+     */
+    429: Problem;
+    /**
+     * Server error.
+     */
+    500: Problem;
+    /**
+     * Temporarily unavailable.
+     */
+    503: Problem;
+};
+
+export type MyUsageError = MyUsageErrors[keyof MyUsageErrors];
+
+export type MyUsageResponses = {
+    /**
+     * Successful Response
+     */
+    200: UsageOut;
+};
+
+export type MyUsageResponse = MyUsageResponses[keyof MyUsageResponses];
 
 export type ListScenariosData = {
     body?: never;

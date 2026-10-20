@@ -1,0 +1,150 @@
+# ShopKart v1: the e-commerce base app (docs/PLAN.md §11.1, ADR 012). Read by the sandbox
+# driver; nothing here is Docker-specific beyond image names.
+schema: devgrill/base-app@1
+slug: shopkart
+name: ShopKart
+version: 1
+
+# Services start in dependency order and must pass their healthcheck before dependants
+# start. `build` folders are built into devgrill/shopkart-<service>:<version>.
+services:
+  postgres-db:
+    # Postgres 18 with the seed (db/init.sql) baked in at build time: no init on boot.
+    build: db
+    command: ["postgres", "-c", "shared_preload_libraries=pg_stat_statements", "-c", "max_connections=100"]
+    healthcheck: ["pg_isready", "-U", "shopkart", "-d", "shopkart", "-h", "127.0.0.1"]
+    # .sql fault scripts run here with psql as this user.
+    sql: { user: shopkart, database: shopkart }
+    cpus: 1.0
+    memory_mb: 768
+
+  redis-db:
+    image: valkey/valkey:9.1-alpine
+    command: ["valkey-server", "--save", "", "--appendonly", "no", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    healthcheck: ["valkey-cli", "ping"]
+    cache: true
+    cpus: 0.5
+    memory_mb: 320
+
+  toxiproxy:
+    image: ghcr.io/shopify/toxiproxy:2.13.0
+    command: ["-host=0.0.0.0", "-config=/config/proxies.json"]
+    files:
+      /config/proxies.json: toxiproxy/proxies.json
+    # Inside the sandbox the datastores are reached THROUGH toxiproxy under these names.
+    # postgres-dr is the "cross-region" endpoint: same database, a link faults can slow down.
+    aliases: [postgres, postgres-dr, redis]
+    toxiproxy: { admin_port: 8474 }
+    healthcheck: ["/toxiproxy-cli", "-h", "127.0.0.1:8474", "list"]
+    depends_on: [postgres-db, redis-db]
+    cpus: 0.5
+    memory_mb: 128
+
+  api:
+    build: api
+    # DATABASE_URL and the tunables live in config/app.env (config-as-code, deployed).
+    env:
+      REDIS_URL: redis://redis:6379/0
+      SERVICE_NAME: product-api
+    # The player edits this source in tools:/workspace/api and deploys it.
+    source:
+      dest: /srv/app
+      paths: [app, config]
+      config_file: config/app.env
+    port: 8000
+    metrics: /metrics
+    healthcheck: ["curl", "-fsS", "http://127.0.0.1:8000/readyz"]
+    depends_on: [toxiproxy]
+    cpus: 2.0
+    memory_mb: 512
+
+  worker:
+    build: worker
+    env:
+      DATABASE_URL: postgresql://shopkart:shopkart@postgres:5432/shopkart
+      REDIS_URL: redis://redis:6379/0
+    metrics_port: 9100
+    depends_on: [toxiproxy]
+    cpus: 0.5
+    memory_mb: 256
+
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:v0.20.1
+    env:
+      DATA_SOURCE_NAME: postgresql://shopkart:shopkart@postgres-db:5432/shopkart?sslmode=disable
+    metrics_port: 9187
+    depends_on: [postgres-db]
+    cpus: 0.25
+    memory_mb: 64
+
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.94.0
+    env:
+      REDIS_ADDR: redis://redis-db:6379
+    metrics_port: 9121
+    depends_on: [redis-db]
+    cpus: 0.25
+    memory_mb: 64
+
+  tools:
+    build: tools
+    shell: true
+    depends_on: [api]
+    cpus: 1.0
+    memory_mb: 512
+
+slo:
+  p99_latency_ms: 500
+  error_rate: 0.01
+
+# The traffic generator used during play (the "sale") and by the verifier.
+load:
+  script: load/shop.js
+  target: http://api:8000
+
+# Metrics derived from scrapes, by name. `labels` values are regular expressions; rates and
+# quantiles are computed over the window between two scrapes.
+metrics:
+  p99_latency_ms:
+    type: quantile
+    job: api
+    metric: http_request_duration_seconds
+    q: 0.99
+    labels: { route: "/products/\\{product_id\\}" }
+    scale: 1000
+  error_rate:
+    type: ratio
+    job: api
+    metric: http_requests_total
+    labels: { status: "5.." }
+  request_rate:
+    type: rate
+    job: api
+    metric: http_requests_total
+  cache_hit_rate:
+    type: ratio
+    job: api
+    metric: product_cache_total
+    labels: { result: hit }
+  db_qps_product:
+    type: rate
+    job: api
+    metric: db_queries_total
+    labels: { query: fetch_product }
+  db_pool_in_use:
+    type: gauge
+    job: api
+    metric: db_pool_in_use
+  db_connections:
+    type: gauge
+    job: postgres-exporter
+    metric: pg_stat_activity_count
+    labels: { datname: shopkart }
+  orders_queue_depth:
+    type: gauge
+    job: worker
+    metric: orders_queue_depth
+  cache_memory_bytes:
+    type: gauge
+    job: redis-exporter
+    metric: redis_memory_used_bytes

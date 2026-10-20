@@ -34,6 +34,8 @@ jobs:
       - run: uv run python -m ruff format --check .
       - run: uv run python -m basedpyright
       - run: uv run python -m pytest -m "not integration" --cov=devgrill --cov=devgrill_api --cov=devgrill_worker --cov=devgrill_gateway --cov-report=term-missing
+      - name: content validate (formats, cross-references, patches apply)
+        run: uv run python -m devgrill_content.cli validate
 
   python-windows:
     name: python · unit on Windows

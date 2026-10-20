@@ -1,4 +1,6 @@
-# Scenario metadata and briefing. Phase 3 adds faults, probes, hints and the rubric.
+# Spec v1 (ADR 012). Little's law in production: a config deploy sends every query across a slow
+# link; connections are held longer, the pool empties, and Postgres itself is idle.
+schema: devgrill/scenario@1
 slug: pool-party
 title: Pool party
 track: databases
@@ -6,6 +8,7 @@ topic: connection-pools
 difficulty: sev3
 est_minutes: 15
 status: published
+access: free
 summary: Requests hang while database CPU sits at 20%
 tags:
   - postgres
@@ -20,10 +23,98 @@ briefing:
       note: steady traffic
       role: path
     - kind: api
-      name: orders-api
-      note: Python, 4 pods
+      name: product-api
+      note: Python, 4 workers
       role: path
     - kind: db
       name: postgres
-      note: orders
+      note: products, orders
       role: path
+  goals:
+    - title: Explain the idle database
+      detail: Requests wait, yet Postgres is barely working. Find where the time goes.
+    - title: Restore latency
+      detail: p99 under 500 ms and under 1% errors, without simply making the pool bigger.
+
+page:
+  severity: SEV3
+  title: "product-api: p99 > 2s, 503 'database busy' errors"
+
+faults:
+  - use: db/pool-exhaustion
+    at: T-10m
+    params: { latency_ms: 150 }
+
+load:
+  script: shop.js
+  vus: 30
+  params: { HOT_KEYS: "1042,1043,2210,77,9001" }
+
+deploy_history:
+  - message: "orders: add fulfilment status to the API"
+    minutes_before: 4320
+  - message: "search: limit page size to 100"
+    minutes_before: 720
+  - message: "config: use the new HA database endpoint"
+    minutes_before: 10
+    from_fault: db/pool-exhaustion
+
+beats:
+  - persona: arjun
+    at: T+30s
+    say: "API's drowning but Postgres is at 20% CPU. I can bump it to a bigger instance in ten minutes. Want me to?"
+  - persona: priya
+    at: T+4m
+    say: "Logs are full of 'pool exhausted'. Can't we just raise DB_POOL_MAX to 50?"
+  - persona: arjun
+    when: "state:mitigated"
+    say: "Latency's back. So the database was never the problem? Write down why, before someone 'fixes' it again."
+
+constraints:
+  no_scale_up: [postgres-db]
+
+slo:
+  p99_latency_ms: 500
+  error_rate: 0.01
+  for_s: 30
+
+probes:
+  - key: steady-traffic
+    kind: load
+    title: Steady traffic
+    how: Replays normal traffic for 45 seconds; p99 under 500 ms and under 1% errors.
+    target:
+      p99_ms: { lt: 500 }
+      error_rate: { lt: 0.01 }
+  - key: connection-headroom
+    kind: load
+    title: Connection headroom
+    how: Postgres keeps headroom under load (fewer than 70 connections), so the pool wasn't just enlarged.
+    target:
+      db_connections: { lt: 70 }
+  - key: budget
+    kind: budget
+    title: Within budget
+    how: No bigger database.
+    weight: 0.5
+
+hints:
+  tier1: "Postgres is idle and requests are waiting. Waiting for what? Check what the API logs say and how long each query takes from the API's side."
+  tier2: "Connections needed = requests per second × time each one holds a connection. Something made every query slower without making Postgres busier. What changed in the config?"
+  tier3: "The last deploy pointed DATABASE_URL at postgres-dr, a cross-region endpoint that adds ~150 ms per round trip. Point it back at the primary (postgres:5432) and deploy."
+
+rubric:
+  - key: impact
+    max: 2
+    description: States the latency and error impact and when it started.
+  - key: root-cause
+    max: 4
+    description: Explains pool exhaustion via longer hold times (Little's law), caused by the endpoint change, not database load.
+  - key: rejected-fixes
+    max: 2
+    description: Explains why scaling the database or enlarging the pool would not help (or would hurt).
+  - key: prevention
+    max: 2
+    description: Proposes a guard, e.g. alerting on query latency from the client side, config review for endpoints.
+
+ttl_minutes: 30

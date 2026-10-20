@@ -1,0 +1,25 @@
+schema: devgrill/fault@1
+name: config/bad-env
+kind: config
+summary: The pool size and timeout were set for a tiny staging database; under real load the API gives up on connections almost immediately.
+base_apps: [shopkart]
+params:
+  pool_max:
+    type: integer
+    description: Connections per API process.
+    default: 1
+  timeout_s:
+    type: number
+    description: Seconds to wait for a free connection.
+    default: 0.2
+apply:
+  env:
+    DB_POOL_MAX: "{{pool_max}}"
+    DB_POOL_TIMEOUT_S: "{{timeout_s}}"
+  service: api
+deploy_message: "ops: copy staging pool settings to prod"
+symptom:
+  metric: error_rate
+  op: gt
+  value: 0.05
+  within_s: 60

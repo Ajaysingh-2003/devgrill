@@ -1,0 +1,20 @@
+schema: devgrill/fault@1
+name: cache/ttl-zero
+kind: config
+summary: The cache TTL is set to 0 in production config, which the app treats as "don't cache".
+base_apps: [shopkart]
+params:
+  ttl:
+    type: integer
+    description: Seconds; 0 disables writes to the cache.
+    default: 0
+apply:
+  env:
+    CACHE_TTL_SECONDS: "{{ttl}}"
+  service: api
+deploy_message: "ops: tune cache TTL for the new catalogue"
+symptom:
+  metric: cache_hit_rate
+  op: lt
+  value: 0.05
+  within_s: 60

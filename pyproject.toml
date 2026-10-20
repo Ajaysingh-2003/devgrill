@@ -57,7 +57,12 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"**/tests/**" = ["S", "PT011"]
+"**/tests/**" = ["S", "PT011", "PT018"]
+# The fictional apps players debug, and scenario scripts that run inside sandboxes: their
+# naming and randomness are part of the story, not our code style.
+"content/**" = ["N818", "S311", "S108"]
+# Scratch paths are inside sandbox containers, never on the host.
+"packages/py-core/src/devgrill/sandbox/**" = ["S108"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["devgrill", "devgrill_api", "devgrill_worker", "devgrill_gateway", "devgrill_content"]

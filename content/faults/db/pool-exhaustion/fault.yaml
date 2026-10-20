@@ -1,0 +1,28 @@
+schema: devgrill/fault@1
+name: db/pool-exhaustion
+kind: config
+summary: A config deploy points the API at a cross-region database endpoint; every query pays the round trip, connections are held longer and the pool runs dry while Postgres idles.
+base_apps: [shopkart]
+params:
+  latency_ms:
+    type: integer
+    description: Round-trip latency added on the cross-region link.
+    default: 150
+# Two steps: the config change (a deploy the player can find and revert) and the physics of
+# the far endpoint (a Toxiproxy latency toxic on the postgres-dr proxy).
+apply:
+  env:
+    DATABASE_URL: postgresql://shopkart:shopkart@postgres-dr:5433/shopkart
+  service: api
+also:
+  toxic:
+    proxy: postgres-dr
+    type: latency
+    latency: "{{latency_ms}}"
+    jitter: 20
+deploy_message: "config: use the new HA database endpoint"
+symptom:
+  metric: p99_latency_ms
+  op: gt
+  value: 500
+  within_s: 60

@@ -66,6 +66,26 @@ class Settings(BaseSettings):
     rate_limit_window_s: int = 60
     rate_limit_enabled: bool = True
 
+    # ---- sandboxes (ADR 007, ADR 013)
+    sandbox_driver: Literal["compose"] = "compose"
+    #: Folder holding tracks.yaml, scenarios/, faults/ and base-apps/ (relative to the repo root).
+    content_root: Path = Path("content")
+    #: Docker Engine endpoint; empty uses the platform default (npipe on Windows).
+    docker_host: str = ""
+    #: Fleet cap: sandboxes alive at once across all users.
+    sandbox_max_live: int = 4
+    #: Total sandbox-minutes free and guest users may use per IST day (the money cap).
+    sandbox_daily_minutes_budget: int = 600
+    #: Kill switch for free and guest starts.
+    sandbox_free_starts: bool = True
+    #: Scenarios guests may play on /try (comma-separated slugs).
+    sandbox_guest_scenarios: str = "ttl-zero"
+    sandbox_provision_timeout_s: int = 180
+    #: Rough marginal cost of one sandbox-hour, for `est_cost_usd` (ADR 013: about $0.01).
+    sandbox_cost_per_hour_usd: float = 0.012
+    #: The probe image (platform-owned; runs scrapes, load and verifier checks).
+    sandbox_probe_image: str = "devgrill/sandbox-probe:1"
+
     otel_enabled: bool = False
     otel_exporter_otlp_endpoint: str = "http://localhost:4318"
     sentry_dsn: str | None = None
@@ -73,6 +93,10 @@ class Settings(BaseSettings):
     @property
     def cors_origins(self) -> list[str]:
         return [origin.strip() for origin in self.api_cors_origins.split(",") if origin.strip()]
+
+    @property
+    def guest_scenarios(self) -> frozenset[str]:
+        return frozenset(s.strip() for s in self.sandbox_guest_scenarios.split(",") if s.strip())
 
     @property
     def admin_logins(self) -> frozenset[str]:

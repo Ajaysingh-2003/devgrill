@@ -1,4 +1,6 @@
-# Scenario metadata and briefing. Phase 3 adds faults, probes, hints and the rubric.
+# Spec v1 (ADR 012). The flagship: a deploy two minutes before the sale quietly turns the cache
+# off (read and write keys disagree), and sale traffic lands on Postgres.
+schema: devgrill/scenario@1
 slug: big-sale-meltdown
 title: The Big Sale Meltdown
 track: caching
@@ -6,6 +8,7 @@ topic: stampedes
 difficulty: sev2
 est_minutes: 25
 status: published
+access: pro
 summary: Product pages die the minute a sale starts
 tags:
   - redis
@@ -22,7 +25,7 @@ briefing:
       role: path
     - kind: api
       name: product-api
-      note: Python, 4 pods
+      note: Python, 4 workers
       role: path
     - kind: cache
       name: redis
@@ -36,3 +39,108 @@ briefing:
       name: worker
       note: orders queue
       role: side
+  goals:
+    - title: Stop the bleeding
+      detail: Product pages back under 500 ms p99 and under 1% errors while the sale runs.
+    - title: Find what changed
+      detail: Something shipped shortly before the sale. Prove whether it is the cause.
+    - title: Make it hold
+      detail: The fix has to survive a cold cache and keep prices fresh after updates.
+
+page:
+  severity: SEV2
+  title: "product-api: p99 > 1.5s on product pages (sale traffic)"
+
+faults:
+  - use: cache/key-format-change
+    at: T-2m
+
+load:
+  script: shop.js
+  vus: 40
+  params: { HOT_KEYS: "1042,1043,2210,77,9001" }
+
+deploy_history:
+  - message: "catalogue: sale banners and badges"
+    minutes_before: 1440
+  - message: "product page: lazy-load images"
+    minutes_before: 180
+  - message: "refactor: add version prefix to cache keys"
+    minutes_before: 2
+    from_fault: cache/key-format-change
+
+beats:
+  - persona: priya
+    at: T+20s
+    say: "Sale went live at 8 and product pages are crawling. Support says checkout is timing out too. What do you see?"
+  - persona: arjun
+    at: T+3m
+    say: "Postgres CPU is pinned. Should I restart it? Or scale it up?"
+  - persona: arjun
+    when: "state:mitigated"
+    say: "That's holding. Before we call it: will this survive the cache being flushed mid-sale, and are price updates still showing up?"
+
+constraints:
+  no_scale_up: [postgres-db]
+  cache_max_memory_mb: 256
+
+slo:
+  p99_latency_ms: 500
+  error_rate: 0.01
+  for_s: 30
+
+probes:
+  - key: sale-replay
+    kind: load
+    title: Sale traffic
+    how: Replays the sale for 45 seconds; p99 under 500 ms and under 1% errors.
+    target:
+      p99_ms: { lt: 500 }
+      error_rate: { lt: 0.01 }
+  - key: cache-serves-reads
+    kind: load
+    title: Cache does its job
+    how: During the replay most product reads come from the cache, not Postgres.
+    target:
+      cache_hit_rate: { gt: 0.6 }
+  - key: cold-cache
+    kind: chaos
+    title: Cold cache mid-sale
+    how: Flushes the cache during sale traffic; the SLO recovers within 30 seconds.
+    steps:
+      - flush_cache: true
+    target:
+      recovery_s: { lt: 30 }
+  - key: price-freshness
+    kind: invariant
+    title: Prices stay fresh
+    how: Changes a hot product's price; the product page shows it within 5 seconds.
+    script: freshness.py
+    target:
+      visible_after_s: { lt: 5 }
+  - key: budget
+    kind: budget
+    title: Within budget
+    how: No bigger database, no bigger cache.
+    weight: 0.5
+
+hints:
+  tier1: "Postgres is the one suffering, but is it the cause? Look at what the cache is doing for product reads."
+  tier2: "The cache hit rate went to zero right after a deploy. Compare the key the app reads with the key it writes."
+  tier3: "The refactor made get() and invalidate() use versioned_key(), but set() still writes key(). Write with versioned_key() too (or roll the deploy back), then deploy."
+
+rubric:
+  - key: impact
+    max: 2
+    description: Quantifies the impact (latency, errors, duration, during the sale).
+  - key: timeline
+    max: 2
+    description: Ties the start to the deploy two minutes before the sale.
+  - key: root-cause
+    max: 3
+    description: Explains the read/write key mismatch and why it showed up only under sale load.
+  - key: prevention
+    max: 3
+    description: Proposes a guard, e.g. a test that a set() is readable by get(), a hit-rate alert, canary deploys before peaks.
+
+ttl_minutes: 45

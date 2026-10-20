@@ -1,4 +1,6 @@
-# Scenario metadata and briefing. Phase 3 adds faults, probes, hints and the rubric.
+# Library entry only: not yet runnable (playable: false). Authoring it means adding faults,
+# load, slo, probes, hints and a page (see docs/adr/012-scenario-spec-v1.md).
+schema: devgrill/scenario@1
 slug: restarts-every-six-hours
 title: Restarts every six hours
 track: memory
@@ -11,6 +13,7 @@ tags:
   - memory
   - leak
 base_app: shopkart
+playable: false
 briefing:
   story: Every six hours, like clockwork, product-api pods get OOM-killed and restart. Users notice a
     burst of errors each time.

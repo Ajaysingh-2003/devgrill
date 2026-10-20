@@ -1,4 +1,6 @@
-# Scenario metadata and briefing. Phase 3 adds faults, probes, hints and the rubric.
+# Library entry only: not yet runnable (playable: false). Authoring it means adding faults,
+# load, slo, probes, hints and a page (see docs/adr/012-scenario-spec-v1.md).
+schema: devgrill/scenario@1
 slug: the-3am-table-lock
 title: The 3 a.m. table lock
 track: databases
@@ -12,6 +14,7 @@ tags:
   - migrations
   - deploys
 base_app: shopkart
+playable: false
 briefing:
   story: The nightly deploy finished at 2:58 a.m. At 3:00 checkout stopped responding and the pager went
     off.

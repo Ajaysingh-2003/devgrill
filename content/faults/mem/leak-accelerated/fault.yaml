@@ -1,0 +1,15 @@
+schema: devgrill/fault@1
+name: mem/leak-accelerated
+kind: code_patch
+summary: A "request cache" keeps every response forever; memory grows with traffic until the process is killed.
+base_apps: [shopkart]
+params: {}
+apply:
+  patch: patch.diff
+  service: api
+deploy_message: "perf: memoise product lookups per process"
+symptom:
+  metric: error_rate
+  op: gt
+  value: 0.05
+  within_s: 300

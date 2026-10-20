@@ -72,3 +72,13 @@ def make_signer() -> Signer:
     signer = Signer()
     signer.rotate()
     return signer
+
+
+class NullOrchestrator:
+    """Accepts every start and signal and does nothing (contract tests: no real sandboxes)."""
+
+    async def start(self, inp: object) -> None:
+        return None
+
+    async def signal(self, attempt_id: str, name: str) -> None:
+        return None

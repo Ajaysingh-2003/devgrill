@@ -1,4 +1,5 @@
-# Scenario metadata and briefing. Phase 3 adds faults, probes, hints and the rubric.
+# Spec v1 (ADR 012). The tutorial candidate: one config fault, a capacity page, a one-line fix.
+schema: devgrill/scenario@1
 slug: ttl-zero
 title: TTL zero
 track: caching
@@ -6,6 +7,7 @@ topic: invalidation
 difficulty: sev4
 est_minutes: 10
 status: published
+access: free
 summary: The cache works locally and does nothing in production
 tags:
   - redis
@@ -17,7 +19,7 @@ briefing:
   system:
     - kind: api
       name: product-api
-      note: Python, 2 pods
+      note: Python, 4 workers
       role: path
     - kind: cache
       name: redis
@@ -27,3 +29,85 @@ briefing:
       name: postgres
       note: products
       role: path
+  goals:
+    - title: Find why the cache does nothing
+      detail: Product reads should mostly be served from Redis. Work out why every one goes to Postgres.
+    - title: Bring the database load down
+      detail: Product reads on Postgres back under 75 per second, without breaking price updates.
+
+page:
+  severity: SEV4
+  title: "postgres: product reads 3x normal (capacity alert)"
+
+faults:
+  - use: cache/ttl-zero
+    at: T-5m
+    params: { ttl: 0 }
+
+load:
+  script: shop.js
+  vus: 20
+  params: { HOT_KEYS: "1042,1043,2210,77,9001" }
+
+deploy_history:
+  - message: "catalogue: add trail-running category"
+    minutes_before: 2880
+  - message: "product page: show stock badge"
+    minutes_before: 300
+  - message: "ops: tune cache TTL for the new catalogue"
+    minutes_before: 5
+    from_fault: cache/ttl-zero
+
+beats:
+  - persona: priya
+    at: T+15s
+    say: "DB team pinged: product reads on Postgres jumped this afternoon. Latency is fine for now, but we're burning the headroom we need for the sale. Can you check the cache?"
+  - persona: arjun
+    when: "state:mitigated"
+    say: "Postgres is back to its usual load. Nice. Make sure whatever changed can't sneak back in, then verify."
+
+unlocked_tools: [overview, logs, terminal, cache, code, deploys]
+
+slo:
+  thresholds:
+    db_qps_product: { lt: 75 }
+  error_rate: 0.01
+  for_s: 30
+
+probes:
+  - key: sale-replay
+    kind: load
+    title: Sale traffic
+    how: Replays the shop traffic for 45 seconds; p99 under 500 ms and under 1% errors.
+    target:
+      p99_ms: { lt: 500 }
+      error_rate: { lt: 0.01 }
+  - key: db-offload
+    kind: load
+    title: Database offload
+    how: During the replay, Postgres serves under 75 product reads per second.
+    target:
+      db_qps_product: { lt: 75 }
+  - key: budget
+    kind: budget
+    title: Within budget
+    how: No extra replicas or memory; the fix has to be in the app.
+    weight: 0.5
+
+hints:
+  tier1: "Compare the cache's hit rate with how it looked yesterday. Is anything being written to Redis at all?"
+  tier2: "The cache only stores a product when its TTL is above zero. Where does the API get its TTL from, and did that change recently?"
+  tier3: "config/app.env sets CACHE_TTL_SECONDS=0 since the last ops deploy. Set it back to a sensible value (300) and deploy."
+
+rubric:
+  - key: impact
+    max: 3
+    description: States the impact (database load, risk to the sale) without overstating it.
+  - key: root-cause
+    max: 4
+    description: Names the TTL config change as the cause and how it disabled caching.
+  - key: prevention
+    max: 3
+    description: Proposes a guard, e.g. config validation that rejects TTL 0 or an alert on hit rate.
+
+ttl_minutes: 30

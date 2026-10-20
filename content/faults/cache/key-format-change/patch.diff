@@ -1,0 +1,36 @@
+diff --git app/cache.py app/cache.py
+index 3ce6f6b..855f326 100644
+--- app/cache.py
++++ app/cache.py
+@@ -21,13 +21,21 @@ log = logging.getLogger("cache")
+ client = redis.Redis.from_url(settings.REDIS_URL, socket_timeout=1.0, socket_connect_timeout=1.0)
+ 
+ 
++#: Bumped when the cached product shape changes, so stale shapes are never read back.
++CACHE_VERSION = "v2"
++
++
+ def key(product_id: int) -> str:
+     return f"{settings.CACHE_KEY_PREFIX}product:{product_id}"
+ 
+ 
++def versioned_key(product_id: int) -> str:
++    return f"{CACHE_VERSION}:{key(product_id)}"
++
++
+ def get(product_id: int) -> dict[str, Any] | None:
+     try:
+-        raw = client.get(key(product_id))
++        raw = client.get(versioned_key(product_id))
+     except redis.RedisError as exc:
+         log.warning("cache unavailable", extra=fields(error=type(exc).__name__))
+         return None
+@@ -47,7 +55,7 @@ def set(product_id: int, product: dict[str, Any]) -> None:
+ 
+ def invalidate(product_id: int) -> None:
+     try:
+-        client.delete(key(product_id))
++        client.delete(versioned_key(product_id))
+     except redis.RedisError as exc:
+         log.warning("cache invalidate failed", extra=fields(error=type(exc).__name__))
+ 
