@@ -18,6 +18,8 @@ Measured in the browser: from the WebSocket `send` of a keystroke frame to the n
 
 The one p95 over 80 ms (87 ms) came from the first run after a cold `next dev` start, while the dev server was compiling routes on the same CPUs. The path itself is a few milliseconds; the tail is the shared machine.
 
+**On CI** (the `workspace` job on a 2-CPU GitHub runner, with `next dev` compiling as it plays), the same run measured p50 4 ms and p95 91 ms, with sample-to-browser 1.25 s. These are informational: the gate is local, and the job asserts the flow, not latency.
+
 ## Telemetry (gate: sample-to-chart < 2.5 s)
 
 The worker samples every 2 s. The delay from a sample's timestamp to its arrival in the browser was at most **0.02 s** in the final run (0.23 s in an earlier one). Charts draw on arrival. The worst case a player sees is one sampling interval plus this delay.
@@ -52,7 +54,21 @@ The worker samples every 2 s. The delay from a sample's timestamp to its arrival
 
 **Terminal gate met:** +3.7% heap at 30 minutes, against a 20% limit.
 
-**Run 2 (the full hour)** is recorded below once it completes.
+**Run 2 (63 minutes, complete).** Both extensions went through (minutes 38 and 52).
+
+| Minute | JS heap | DOM nodes (CDP) | Elements in the page |
+|---|---|---|---|
+| 1 | 17.52 MB | 1,206 | 502 |
+| 5 (baseline) | 19.43 MB | 1,485 | 661 |
+| 15 | 19.71 MB | 1,562 | 668 |
+| 30 | 19.99 MB (**+2.9%**) | 1,646 | 668 |
+| 45 | 20.59 MB | 1,788 | 668 |
+| 60 | 20.77 MB | 1,845 | 668 |
+| 63 | 20.85 MB (**+7.3%**) | 1,842 | 669 |
+
+- **Both gates met.** The terminal session grew +2.9% at 30 minutes, against a 20% limit. The telemetry stream ran an hour with memory bounded: +7.3% at the end, with a peak of 20.88 MB.
+- **What the "DOM nodes" growth is.** The CDP node count rises about 6 a minute, while the page's element count stays flat after the first panels render. So no panel accumulates elements. The extra nodes are text nodes in the terminal's redrawn rows and detached nodes awaiting collection.
+- **Worth watching.** The trend is linear and small (about 0.03 MB a minute). It isn't growth without bound inside the session's limits (Pro: 60 minutes plus two extensions). Re-check it on a production build when sessions get longer.
 
 **Bounded by design:**
 - samples: a ring of 900 (30 minutes at 2 s);
