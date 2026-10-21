@@ -51,6 +51,8 @@ class ApproachReport:
     refused_steps: list[str] = field(default_factory=list)
     ok: bool = False
     verify_s: float | None = None
+    #: Whether the declared symptoms showed before the steps (the reference run gates this).
+    broke: bool | None = None
     error: str = ""
 
 
@@ -267,9 +269,16 @@ async def run_approach(
     handle = await driver.create(SandboxSpec(f"test-{uuid.uuid4()}", bundle))
     verifier = Verifier(driver, handle, bundle)
     try:
-        if not await _break(bundle, driver, handle, verifier, scratch):
-            out.error = "the scenario did not break"
-            return out
+        # The reference run proves the break; here it's informational, so a slow break on a
+        # busy machine doesn't fail the suite. Verify on the faulted sandbox decides.
+        out.broke = await _break(bundle, driver, handle, verifier, scratch)
+        if not out.broke:
+            echo(
+                f"  note: {spec.key}: symptoms not all seen within the window"
+                f" (SLO breached after {scratch.slo_breached_after_s},"
+                f" symptoms {scratch.symptoms});"
+                " verifying anyway"
+            )
         for step in spec.steps:
             if err := await apply_step(driver, handle, bundle, folder, step):
                 # Only a cheat's commands may be refused (tampering the sandbox blocks); a
@@ -318,7 +327,10 @@ async def run_approaches(
     for folder, spec in load_approaches(bundle):
         if only and spec.key != only:
             continue
-        report.approaches.append(await run_approach(bundle, driver, folder, spec, echo=echo))
+        result = await run_approach(bundle, driver, folder, spec, echo=echo)
+        if result.error and result.verify_s is None:  # it never reached verify: say why
+            echo(f"  {'cheat' if spec.cheat else 'approach'} {spec.key}: ERROR {result.error}")
+        report.approaches.append(result)
     if bad := [a.key for a in report.approaches if not a.ok]:
         report.ok = False
         report.error = (report.error + "; " if report.error else "") + f"approaches: {bad}"

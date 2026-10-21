@@ -65,6 +65,7 @@ jobs:
         with:
           name: content-reports-${{ matrix.scenario }}
           path: content/.reports/
+          include-hidden-files: true  # .reports is a dot folder
           retention-days: 14
 
   workspace:
