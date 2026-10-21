@@ -1,0 +1,18 @@
+schema: devgrill/approach@1
+key: bigger-pool
+name: Raise DB_POOL_MAX to 50
+outcome: fails
+idea: >-
+  More connections per process so requests stop waiting for one. The queue shrinks, but every
+  query still pays the ~150 ms cross-region round trip, so p99 stays over the SLO.
+steps:
+  - patch: bigger-pool.diff
+    service: api
+pros:
+  - Fewer "pool exhausted" errors at first
+cons:
+  - "Leaves the slow round trip in place: latency stays over the SLO"
+  - Spends the database's connection headroom on waiting, not work
+fails_probes: [steady-traffic]
+match:
+  diff: '^\+DB_POOL_MAX='

@@ -1,0 +1,19 @@
+schema: devgrill/approach@1
+key: write-versioned-key
+name: Write with the versioned key
+outcome: full
+idea: >-
+  The refactor made get() and invalidate() use versioned_key() while set() kept writing key(),
+  so nothing written was ever read back. Make set() write the versioned key too: reads hit,
+  invalidation still works, and the refactor stays.
+steps:
+  - patch: write-versioned-key.diff
+    service: api
+    message: "fix(cache): write with the versioned key so reads hit"
+pros:
+  - Fixes the bug forward; keeps the refactor
+  - Price updates still invalidate the right key
+cons:
+  - Needs reading the diff under pressure
+match:
+  diff: 'client\.set\(versioned_key'

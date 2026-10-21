@@ -3,140 +3,17 @@
 from __future__ import annotations
 
 import json
-import uuid
-from pathlib import Path
-from typing import Any
 
 import pytest
-from fastapi.testclient import TestClient
 from sqlalchemy import select, update
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from devgrill.domain.enums import AttemptState
 from devgrill.infra.models import Attempt, AttemptEvent, WarRoomMessage
 from devgrill.infra.signing import redeem_ticket
 from devgrill_api.errors import AppError
-from devgrill_content.seed import seed
+from devgrill_api.testing import started
 
 pytestmark = pytest.mark.integration
-
-CONTENT = Path(__file__).resolve().parents[3] / "content"
-
-
-class FakeOrchestrator:
-    def __init__(self) -> None:
-        self.signals: list[tuple[str, str]] = []
-
-    async def start(self, inp: Any) -> None:
-        return None
-
-    async def signal(self, attempt_id: str, name: str) -> None:
-        self.signals.append((attempt_id, name))
-
-
-class FakeGateway:
-    def __init__(self) -> None:
-        self.calls: list[tuple[str, str, dict[str, str] | None, dict[str, Any] | None]] = []
-        self.fail: AppError | None = None
-
-    async def call(self, method: str, attempt_id: uuid.UUID, path: str, *, query=None, body=None):
-        self.calls.append((method, path, query, body))
-        if self.fail is not None:
-            raise self.fail
-        return {
-            ("GET", "status"): {
-                "services": [
-                    {
-                        "name": "api",
-                        "state": "running",
-                        "health": "healthy",
-                        "restarts": 0,
-                        "oom_killed": False,
-                        "started_at": None,
-                    }
-                ]
-            },
-            ("GET", "files"): {"service": "api", "files": ["app/main.py"]},
-            ("GET", "file"): {"service": "api", "path": "app/main.py", "content": "x = 1\n"},
-            ("PUT", "file"): {"service": "api", "path": "app/main.py", "saved": True},
-            ("POST", "deploys"): {
-                "ok": True,
-                "sha": "abc1234",
-                "message": "api abc1234 is live",
-                "log": "",
-            },
-            ("POST", "rollbacks"): {
-                "ok": True,
-                "sha": "1234abc",
-                "message": "api 1234abc is live",
-                "log": "",
-            },
-            ("POST", "restarts"): {"message": "api restarted"},
-            ("GET", "db"): {
-                "max_connections": 100,
-                "connections": [{"state": "active", "n": 3}],
-                "top": [
-                    {"query": "SELECT 1", "calls": 5, "mean_ms": 0.1, "total_ms": 0.5, "rows": 5}
-                ],
-                "active": [],
-            },
-            ("POST", "db/query"): {"columns": ["n"], "rows": [[1]], "truncated": False, "ms": 1.0},
-            ("GET", "cache"): {
-                "stats": {
-                    "hits": 1,
-                    "misses": 9,
-                    "hit_rate": 0.1,
-                    "ops_per_sec": 5,
-                    "used_memory": 1,
-                    "maxmemory": 2,
-                    "evicted_keys": 0,
-                    "keys": 3,
-                    "clients": 2,
-                },
-                "keys": [{"key": "product:1", "ttl": 30}],
-                "asked": [{"key": "v2:product:1", "count": 9, "exists": False}],
-                "window_s": 1.5,
-            },
-            ("GET", "deploys"): {
-                "service": "api",
-                "live": "abc",
-                "live_dirty": False,
-                "commits": [{"sha": "abc", "short": "abc", "author": "a", "at": 1, "message": "m"}],
-            },
-        }[(method, path)]
-
-
-@pytest.fixture
-async def seeded(db_session: AsyncSession) -> AsyncSession:
-    await seed(db_session, CONTENT)
-    await db_session.commit()
-    return db_session
-
-
-@pytest.fixture
-def fakes(api: TestClient) -> tuple[FakeOrchestrator, FakeGateway]:
-    orchestrator, gateway = FakeOrchestrator(), FakeGateway()
-    api.app.state.orchestrator = orchestrator  # type: ignore[attr-defined]
-    api.app.state.gateway = gateway  # type: ignore[attr-defined]
-    api.app.state.settings.content_root = CONTENT  # type: ignore[attr-defined]
-    return orchestrator, gateway
-
-
-async def started(
-    api: TestClient,
-    seeded: AsyncSession,
-    auth,
-    slug: str = "ttl-zero",
-    state: AttemptState = AttemptState.ACTIVE,
-):  # type: ignore[no-untyped-def]
-    user = uuid.uuid4()
-    headers = auth(user, login=f"p-{user.hex[:6]}")
-    res = api.post("/v1/attempts", json={"scenario_slug": slug}, headers=headers)
-    assert res.status_code == 202, res.text
-    attempt_id = uuid.UUID(res.json()["id"])
-    await seeded.execute(update(Attempt).where(Attempt.id == attempt_id).values(state=state))
-    await seeded.commit()
-    return attempt_id, headers
 
 
 async def test_workspace_describes_the_incident(api, seeded, auth, fakes) -> None:  # type: ignore[no-untyped-def]

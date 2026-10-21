@@ -1,0 +1,205 @@
+import type { DebriefOut } from "@devgrill/api-client";
+import { DEMO_ID } from "@/components/workspace/ids";
+
+const NOW = "2026-10-21T20:20:00+05:30";
+const target = (lt?: number, gt?: number) => ({ lt: lt ?? null, gt: gt ?? null });
+
+/**
+ * The demo debrief (`/incident/demo/debrief`): the live component with canned data, so the
+ * design shell, axe and keyboard tests (the celebration counts to +52) run without Docker.
+ */
+export const DEMO_DEBRIEF: DebriefOut = {
+  attempt: {
+    id: DEMO_ID,
+    scenario_slug: "big-sale-meltdown",
+    mode: "oncall",
+    state: "resolved",
+    started_at: "2026-10-21T20:00:00+05:30",
+    active_at: "2026-10-21T20:00:30+05:30",
+    ended_at: NOW,
+    expires_at: null,
+  },
+  scenario_title: "The Big Sale Meltdown",
+  track_slug: "caching",
+  track_title: "Caching",
+  settled: true,
+  score: {
+    incident: 0.91,
+    total: null,
+    mitigation_time: 1,
+    resolution: 1,
+    communication: 0.6,
+    postmortem: null,
+    hints_penalty: 0,
+    par_minutes: 8,
+    mitigation_minutes: 6.4,
+    verify_runs: 2,
+    status_updates: 1,
+    hints_used: 0,
+    weights: { mitigation_time: 0.25, resolution: 0.4, postmortem: 0.25, communication: 0.1 },
+  },
+  rating: {
+    track_slug: "caching",
+    track_title: "Caching",
+    before: 1340,
+    after: 1392,
+    delta: 52,
+    expected: 0.38,
+    outcome: 0.91,
+  },
+  mastery: { before: 36, after: 45 },
+  verify: {
+    id: "00000000-0000-0000-0000-000000000002",
+    status: "passed",
+    started_at: "2026-10-21T20:16:00+05:30",
+    finished_at: "2026-10-21T20:17:32+05:30",
+    resolution: 1,
+    probes: [
+      {
+        key: "sale-replay",
+        title: "Sale traffic",
+        how: "Replays the sale for 45 seconds; p99 under 500 ms and under 1% errors.",
+        kind: "load",
+        passed: true,
+        measured: { p99_ms: 168.9, error_rate: 0 },
+        target: { p99_ms: target(500), error_rate: target(0.01) },
+      },
+      {
+        key: "cache-serves-reads",
+        title: "Cache does its job",
+        how: "During the replay most requests never reach Postgres (from the database's own statistics).",
+        kind: "load",
+        passed: true,
+        measured: { db_scans_per_request: 0.52 },
+        target: { db_scans_per_request: target(1) },
+      },
+      {
+        key: "honest-metrics",
+        title: "Metrics tell the truth",
+        how: "During the replay, the API's own request and error counts match what the verifier measured.",
+        kind: "load",
+        passed: true,
+        measured: { request_count_drift: 0.0005, error_rate_drift: 0 },
+        target: { request_count_drift: target(0.1), error_rate_drift: target(0.02) },
+      },
+      {
+        key: "correctness",
+        title: "Still correct",
+        how: "Real product data, 404s for unknown products, search, orders and price changes all work.",
+        kind: "hidden_test",
+        passed: true,
+        measured: { checks: 15, checks_failed: 0 },
+        target: {},
+      },
+      {
+        key: "cold-cache",
+        title: "Cold cache mid-sale",
+        how: "Flushes the cache during sale traffic; the SLO recovers within 30 seconds.",
+        kind: "chaos",
+        passed: true,
+        measured: { recovery_s: 6 },
+        target: { recovery_s: target(30) },
+      },
+      {
+        key: "price-freshness",
+        title: "Prices stay fresh",
+        how: "Changes a hot product's price; the product page shows it within 5 seconds.",
+        kind: "invariant",
+        passed: true,
+        measured: { visible_after_s: 0.06 },
+        target: { visible_after_s: target(5) },
+      },
+      {
+        key: "budget",
+        title: "Within budget",
+        how: "No bigger database, no bigger cache.",
+        kind: "budget",
+        passed: true,
+        measured: { cache_max_memory_mb: 256 },
+        target: {},
+      },
+    ],
+  },
+  approach_key: "write-versioned-key",
+  approaches: [
+    {
+      key: "write-versioned-key",
+      name: "Write with the versioned key",
+      outcome: "full",
+      idea_md:
+        "The refactor made get() and invalidate() use versioned_key() while set() kept writing key(), so nothing written was ever read back. Make set() write the versioned key too.",
+      pros: ["Fixes the bug forward; keeps the refactor", "Price updates still invalidate the right key"],
+      cons: ["Needs reading the diff under pressure"],
+      patch:
+        "-        client.set(key(product_id), json.dumps(product, default=str), ex=settings.CACHE_TTL_SECONDS)\n+        client.set(versioned_key(product_id), json.dumps(product, default=str), ex=settings.CACHE_TTL_SECONDS)",
+      yours: true,
+      share: 46,
+    },
+    {
+      key: "rollback",
+      name: "Roll back the refactor",
+      outcome: "full",
+      idea_md:
+        "The cache went quiet two minutes before the sale, right after the key refactor. Deploy the commit before it.",
+      pros: ["The fastest mitigation during a sale"],
+      cons: ["The refactor (and its bug) still has to be fixed before it ships again"],
+      patch: null,
+      yours: false,
+      share: 41,
+    },
+    {
+      key: "read-plain-key",
+      name: "Read the old key again",
+      outcome: "partial",
+      idea_md:
+        "Make get() read key() like set() writes it. Reads hit again, but invalidate() still deletes the versioned key, so price changes stay hidden until the entry expires.",
+      pros: ["Latency recovers immediately"],
+      cons: ["Price updates no longer show up: stale prices during a sale"],
+      patch:
+        "-        raw = client.get(versioned_key(product_id))\n+        raw = client.get(key(product_id))",
+      yours: false,
+      share: 13,
+    },
+  ],
+  replay: [
+    { at_s: 0, text: "Paged: product-api: p99 > 1.5s on product pages (sale traffic)" },
+    {
+      at_s: 95,
+      text: "Restarted postgres-db",
+      mark: "lost",
+      note: "Postgres was the victim, not the cause; a restart only cleared its connections.",
+    },
+    {
+      at_s: 212,
+      text: "Queried the database: select query, calls from pg_stat_statements order by calls desc",
+      mark: "clue",
+      note: "The same product query, thousands of times, points at the cache.",
+    },
+    { at_s: 330, text: "Deployed api 7c1e2f0: app/cache.py" },
+    { at_s: 384, text: "Recovered: the SLO held again" },
+    {
+      at_s: 410,
+      text: "Posted an update: Cache writes used the wrong key since the refactor; fixed forward.",
+    },
+    { at_s: 560, text: "Ran verify: failed (6 of 7 checks)" },
+    { at_s: 930, text: "Ran verify: passed (7 of 7 checks)" },
+    { at_s: 930, text: "Resolved: verify passed" },
+  ],
+  next: [
+    {
+      slug: "redis-restart-herd",
+      title: "Redis restart herd",
+      track_slug: "caching",
+      difficulty: "sev2",
+      est_minutes: 25,
+    },
+    {
+      slug: "stale-prices",
+      title: "Stale prices",
+      track_slug: "caching",
+      difficulty: "sev4",
+      est_minutes: 15,
+    },
+  ],
+  postmortem: "draft",
+};

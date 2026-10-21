@@ -1,0 +1,10 @@
+schema: devgrill/approach@1
+key: cheat-shed-load
+name: Answer 503 for product pages
+outcome: fails
+cheat: true
+idea: Nothing waits for a connection if nothing is served.
+steps:
+  - patch: shed-load.diff
+    service: api
+fails_probes: [steady-traffic, correctness]

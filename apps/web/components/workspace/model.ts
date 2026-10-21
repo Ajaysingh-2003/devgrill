@@ -60,6 +60,19 @@ export type IncidentSnapshot = {
   events_connection: Connection;
   /** When the event stream started reconnecting (ms), null while connected. */
   eventsDownSince: number | null;
+  /** The latest verify run, probe by probe (ADR 015); null before the first one. */
+  verify: VerifyProgress | null;
+};
+
+export type ProbeStatus = "queued" | "running" | "passed" | "failed" | "skipped";
+
+export type VerifyProgress = {
+  runId: string;
+  probes: { key: string; title: string; status: ProbeStatus; detail?: string }[];
+  done: boolean;
+  passed: boolean | null;
+  /** Set when verify couldn't finish on our side (the run doesn't count). */
+  error: string | null;
 };
 
 export type TelemetrySnapshot = {

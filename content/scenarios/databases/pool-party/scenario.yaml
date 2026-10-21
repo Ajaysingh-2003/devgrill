@@ -89,9 +89,21 @@ probes:
   - key: connection-headroom
     kind: load
     title: Connection headroom
-    how: Postgres keeps headroom under load (fewer than 70 connections), so the pool wasn't just enlarged.
+    how: Postgres keeps connection headroom under the replay (fewer than 70 connections).
     target:
       db_connections: { lt: 70 }
+  - key: honest-metrics
+    kind: load
+    title: Metrics tell the truth
+    how: During the replay, the API's own request and error counts match what the verifier measured.
+    target:
+      request_count_drift: { lt: 0.1 }
+      error_rate_drift: { lt: 0.02 }
+  - key: correctness
+    kind: hidden_test
+    title: Still correct
+    how: Real product data, 404s for unknown products, search, orders and price changes all work.
+    script: base/correctness.py
   - key: budget
     kind: budget
     title: Within budget
@@ -118,3 +130,16 @@ rubric:
     description: Proposes a guard, e.g. alerting on query latency from the client side, config review for endpoints.
 
 ttl_minutes: 30
+par_minutes: 6
+
+replay:
+  - when: postgres-db.restarted
+    mark: lost
+    note: Postgres was idle; restarting it only dropped every connection.
+  - when: db.query
+    match: "pg_stat_activity|wait_event"
+    mark: clue
+    note: Connections waiting on the network, not working in Postgres, point at the round trip.
+  - when: api.rolledback
+    mark: clue
+    note: The config deploy ten minutes ago changed the database endpoint.

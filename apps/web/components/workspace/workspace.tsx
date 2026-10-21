@@ -144,9 +144,10 @@ function Shell({ briefingHref }: { briefingHref: string }) {
   };
   const reset = useAction(actions.reset);
   const verify = useAction(actions.verify);
-  const [verifyFrom, setVerifyFrom] = useState(0);
+  // The run on screen before this request: the dialog waits for the next one.
+  const [previousRun, setPreviousRun] = useState<string | null>(null);
   const openVerify = () => {
-    setVerifyFrom(Date.now());
+    setPreviousRun(incident.state === "verifying" ? null : (incident.verify?.runId ?? null));
     setVerifyOpen(true);
     void verify.run();
   };
@@ -441,7 +442,7 @@ function Shell({ briefingHref }: { briefingHref: string }) {
       <VerifyDialog
         open={verifyOpen}
         onOpenChange={setVerifyOpen}
-        startedAt={verifyFrom}
+        previousRun={previousRun}
         error={verify.error}
       />
       <Dialog open={confirm !== null} onOpenChange={(open) => !open && setConfirm(null)}>

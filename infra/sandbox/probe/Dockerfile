@@ -13,8 +13,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN pip install --quiet "psycopg[binary]==3.3.6" "redis==8.1.0" "httpx==0.28.1"
 COPY --from=k6 /usr/bin/k6 /usr/local/bin/k6
 COPY scrape.sh /usr/local/bin/dg-scrape
-COPY dg-sql dg-cache dg-relay /usr/local/bin/
+COPY dg-sql dg-cache dg-relay dg-recovery /usr/local/bin/
 RUN chmod +x /usr/local/bin/dg-scrape /usr/local/bin/dg-sql /usr/local/bin/dg-cache /usr/local/bin/dg-relay \
+        /usr/local/bin/dg-recovery \
     && mkdir -p /probe/load /probe/verify /probe/out
 WORKDIR /probe
 CMD ["sleep", "infinity"]

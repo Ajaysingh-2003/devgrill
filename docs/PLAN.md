@@ -1247,6 +1247,7 @@ Every scenario is runtime-agnostic. Scenario content may also declare a **proces
   - The gateway forwards samples and tails docker logs over the telemetry WebSocket. The UI charts with uPlot.
 - **Telemetry (scale):** Vector agent → VictoriaMetrics + VictoriaLogs (session ID as structured metadata, not a label). **Never expose raw Grafana to users.**
 - **The verifier runs outside the sandbox:** a k6 container attaches to the session network from the host side. Chaos steps run through Toxiproxy's API, and data invariants run as SQL through a read-only role. Root inside the sandbox cannot tamper with them.
+- **Verify trusts only what the platform measures (ADR 015):** k6's client-side numbers, Postgres's core statistics, the platform's exporters and recovery computed from k6's own results. App-reported metrics drive the charts, never a probe; the player is not a database superuser; chaos is checked after it is applied, and anything unmeasurable fails.
 
 ### 12.4 Capacity, cost, quotas and access tiers (ADR 013)
 
@@ -1742,7 +1743,7 @@ Wk:  1  2 | 3  4  5 | 6  7  8 | 9 10 11 12 | 13 14 15 16 17 | 18 19 20 | 21 22 2
 
 ---
 
-### Phase 5: Verify engine, scoring, debrief and ratings (weeks 18–20) → **M1 vertical slice**
+### Phase 5: Verify engine, scoring, debrief and ratings (weeks 18–20) → **M1 vertical slice** ✅ done 2026-10-21 (see docs/qc/phase-5.md, ADR 015 and docs/qc/m1-retrospective.md; owner review of the M1 capture owed)
 
 **Goal:** close the loop. Verify attacks the fix, the score and rating update, and the debrief explains what happened.
 

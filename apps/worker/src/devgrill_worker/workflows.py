@@ -10,6 +10,7 @@ with workflow.unsafe.imports_passed_through():
     from devgrill_worker.activities import pong
 
 from devgrill_worker.sandbox_lifecycle import SandboxLifecycle
+from devgrill_worker.verify_run import VerifyRun
 
 
 @workflow.defn
@@ -23,6 +24,6 @@ class PingWorkflow:
         )
 
 
-WORKFLOWS = [PingWorkflow, SandboxLifecycle]
+WORKFLOWS = [PingWorkflow, SandboxLifecycle, VerifyRun]
 #: Plain activities; the sandbox ones are bound to their dependencies in __main__.
 ACTIVITIES = [pong]

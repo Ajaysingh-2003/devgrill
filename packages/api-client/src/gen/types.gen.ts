@@ -550,6 +550,92 @@ export type DbStatement = {
 };
 
 /**
+ * DebriefApproachOut
+ */
+export type DebriefApproachOut = {
+    /**
+     * Cons
+     */
+    cons: Array<string>;
+    /**
+     * Idea Md
+     */
+    idea_md: string;
+    /**
+     * Key
+     */
+    key: string;
+    /**
+     * Name
+     */
+    name: string;
+    outcome: ApproachOutcome;
+    /**
+     * Patch
+     */
+    patch: string | null;
+    /**
+     * Pros
+     */
+    pros: Array<string>;
+    /**
+     * Share
+     */
+    share: number;
+    /**
+     * Yours
+     */
+    yours: boolean;
+};
+
+/**
+ * DebriefOut
+ */
+export type DebriefOut = {
+    /**
+     * Approach Key
+     */
+    approach_key: string | null;
+    /**
+     * Approaches
+     */
+    approaches: Array<DebriefApproachOut> | null;
+    attempt: AttemptOut;
+    mastery: MasteryOut | null;
+    /**
+     * Next
+     */
+    next: Array<NextDrillOut>;
+    /**
+     * Postmortem
+     */
+    postmortem: 'none' | 'draft' | 'submitted';
+    rating: RatingChangeOut | null;
+    /**
+     * Replay
+     */
+    replay: Array<ReplayEntryOut>;
+    /**
+     * Scenario Title
+     */
+    scenario_title: string;
+    score: ScoreOut | null;
+    /**
+     * Settled
+     */
+    settled: boolean;
+    /**
+     * Track Slug
+     */
+    track_slug: string;
+    /**
+     * Track Title
+     */
+    track_title: string;
+    verify: VerifyRunOut | null;
+};
+
+/**
  * DeployHistoryOut
  */
 export type DeployHistoryOut = {
@@ -750,6 +836,22 @@ export type HintOut = {
 };
 
 /**
+ * MasteryOut
+ *
+ * Share of the track's published scenarios resolved, 0-100, before and after.
+ */
+export type MasteryOut = {
+    /**
+     * After
+     */
+    after: number;
+    /**
+     * Before
+     */
+    before: number;
+};
+
+/**
  * Me
  */
 export type Me = {
@@ -843,6 +945,29 @@ export type MitigationOut = {
 };
 
 /**
+ * NextDrillOut
+ */
+export type NextDrillOut = {
+    difficulty: Difficulty;
+    /**
+     * Est Minutes
+     */
+    est_minutes: number;
+    /**
+     * Slug
+     */
+    slug: string;
+    /**
+     * Title
+     */
+    title: string;
+    /**
+     * Track Slug
+     */
+    track_slug: string;
+};
+
+/**
  * PageOut
  */
 export type PageOut = {
@@ -854,6 +979,46 @@ export type PageOut = {
      * Title
      */
     title: string;
+};
+
+/**
+ * PostmortemIn
+ */
+export type PostmortemIn = {
+    /**
+     * Sections
+     */
+    sections: {
+        [key: string]: string;
+    };
+};
+
+/**
+ * PostmortemOut
+ */
+export type PostmortemOut = {
+    /**
+     * Scenario Title
+     */
+    scenario_title: string;
+    /**
+     * Sections
+     */
+    sections: {
+        [key: string]: string;
+    };
+    /**
+     * Submitted At
+     */
+    submitted_at: string | null;
+    /**
+     * Timeline
+     */
+    timeline: Array<string>;
+    /**
+     * Updated At
+     */
+    updated_at: string | null;
 };
 
 /**
@@ -902,6 +1067,52 @@ export type PrefsPatch = {
      */
     theme?: 'system' | 'light' | 'dark' | null;
     timezone?: Timezone | null;
+};
+
+/**
+ * ProbeResultOut
+ */
+export type ProbeResultOut = {
+    /**
+     * Detail
+     */
+    detail?: string;
+    /**
+     * How
+     */
+    how: string;
+    /**
+     * Key
+     */
+    key: string;
+    /**
+     * Kind
+     */
+    kind: string;
+    /**
+     * Measured
+     */
+    measured?: {
+        [key: string]: number | null;
+    };
+    /**
+     * Passed
+     */
+    passed: boolean | null;
+    /**
+     * Seconds
+     */
+    seconds?: number | null;
+    /**
+     * Target
+     */
+    target?: {
+        [key: string]: SloTarget;
+    };
+    /**
+     * Title
+     */
+    title: string;
 };
 
 /**
@@ -1027,6 +1238,40 @@ export type Quota = {
 };
 
 /**
+ * RatingChangeOut
+ */
+export type RatingChangeOut = {
+    /**
+     * After
+     */
+    after: number;
+    /**
+     * Before
+     */
+    before: number;
+    /**
+     * Delta
+     */
+    delta: number;
+    /**
+     * Expected
+     */
+    expected: number;
+    /**
+     * Outcome
+     */
+    outcome: number;
+    /**
+     * Track Slug
+     */
+    track_slug: string;
+    /**
+     * Track Title
+     */
+    track_title: string;
+};
+
+/**
  * RatingPoint
  */
 export type RatingPoint = {
@@ -1054,6 +1299,28 @@ export type Readiness = {
      * Status
      */
     status: 'ok' | 'degraded';
+};
+
+/**
+ * ReplayEntryOut
+ */
+export type ReplayEntryOut = {
+    /**
+     * At S
+     */
+    at_s: number;
+    /**
+     * Mark
+     */
+    mark?: 'clue' | 'lost' | 'hint' | null;
+    /**
+     * Note
+     */
+    note?: string | null;
+    /**
+     * Text
+     */
+    text: string;
 };
 
 /**
@@ -1173,6 +1440,68 @@ export type ScenarioStats = {
  * ScenarioStatus
  */
 export type ScenarioStatus = 'draft' | 'review' | 'published' | 'retired';
+
+/**
+ * ScoreOut
+ *
+ * Components in [0, 1]. `incident` drives ratings; `total` adds the postmortem (phase 6).
+ */
+export type ScoreOut = {
+    /**
+     * Communication
+     */
+    communication: number;
+    /**
+     * Hints Penalty
+     */
+    hints_penalty: number;
+    /**
+     * Hints Used
+     */
+    hints_used: number;
+    /**
+     * Incident
+     */
+    incident: number;
+    /**
+     * Mitigation Minutes
+     */
+    mitigation_minutes: number | null;
+    /**
+     * Mitigation Time
+     */
+    mitigation_time: number;
+    /**
+     * Par Minutes
+     */
+    par_minutes: number;
+    /**
+     * Postmortem
+     */
+    postmortem: number | null;
+    /**
+     * Resolution
+     */
+    resolution: number;
+    /**
+     * Status Updates
+     */
+    status_updates: number;
+    /**
+     * Total
+     */
+    total: number | null;
+    /**
+     * Verify Runs
+     */
+    verify_runs: number;
+    /**
+     * Weights
+     */
+    weights: {
+        [key: string]: number;
+    };
+};
 
 /**
  * ServiceStatus
@@ -1553,6 +1882,36 @@ export type UsageOut = {
      * Tier
      */
     tier: 'guest' | 'free' | 'pro' | 'team';
+};
+
+/**
+ * VerifyRunOut
+ */
+export type VerifyRunOut = {
+    /**
+     * Finished At
+     */
+    finished_at: string | null;
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Probes
+     */
+    probes: Array<ProbeResultOut>;
+    /**
+     * Resolution
+     */
+    resolution: number;
+    /**
+     * Started At
+     */
+    started_at: string | null;
+    /**
+     * Status
+     */
+    status: string;
 };
 
 /**
@@ -2163,6 +2522,78 @@ export type DbQueryResponses = {
 };
 
 export type DbQueryResponse = DbQueryResponses[keyof DbQueryResponses];
+
+export type GetDebriefData = {
+    body?: never;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+        /**
+         * X-Guest-Token
+         */
+        'x-guest-token'?: string | null;
+    };
+    path: {
+        /**
+         * Attempt Id
+         */
+        attempt_id: string;
+    };
+    query?: never;
+    url: '/v1/attempts/{attempt_id}/debrief';
+};
+
+export type GetDebriefErrors = {
+    /**
+     * Bad request (e.g. an invalid cursor).
+     */
+    400: Problem;
+    /**
+     * Missing or invalid credentials.
+     */
+    401: Problem;
+    /**
+     * Signed in, but not allowed.
+     */
+    403: Problem;
+    /**
+     * Not found.
+     */
+    404: Problem;
+    /**
+     * Conflict (e.g. a request with this Idempotency-Key is still running).
+     */
+    409: Problem;
+    /**
+     * The request is invalid; see `errors`.
+     */
+    422: Problem;
+    /**
+     * Rate limited; see Retry-After.
+     */
+    429: Problem;
+    /**
+     * Server error.
+     */
+    500: Problem;
+    /**
+     * Temporarily unavailable.
+     */
+    503: Problem;
+};
+
+export type GetDebriefError = GetDebriefErrors[keyof GetDebriefErrors];
+
+export type GetDebriefResponses = {
+    /**
+     * Successful Response
+     */
+    200: DebriefOut;
+};
+
+export type GetDebriefResponse = GetDebriefResponses[keyof GetDebriefResponses];
 
 export type ListDeploysData = {
     body?: never;
@@ -2987,6 +3418,222 @@ export type DeclareMitigatedResponses = {
 };
 
 export type DeclareMitigatedResponse = DeclareMitigatedResponses[keyof DeclareMitigatedResponses];
+
+export type GetPostmortemData = {
+    body?: never;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+        /**
+         * X-Guest-Token
+         */
+        'x-guest-token'?: string | null;
+    };
+    path: {
+        /**
+         * Attempt Id
+         */
+        attempt_id: string;
+    };
+    query?: never;
+    url: '/v1/attempts/{attempt_id}/postmortem';
+};
+
+export type GetPostmortemErrors = {
+    /**
+     * Bad request (e.g. an invalid cursor).
+     */
+    400: Problem;
+    /**
+     * Missing or invalid credentials.
+     */
+    401: Problem;
+    /**
+     * Signed in, but not allowed.
+     */
+    403: Problem;
+    /**
+     * Not found.
+     */
+    404: Problem;
+    /**
+     * Conflict (e.g. a request with this Idempotency-Key is still running).
+     */
+    409: Problem;
+    /**
+     * The request is invalid; see `errors`.
+     */
+    422: Problem;
+    /**
+     * Rate limited; see Retry-After.
+     */
+    429: Problem;
+    /**
+     * Server error.
+     */
+    500: Problem;
+    /**
+     * Temporarily unavailable.
+     */
+    503: Problem;
+};
+
+export type GetPostmortemError = GetPostmortemErrors[keyof GetPostmortemErrors];
+
+export type GetPostmortemResponses = {
+    /**
+     * Successful Response
+     */
+    200: PostmortemOut;
+};
+
+export type GetPostmortemResponse = GetPostmortemResponses[keyof GetPostmortemResponses];
+
+export type SavePostmortemData = {
+    body: PostmortemIn;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+        /**
+         * X-Guest-Token
+         */
+        'x-guest-token'?: string | null;
+    };
+    path: {
+        /**
+         * Attempt Id
+         */
+        attempt_id: string;
+    };
+    query?: never;
+    url: '/v1/attempts/{attempt_id}/postmortem';
+};
+
+export type SavePostmortemErrors = {
+    /**
+     * Bad request (e.g. an invalid cursor).
+     */
+    400: Problem;
+    /**
+     * Missing or invalid credentials.
+     */
+    401: Problem;
+    /**
+     * Signed in, but not allowed.
+     */
+    403: Problem;
+    /**
+     * Not found.
+     */
+    404: Problem;
+    /**
+     * Conflict (e.g. a request with this Idempotency-Key is still running).
+     */
+    409: Problem;
+    /**
+     * The request is invalid; see `errors`.
+     */
+    422: Problem;
+    /**
+     * Rate limited; see Retry-After.
+     */
+    429: Problem;
+    /**
+     * Server error.
+     */
+    500: Problem;
+    /**
+     * Temporarily unavailable.
+     */
+    503: Problem;
+};
+
+export type SavePostmortemError = SavePostmortemErrors[keyof SavePostmortemErrors];
+
+export type SavePostmortemResponses = {
+    /**
+     * Successful Response
+     */
+    200: PostmortemOut;
+};
+
+export type SavePostmortemResponse = SavePostmortemResponses[keyof SavePostmortemResponses];
+
+export type SubmitPostmortemData = {
+    body: PostmortemIn;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+        /**
+         * X-Guest-Token
+         */
+        'x-guest-token'?: string | null;
+    };
+    path: {
+        /**
+         * Attempt Id
+         */
+        attempt_id: string;
+    };
+    query?: never;
+    url: '/v1/attempts/{attempt_id}/postmortem/submit';
+};
+
+export type SubmitPostmortemErrors = {
+    /**
+     * Bad request (e.g. an invalid cursor).
+     */
+    400: Problem;
+    /**
+     * Missing or invalid credentials.
+     */
+    401: Problem;
+    /**
+     * Signed in, but not allowed.
+     */
+    403: Problem;
+    /**
+     * Not found.
+     */
+    404: Problem;
+    /**
+     * Conflict (e.g. a request with this Idempotency-Key is still running).
+     */
+    409: Problem;
+    /**
+     * The request is invalid; see `errors`.
+     */
+    422: Problem;
+    /**
+     * Rate limited; see Retry-After.
+     */
+    429: Problem;
+    /**
+     * Server error.
+     */
+    500: Problem;
+    /**
+     * Temporarily unavailable.
+     */
+    503: Problem;
+};
+
+export type SubmitPostmortemError = SubmitPostmortemErrors[keyof SubmitPostmortemErrors];
+
+export type SubmitPostmortemResponses = {
+    /**
+     * Successful Response
+     */
+    200: PostmortemOut;
+};
+
+export type SubmitPostmortemResponse = SubmitPostmortemResponses[keyof SubmitPostmortemResponses];
 
 export type ResetAttemptData = {
     body?: never;

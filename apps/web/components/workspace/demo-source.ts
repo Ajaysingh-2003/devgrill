@@ -52,6 +52,32 @@ function fakeShell(): TerminalLink {
   return link;
 }
 
+/** What the demo's verify reports: the cache fix holds, the price check catches staleness. */
+const DEMO_PROBES = [
+  { key: "sale-replay", title: "Sale traffic", status: "passed" as const, detail: "all targets met" },
+  {
+    key: "cache-serves-reads",
+    title: "Cache does its job",
+    status: "passed" as const,
+    detail: "all targets met",
+  },
+  {
+    key: "honest-metrics",
+    title: "Metrics tell the truth",
+    status: "passed" as const,
+    detail: "all targets met",
+  },
+  { key: "correctness", title: "Still correct", status: "passed" as const, detail: "every check passed" },
+  { key: "cold-cache", title: "Cold cache mid-sale", status: "passed" as const, detail: "all targets met" },
+  {
+    key: "price-freshness",
+    title: "Prices stay fresh",
+    status: "failed" as const,
+    detail: "visible_after_s: not measured (the new price never showed)",
+  },
+  { key: "budget", title: "Within budget", status: "passed" as const, detail: "within budget" },
+];
+
 export function createDemoSource(): WorkspaceSource {
   const s = scenario(INCIDENT.scenario)!;
   const now = Date.now();
@@ -114,6 +140,7 @@ export function createDemoSource(): WorkspaceSource {
     endedReason: null,
     events_connection: "open",
     eventsDownSince: null,
+    verify: null,
   });
 
   const samples = CHART_TS.map((t, i) => ({
@@ -252,7 +279,38 @@ export function createDemoSource(): WorkspaceSource {
       }));
     },
     mitigate: async () => ({ declared: true, real_state: "active", correct: false }),
-    verify: ok,
+    verify: async () => {
+      // A canned run: every probe queued, then running, then the verdict.
+      const probes = DEMO_PROBES.map((p) => ({ key: p.key, title: p.title, status: "queued" as const }));
+      const runId = `demo-${Date.now()}`;
+      incident.set((s) => ({ ...s, verify: { runId, probes, done: false, passed: null, error: null } }));
+      window.setTimeout(() => {
+        incident.set((s) => ({
+          ...s,
+          verify: s.verify && {
+            ...s.verify,
+            probes: s.verify.probes.map((p, i) => ({ ...p, status: i === 0 ? "running" : "queued" })),
+          },
+        }));
+      }, 400);
+      window.setTimeout(() => {
+        incident.set((s) => ({
+          ...s,
+          verify: {
+            runId,
+            probes: DEMO_PROBES.map((p) => ({
+              key: p.key,
+              title: p.title,
+              status: p.status,
+              detail: p.detail,
+            })),
+            done: true,
+            passed: false,
+            error: null,
+          },
+        }));
+      }, 1600);
+    },
     extend: ok,
     reset: ok,
     abandon: ok,

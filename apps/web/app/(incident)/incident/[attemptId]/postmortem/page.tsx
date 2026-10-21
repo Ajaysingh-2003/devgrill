@@ -1,8 +1,15 @@
+import { getPostmortem } from "@devgrill/api-client";
 import type { Metadata } from "next";
+import { notFound, redirect } from "next/navigation";
 import { Suspense } from "react";
 import { IncidentTimeline } from "@devgrill/ui/components/devgrill/incident-timeline";
 import { IncidentPageHeader } from "@/components/incident-page-header";
+import { PostmortemEditor } from "@/components/postmortem/editor";
+import { DEMO_ID } from "@/components/workspace/ids";
+import { api, unwrap } from "@/lib/api";
 import { TIMELINE } from "@/lib/mock";
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export const metadata: Metadata = { title: "Postmortem" };
 
@@ -32,8 +39,51 @@ const SECTIONS = [
   },
 ];
 
+async function Live({ attemptId }: { attemptId: string }) {
+  if (!UUID.test(attemptId)) notFound();
+  const result = await getPostmortem({ client: await api(), path: { attempt_id: attemptId } });
+  // The postmortem opens when the incident ends.
+  if (result.response?.status === 409) redirect(`/incident/${attemptId}`);
+  const doc = await unwrap(Promise.resolve(result));
+  return (
+    <>
+      <IncidentPageHeader
+        context={`Postmortem, ${doc.scenario_title}`}
+        back={{ href: `/incident/${attemptId}/debrief`, label: "Back to the debrief" }}
+      />
+      <main
+        id="main"
+        className="mx-auto grid max-w-[72rem] gap-10 px-4 py-10 sm:px-6 lg:grid-cols-[1fr_20rem]"
+      >
+        <PostmortemEditor attemptId={attemptId} initial={doc} />
+        <aside aria-labelledby="pm-timeline" className="flex flex-col gap-2 lg:sticky lg:top-6 lg:self-start">
+          <h2 id="pm-timeline" className="text-body font-semibold text-fg">
+            Timeline, from your session
+          </h2>
+          <p className="text-caption text-fg-muted">Added to the postmortem when you submit it.</p>
+          <ol className="flex flex-col rounded-md border border-border bg-surface">
+            {doc.timeline.map((line, i) => {
+              const [at, ...text] = line.split(" ");
+              return (
+                <li
+                  key={i}
+                  className="grid grid-cols-[3rem_1fr] gap-2 border-b border-border px-3 py-2 last:border-b-0"
+                >
+                  <span className="font-mono text-mono-sm text-fg-subtle">{at}</span>
+                  <span className="text-label wrap-anywhere text-fg">{text.join(" ")}</span>
+                </li>
+              );
+            })}
+          </ol>
+        </aside>
+      </main>
+    </>
+  );
+}
+
 async function Editor({ params }: { params: PageProps<"/incident/[attemptId]/postmortem">["params"] }) {
   const { attemptId } = await params;
+  if (attemptId !== DEMO_ID) return <Live attemptId={attemptId} />;
   return (
     <>
       <IncidentPageHeader

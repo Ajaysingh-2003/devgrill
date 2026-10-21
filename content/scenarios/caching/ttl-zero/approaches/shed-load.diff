@@ -1,0 +1,12 @@
+diff --git app/main.py app/main.py
+index e78e6ab..385abb3 100644
+--- app/main.py
++++ app/main.py
+@@ -115,6 +115,7 @@ def metrics() -> Response:
+ 
+ @app.get("/products/{product_id}")
+ def get_product(product_id: int) -> dict[str, Any]:
++    raise HTTPException(503, "product pages are temporarily disabled")
+     product = cache.get(product_id)
+     if product is not None:
+         CACHE_OPS.labels("hit").inc()

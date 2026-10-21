@@ -138,7 +138,9 @@ async def test_approaches_are_only_for_players_who_resolved_it(
     assert api.get(url).status_code == 401
     assert api.get(url, headers=auth(user)).json()["code"] == "not_resolved"
     await _attempt(seeded, "ttl-zero", user_id=user)
-    assert [a["key"] for a in api.get(url, headers=auth(user)).json()] == ["set-ttl"]
+    # The seeded approaches (content/…/approaches) and the one added here.
+    keys = [a["key"] for a in api.get(url, headers=auth(user)).json()]
+    assert set(keys) == {"restore-ttl", "rollback", "set-ttl"}
 
 
 def test_daily_challenge_is_stable(api: TestClient, seeded: AsyncSession) -> None:

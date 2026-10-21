@@ -1,5 +1,20 @@
 -- ShopKart schema and seed: 18,402 products, 2,000 users, 50,000 orders, 300,000 reviews.
 -- Runs once when the Postgres container initialises its data directory.
+--
+-- Roles (ADR 015). `postgres` is the platform's superuser: its password is random and never
+-- leaves the image build, and the platform reaches it only through the container's local
+-- socket. The app and the player use `shopkart`, which owns the app's tables (so faults and
+-- fixes can add indexes or migrate them) but is not a superuser: it can't reset statistics,
+-- drop the stats extension, rewrite catalogs or write files. The verifier reads as `verifier`.
+CREATE ROLE shopkart LOGIN PASSWORD 'shopkart';
+GRANT USAGE, CREATE ON SCHEMA public TO shopkart;
+GRANT pg_read_all_stats TO shopkart;
+REVOKE TEMPORARY ON DATABASE shopkart FROM PUBLIC;
+GRANT TEMPORARY ON DATABASE shopkart TO shopkart;
+
+-- Everything below until RESET ROLE is created by (and owned by) the app role.
+SET ROLE shopkart;
+
 
 CREATE TABLE products (
     id          integer PRIMARY KEY,
@@ -72,12 +87,23 @@ SELECT 1 + (g::bigint * 7919) % 18402, 1 + g % 5, now() - (g || ' minutes')::int
 FROM generate_series(1, 150000) AS g;
 CREATE INDEX reviews_product_id_idx ON reviews (product_id);
 
--- A read-only role for the verifier's invariant checks (runs outside the sandbox).
+RESET ROLE;
+
+-- Statement statistics live in a schema only the platform owns: the app role can't drop or
+-- replace them, and resetting them needs a superuser.
+CREATE SCHEMA monitor;
+CREATE EXTENSION pg_stat_statements SCHEMA monitor;
+GRANT USAGE ON SCHEMA monitor TO shopkart;
+ALTER ROLE shopkart SET search_path = "$user", public, monitor;
+
+-- A read-only role for the verifier's checks and the Database panel (they run in the
+-- platform's probe container). Its queries pin search_path and qualify catalog names, so
+-- objects the app role creates can't stand in for what it reads.
 CREATE ROLE verifier LOGIN PASSWORD 'verifier';
 GRANT CONNECT ON DATABASE shopkart TO verifier;
-GRANT USAGE ON SCHEMA public TO verifier;
+GRANT USAGE ON SCHEMA public, monitor TO verifier;
 GRANT SELECT ON ALL TABLES IN SCHEMA public TO verifier;
+ALTER DEFAULT PRIVILEGES FOR ROLE shopkart IN SCHEMA public GRANT SELECT ON TABLES TO verifier;
 GRANT pg_read_all_stats TO verifier;
 
-CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
 ANALYZE;

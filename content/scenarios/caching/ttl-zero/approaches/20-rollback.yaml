@@ -1,0 +1,18 @@
+schema: devgrill/approach@1
+key: rollback
+name: Roll back the ops deploy
+outcome: full
+idea: >-
+  The trouble started with the last deploy, so deploy the commit before it again. Fastest
+  mitigation, no need to understand the cause first; read the diff afterwards to fix forward.
+steps:
+  - rollback_to: "product page: show stock badge"
+    service: api
+pros:
+  - Fastest way back to a known-good state
+  - Works before you know the cause
+cons:
+  - Also undoes whatever else the deploy shipped
+  - Someone still has to find and fix the TTL before redeploying
+match:
+  rollback: true

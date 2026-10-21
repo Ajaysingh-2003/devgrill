@@ -1,0 +1,10 @@
+schema: devgrill/approach@1
+key: cheat-forge-metrics
+name: Make the dashboards look healthy
+outcome: fails
+cheat: true
+idea: Report every lookup as a cache hit and stop counting database queries; fix nothing.
+steps:
+  - patch: forge-metrics.diff
+    service: api
+fails_probes: [cache-serves-reads]

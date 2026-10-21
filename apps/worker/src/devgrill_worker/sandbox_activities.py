@@ -26,17 +26,21 @@ from typing import Any
 
 import structlog
 from redis.asyncio import Redis
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from temporalio import activity
 
 from devgrill.config import Settings
 from devgrill.domain.attempt import can_transition
-from devgrill.domain.enums import AttemptState, SandboxDriver
+from devgrill.domain.enums import AttemptState, SandboxDriver, VerifyStatus
 from devgrill.domain.events import state_trigger, timed_beats
 from devgrill.infra.events import EventRecorder, fire_trigger
+from devgrill.infra.models import Attempt, Probe, ProbeResult, VerifyRun
+from devgrill.infra.objectstore import ObjectStore, ObjectStoreError
 from devgrill.infra.repositories import attempts
+from devgrill.infra.settle import settle
 from devgrill.sandbox.compose import ComposeDriver, project_name
-from devgrill.sandbox.content import Bundle, load_bundle
+from devgrill.sandbox.content import Bundle, load_approaches, load_bundle
 from devgrill.sandbox.driver import SandboxError, SandboxHandle, SandboxSpec
 from devgrill.sandbox.lifecycle import (
     HISTORY_SAMPLES,
@@ -51,7 +55,7 @@ from devgrill.sandbox.lifecycle import (
     workflow_id,
 )
 from devgrill.sandbox.metrics import Scrape, evaluate_all, parse_text
-from devgrill.sandbox.verifier import Verifier
+from devgrill.sandbox.verifier import Verifier, plan
 
 log = structlog.get_logger(__name__)
 
@@ -100,6 +104,49 @@ class SetStateInput:
 class BeatInput:
     attempt_id: str
     index: int
+
+
+@dataclass(slots=True)
+class VerifyInput:
+    attempt_id: str
+    scenario_slug: str
+    #: 1, 2, ... per attempt: the run's id is derived from it, so a retried begin is a no-op.
+    run: int
+
+
+@dataclass(slots=True)
+class VerifyBegun:
+    run_id: str
+    previous_state: str
+    #: Probe keys per activity (load probes sharing a replay go together).
+    groups: list[list[str]] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class ProbeGroupInput:
+    attempt_id: str
+    scenario_slug: str
+    run_id: str
+    keys: list[str] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class VerifyFinishInput:
+    attempt_id: str
+    scenario_slug: str
+    run_id: str
+    previous_state: str
+    error: str = ""
+
+
+@dataclass(slots=True)
+class SettleInput:
+    attempt_id: str
+    scenario_slug: str
+
+
+def verify_run_id(attempt_id: str, run: int) -> uuid.UUID:
+    return uuid.uuid5(uuid.UUID(attempt_id), f"verify-{run}")
 
 
 def handle_for(attempt_id: str) -> SandboxHandle:
@@ -153,11 +200,13 @@ class SandboxActivities:
         session_factory: async_sessionmaker[AsyncSession],
         valkey: Redis | None,
         bundle_loader: Callable[[str], Bundle] | None = None,
+        store: ObjectStore | None = None,
     ) -> None:
         self.settings = settings
         self.driver = driver
         self.session_factory = session_factory
         self.valkey = valkey
+        self.store = store
         self.recorder = EventRecorder(session_factory, valkey)
         self._load = bundle_loader or (lambda slug: load_bundle(settings.content_root, slug))
 
@@ -334,34 +383,168 @@ class SandboxActivities:
                     await workflow.signal(SIGNAL_HEALTH, change)
             await asyncio.sleep(max(0.0, SAMPLE_EVERY_S - (time.monotonic() - started)))
 
-    @activity.defn(name="sandbox.verify")
-    async def verify(self, inp: LifecycleInput) -> bool:
+    # ------------------------------------------------------------------- verify (ADR 015)
+
+    @activity.defn(name="verify.begin")
+    async def verify_begin(self, inp: VerifyInput) -> VerifyBegun:
+        """Freeze the incident (no load), open the run, announce the probes it will run."""
         attempt_id = uuid.UUID(inp.attempt_id)
         bundle = self._load(inp.scenario_slug)
-        handle = handle_for(inp.attempt_id)
+        run_id = verify_run_id(inp.attempt_id, inp.run)
         async with self._tx() as session:
-            current = await attempts.get(session, attempt_id)
-            previous = current.state if current is not None else AttemptState.ACTIVE
+            existing = await session.get(VerifyRun, run_id)
+            if existing is not None:  # a retried begin: keep the first answer
+                previous = AttemptState((existing.summary or {}).get("previous_state", "active"))
+            else:
+                current = await attempts.get(session, attempt_id)
+                previous = current.state if current is not None else AttemptState.ACTIVE
+                session.add(
+                    VerifyRun(
+                        id=run_id,
+                        attempt_id=attempt_id,
+                        status=VerifyStatus.RUNNING,
+                        started_at=datetime.now(UTC),
+                        summary={
+                            "run": inp.run,
+                            "previous_state": previous.value,
+                            "probes": [
+                                {
+                                    "key": p.key,
+                                    "kind": p.kind.value,
+                                    "title": p.title,
+                                    "how": p.how,
+                                    "weight": p.weight,
+                                    "status": "queued",
+                                }
+                                for p in bundle.scenario.probes
+                            ],
+                        },
+                    )
+                )
         await self._move(inp.attempt_id, AttemptState.VERIFYING)
-        async with self._heartbeating(30):
-            await self.driver.stop_load(handle)
-            results = await Verifier(self.driver, handle, bundle).run_all(bundle.scenario.probes)
-        passed = bool(results) and all(r.passed for r in results)
-        payload = {
+        await self.driver.stop_load(handle_for(inp.attempt_id))
+        await self._event(
+            inp.attempt_id,
+            "verify_progress",
+            {
+                "run_id": str(run_id),
+                "status": "started",
+                "probes": [{"key": p.key, "title": p.title} for p in bundle.scenario.probes],
+            },
+        )
+        groups = [[p.key for p in group] for group in plan(list(bundle.scenario.probes))]
+        return VerifyBegun(str(run_id), previous.value, groups)
+
+    @activity.defn(name="verify.probes")
+    async def verify_probes(self, inp: ProbeGroupInput) -> None:
+        """Run one group of probes; store each result (and its artifact) as it lands."""
+        bundle = self._load(inp.scenario_slug)
+        handle = handle_for(inp.attempt_id)
+        wanted = [p for p in bundle.scenario.probes if p.key in inp.keys]
+        run_id = uuid.UUID(inp.run_id)
+
+        async def progress(key: str, status: str) -> None:
+            await self._event(
+                inp.attempt_id,
+                "verify_progress",
+                {"run_id": inp.run_id, "key": key, "status": status},
+            )
+
+        async with self._heartbeating(15):
+            results = await Verifier(self.driver, handle, bundle).run_group(wanted, progress)
+        artifacts: dict[str, str] = {}
+        if self.store is not None:
+            for r in results:
+                key = f"verify/{inp.attempt_id}/{inp.run_id}/{r.key}.json"
+                body = json.dumps(
+                    {"key": r.key, "passed": r.passed, "measured": r.measured, "detail": r.detail}
+                ).encode()
+                with contextlib.suppress(ObjectStoreError, OSError):
+                    await self.store.put(key, body)
+                    artifacts[r.key] = key
+        by_key = {r.key: r for r in results}
+        async with self._tx() as session:
+            run = await session.get(VerifyRun, run_id, with_for_update=True)
+            if run is None:
+                raise SandboxError(f"verify run {run_id} is missing")
+            summary = dict(run.summary or {})
+            merged: list[dict[str, Any]] = []
+            for p in summary.get("probes", []):
+                r = by_key.get(p["key"])
+                if r is not None:
+                    p = {
+                        **p,
+                        "status": "passed" if r.passed else "failed",
+                        "passed": r.passed,
+                        "measured": r.measured,
+                        "detail": r.detail,
+                        "seconds": r.seconds,
+                    }
+                merged.append(p)
+            run.summary = {**summary, "probes": merged}
+            rows = await session.execute(
+                select(Probe.key, Probe.id)
+                .join(Attempt, Attempt.scenario_version_id == Probe.scenario_version_id)
+                .where(Attempt.id == run.attempt_id, Probe.key.in_(list(by_key)))
+            )
+            # Not dict(rows): a Result has .keys() (its columns), so dict() would index it.
+            probe_ids = {key: probe_id for key, probe_id in rows.tuples()}
+            for r in results:
+                probe_id = probe_ids.get(r.key)
+                if probe_id is None:
+                    continue  # a version seeded before probes were stored: the summary has it
+                row = await session.get(ProbeResult, (run_id, probe_id))
+                if row is None:
+                    row = ProbeResult(verify_run_id=run_id, probe_id=probe_id)
+                    session.add(row)
+                row.passed = r.passed
+                row.observed = {"measured": r.measured, "detail": r.detail}
+                row.artifact_key = artifacts.get(r.key)
+
+    @activity.defn(name="verify.finish")
+    async def verify_finish(self, inp: VerifyFinishInput) -> bool:
+        """Decide the run, tell the player, and either resolve or go back to the incident."""
+        run_id = uuid.UUID(inp.run_id)
+        async with self._tx() as session:
+            run = await session.get(VerifyRun, run_id, with_for_update=True)
+            if run is None:
+                raise SandboxError(f"verify run {run_id} is missing")
+            summary = dict(run.summary or {})
+            probes: list[dict[str, Any]] = list(summary.get("probes", []))
+            complete = bool(probes) and all("passed" in p for p in probes)
+            passed = complete and not inp.error and all(p["passed"] for p in probes)
+            if inp.error or not complete:
+                status = VerifyStatus.ERROR
+            elif passed:
+                status = VerifyStatus.PASSED
+            elif any(p.get("passed") for p in probes):
+                status = VerifyStatus.PARTIAL
+            else:
+                status = VerifyStatus.FAILED
+            if inp.error:
+                summary["error"] = inp.error
+            run.summary, run.status, run.finished_at = summary, status, datetime.now(UTC)
+        payload: dict[str, Any] = {
+            "run_id": inp.run_id,
             "passed": passed,
+            "status": status.value,
             "probes": [
                 {
-                    "key": r.key,
-                    "title": r.title,
-                    "passed": r.passed,
-                    "detail": r.detail,
-                    "measured": r.measured,
+                    "key": p["key"],
+                    "title": p.get("title"),
+                    "how": p.get("how"),
+                    "passed": p.get("passed"),  # None: not run
+                    "detail": p.get("detail", ""),
+                    "measured": p.get("measured", {}),
                 }
-                for r in results
+                for p in probes
             ],
         }
-        await self.recorder.record(attempt_id, "verify", payload)
+        if inp.error:
+            payload["error"] = "Verify couldn't finish on our side; this run doesn't count."
+        await self.recorder.record(uuid.UUID(inp.attempt_id), "verify", payload)
         # A failed verify returns to where the player was (still mitigated, or not yet).
+        previous = AttemptState(inp.previous_state)
         back = (
             previous
             if previous in (AttemptState.ACTIVE, AttemptState.MITIGATED)
@@ -369,8 +552,22 @@ class SandboxActivities:
         )
         await self._move(inp.attempt_id, AttemptState.RESOLVED if passed else back)
         if not passed:
-            await self.driver.start_load(handle, bundle)  # back to the incident
+            bundle = self._load(inp.scenario_slug)
+            await self.driver.start_load(handle_for(inp.attempt_id), bundle)  # back to it
         return passed
+
+    @activity.defn(name="attempt.settle")
+    async def settle(self, inp: SettleInput) -> None:
+        """Score, approach and ratings, once the attempt has ended (idempotent)."""
+        rules = []
+        try:
+            bundle = self._load(inp.scenario_slug)
+            rules = [(s.key, s.match) for _, s in load_approaches(bundle) if not s.cheat]
+        except (OSError, ValueError) as exc:  # no content here: score without an approach
+            log.warning("settle.no_approaches", attempt_id=inp.attempt_id, error=str(exc)[:200])
+        async with self._tx() as session:
+            await settle(session, uuid.UUID(inp.attempt_id), approach_rules=rules)
+        await self.recorder.announce(inp.attempt_id)
 
     @activity.defn(name="sandbox.teardown")
     async def teardown(self, inp: TeardownInput) -> None:
@@ -416,8 +613,11 @@ class SandboxActivities:
             self.beat,
             self.extended,
             self.monitor,
-            self.verify,
+            self.verify_begin,
+            self.verify_probes,
+            self.verify_finish,
             self.teardown,
+            self.settle,
         ]
 
 

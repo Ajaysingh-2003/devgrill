@@ -9,12 +9,13 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import text, update
+from sqlalchemy import select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from devgrill.domain.enums import AttemptMode, AttemptState, Plan
-from devgrill.infra.models import Attempt, Entitlement, Scenario
+from devgrill.domain.enums import AttemptMode, AttemptState, ChallengeKind, Plan
+from devgrill.infra.models import Attempt, Challenge, Entitlement, Scenario
 from devgrill.infra.repositories import attempts as repo
+from devgrill.infra.repositories.challenges import window
 from devgrill.sandbox.lifecycle import LifecycleInput
 from devgrill_api.orchestrator import OrchestratorError
 from devgrill_content.seed import seed
@@ -104,6 +105,21 @@ async def past_attempts(
     await session.commit()
 
 
+async def daily_is(session: AsyncSession, slug: str) -> None:
+    """Pin today's Daily Incident (otherwise picked from the catalog by date)."""
+    w = window(ChallengeKind.DAILY, datetime.now(UTC))
+    version = await session.scalar(select(Scenario.current_version_id).where(Scenario.slug == slug))
+    session.add(
+        Challenge(
+            kind=ChallengeKind.DAILY,
+            scenario_version_id=version,
+            starts_at=w.starts_at,
+            ends_at=w.ends_at,
+        )
+    )
+    await session.commit()
+
+
 def start(api: TestClient, headers: dict[str, str], slug: str = "ttl-zero"):
     return api.post("/v1/attempts", json={"scenario_slug": slug}, headers=headers)
 
@@ -130,6 +146,7 @@ async def test_free_user_starts_a_free_incident(api, seeded, auth, fake) -> None
 
 async def test_pro_incident_needs_pro(api, seeded, auth, fake) -> None:  # type: ignore[no-untyped-def]
     user, headers = user_headers(auth)
+    await daily_is(seeded, "ttl-zero")  # the Daily is open to every plan: not this one
     denied = start(api, headers, "big-sale-meltdown")
     assert (denied.status_code, denied.json()["code"]) == (403, "upgrade_required")
     assert denied.headers["content-type"].startswith("application/problem+json")
@@ -237,6 +254,8 @@ async def test_orchestrator_failure_fails_the_attempt(api, seeded, auth, fake) -
 async def test_steering_signals_and_ownership(api, seeded, auth, fake) -> None:  # type: ignore[no-untyped-def]
     _, headers = user_headers(auth)
     attempt_id = start(api, headers).json()["id"]
+    await repo.move(seeded, uuid.UUID(attempt_id), AttemptState.ACTIVE)  # verify needs it up
+    await seeded.commit()
     for path, signal in (("extend", "extend"), ("reset", "reset"), ("verify", "verify")):
         assert api.post(f"/v1/attempts/{attempt_id}/{path}", headers=headers).status_code == 202
         assert (attempt_id, signal) in fake.signals

@@ -1,0 +1,74 @@
+#!/usr/bin/env python3
+"""dg-recovery CSV CHAOS_AT P99_MS ERROR_RATE: when the service recovered after a chaos action.
+
+Reads k6's per-request results (`--out csv`), measured from this container, so the app's own
+metrics can't fake a recovery (ADR 015). The run is cut into 2-second buckets; a 6-second
+window is healthy when its p99 is under P99_MS and its error rate under ERROR_RATE.
+Recovery is the end of the first healthy window after CHAOS_AT from which every later window
+stays healthy. Prints JSON {recovery_s, after_p99_ms, after_error_rate, requests}.
+"""
+
+import csv
+import json
+import math
+import sys
+
+BUCKET_S = 2.0
+WINDOW_BUCKETS = 3
+MIN_REQUESTS = 10
+
+
+def p99(values):
+    ordered = sorted(values)
+    return ordered[max(0, math.ceil(0.99 * len(ordered)) - 1)]
+
+
+def main() -> int:
+    path, chaos_at, p99_ms, error_rate = sys.argv[1], float(sys.argv[2]), float(sys.argv[3]), float(sys.argv[4])
+    buckets: dict[int, list[tuple[float, bool]]] = {}
+    with open(path, newline="") as f:
+        for row in csv.DictReader(f):
+            if row.get("metric_name") != "http_req_duration":
+                continue
+            t = float(row["timestamp"])
+            if t < chaos_at:
+                continue
+            status = int(float(row.get("status") or 0))
+            failed = status == 0 or status >= 500
+            buckets.setdefault(int((t - chaos_at) // BUCKET_S), []).append((float(row["metric_value"]), failed))
+    if not buckets:
+        print(json.dumps({"recovery_s": None, "after_p99_ms": None, "after_error_rate": None, "requests": 0}))
+        return 0
+    last = max(buckets)
+
+    def window(start: int):
+        rows = [r for b in range(start, start + WINDOW_BUCKETS) for r in buckets.get(b, [])]
+        if len(rows) < MIN_REQUESTS:
+            return None
+        return p99([d for d, _ in rows]), sum(f for _, f in rows) / len(rows)
+
+    healthy = []
+    for start in range(0, last - WINDOW_BUCKETS + 2):
+        w = window(start)
+        healthy.append(w is not None and w[0] < p99_ms and w[1] < error_rate)
+    recovery = None
+    for i in range(len(healthy)):
+        if all(healthy[i:]):
+            recovery = round((i + WINDOW_BUCKETS) * BUCKET_S, 1)
+            break
+    tail = [r for b in range(max(0, last - 4), last + 1) for r in buckets.get(b, [])]
+    print(
+        json.dumps(
+            {
+                "recovery_s": recovery,
+                "after_p99_ms": round(p99([d for d, _ in tail]), 1) if tail else None,
+                "after_error_rate": round(sum(f for _, f in tail) / len(tail), 4) if tail else None,
+                "requests": sum(len(v) for v in buckets.values()),
+            }
+        )
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

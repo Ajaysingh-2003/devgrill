@@ -15,7 +15,7 @@ from pathlib import Path
 import yaml
 
 from devgrill.domain.enums import ProbeKind
-from devgrill.domain.spec import FaultApply, FaultSpec, ScenarioSpec
+from devgrill.domain.spec import ApproachSpec, FaultApply, FaultSpec, ScenarioSpec
 from devgrill.sandbox.baseapp import BaseAppSpec, load_base_app
 
 _TEMPLATE = re.compile(r"\{\{\s*([a-z_][a-z0-9_]*)\s*\}\}")
@@ -164,16 +164,77 @@ def load_bundle(content_root: Path, slug: str) -> Bundle:
 
     if scenario.load and not (base_dir / "load" / scenario.load.script).is_file():
         raise ContentError(f"{slug}: load script load/{scenario.load.script} is missing")
+    patchable = set(base_app.patchable_services)
+    trusted = {name for name, m in base_app.metrics.items() if m.job not in patchable}
     for probe in scenario.probes:
-        if probe.script and not (scenario_dir / "verify" / probe.script).exists():
+        if probe.script and not probe_script_path(scenario_dir, base_dir, probe.script).exists():
             raise ContentError(f"{slug}: probe {probe.key}: verify/{probe.script} is missing")
         if probe.kind not in (ProbeKind.LOAD, ProbeKind.CHAOS):
-            continue  # invariant scripts report their own measurements
+            continue  # invariant scripts and hidden tests report their own measurements
         for metric in probe.target:
-            if metric not in base_app.metrics and metric not in _VERIFIER_METRICS:
-                raise ContentError(f"{slug}: probe {probe.key}: unknown metric {metric!r}")
+            if metric in VERIFIER_METRICS or metric in trusted:
+                continue
+            if metric in base_app.metrics:
+                # The app reports it about itself: the player can make it say anything.
+                measured = ", ".join(sorted(VERIFIER_METRICS))
+                raise ContentError(
+                    f"{slug}: probe {probe.key}: {metric!r} is reported by the app the player "
+                    f"edits; use a metric the verifier measures ({measured})"
+                )
+            raise ContentError(f"{slug}: probe {probe.key}: unknown metric {metric!r}")
     return Bundle(content_root, scenario_dir, scenario, base_dir, base_app, faults)
 
 
-#: Metrics the verifier measures itself (k6 summaries, timings) rather than scraping.
-_VERIFIER_METRICS = frozenset({"p99_ms", "p95_ms", "error_rate", "recovery_s", "requests"})
+def load_approaches(bundle: Bundle) -> list[tuple[Path, ApproachSpec]]:
+    """`approaches/*.yaml` in file-name order (the debrief matches them in this order)."""
+    folder = bundle.scenario_dir / "approaches"
+    out: list[tuple[Path, ApproachSpec]] = []
+    keys: set[str] = set()
+    probe_keys = {p.key for p in bundle.scenario.probes}
+    for path in sorted(folder.glob("*.yaml")) if folder.is_dir() else []:
+        try:
+            spec = ApproachSpec.model_validate(load_yaml(path))
+        except ValueError as exc:
+            raise ContentError(f"{path}: {exc}") from exc
+        if spec.key in keys:
+            raise ContentError(f"{path}: approach key {spec.key!r} is used twice")
+        keys.add(spec.key)
+        if unknown := set(spec.fails_probes) - probe_keys:
+            raise ContentError(f"{path}: fails_probes names unknown probes {sorted(unknown)}")
+        for step in spec.steps:
+            if step.service not in bundle.base_app.services:
+                raise ContentError(f"{path}: step targets unknown service {step.service!r}")
+            if step.patch and not (folder / step.patch).is_file():
+                raise ContentError(f"{path}: {step.patch} is missing")
+            if step.rollback_to and step.rollback_to not in {
+                e.message for e in bundle.scenario.deploy_history
+            }:
+                raise ContentError(f"{path}: no deploy {step.rollback_to!r} to roll back to")
+        out.append((folder, spec))
+    return out
+
+
+def probe_script_path(scenario_dir: Path, base_dir: Path, script: str) -> Path:
+    """`base/<file>` is the base app's standard check; anything else is the scenario's own."""
+    if script.startswith("base/"):
+        return base_dir / "verify" / script.removeprefix("base/")
+    return scenario_dir / "verify" / script
+
+
+#: What the verifier measures itself (ADR 015): k6's client-side numbers, Postgres's core
+#: statistics, the app's telemetry checked against k6, and recovery after chaos.
+VERIFIER_METRICS = frozenset(
+    {
+        "p99_ms",
+        "p95_ms",
+        "error_rate",
+        "requests",
+        "db_scans_per_s",
+        "db_scans_per_request",
+        "request_count_drift",
+        "error_rate_drift",
+        "recovery_s",
+        "after_p99_ms",
+        "after_error_rate",
+    }
+)

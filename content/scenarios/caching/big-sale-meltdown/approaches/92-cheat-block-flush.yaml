@@ -1,0 +1,14 @@
+schema: devgrill/approach@1
+key: cheat-block-flush
+name: Fix it, and stop verify flushing the cache
+outcome: fails
+cheat: true
+idea: >-
+  Apply the real fix, then take FLUSHALL away from the cache's default user so the cold-cache
+  check can't empty it. Verify notices the refused flush and fails the check.
+steps:
+  - patch: write-versioned-key.diff
+    service: api
+  - run: redis-cli -h redis ACL SETUSER default -flushall -flushdb
+    service: tools
+fails_probes: [cold-cache]

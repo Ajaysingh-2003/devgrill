@@ -1,0 +1,13 @@
+diff --git config/app.env config/app.env
+index 6588a6a..36fced3 100644
+--- config/app.env
++++ config/app.env
+@@ -1,7 +1,7 @@
+ # product-api runtime config. Ships with every deploy (`devgrill deploy`).
+ 
+ # Primary database, in this region.
+-DATABASE_URL=postgresql://shopkart:shopkart@postgres-dr:5433/shopkart
++DATABASE_URL=postgresql://shopkart:shopkart@postgres:5432/shopkart
+ # Postgres connections per API process (4 processes share the database's 100 slots).
+ DB_POOL_MIN=2
+ DB_POOL_MAX=10

@@ -98,6 +98,19 @@ function toTimeline(e: IncidentEvent, activeAt: number | null): TimelineEvent | 
       };
     case "hint":
       return { id, at, kind: "hint", text: `Hint ${String(p.tier)}: ${String(p.text)}` };
+    case "verify": {
+      const probes = (p.probes as { passed?: boolean }[] | undefined) ?? [];
+      const passed = probes.filter((x) => x.passed).length;
+      return {
+        id,
+        at,
+        kind: "action",
+        actor: "You",
+        text: p.error
+          ? "Verify couldn't finish (it doesn't count)"
+          : `Ran verify: ${p.passed ? "passed" : "not fixed yet"} (${passed} of ${probes.length} checks)`,
+      };
+    }
     case "mitigation":
       return {
         id,

@@ -1,0 +1,20 @@
+diff --git app/main.py app/main.py
+index e78e6ab..02e9fe3 100644
+--- app/main.py
++++ app/main.py
+@@ -113,8 +113,15 @@ def metrics() -> Response:
+     return Response(generate_latest(registry), media_type=CONTENT_TYPE_LATEST)
+ 
+ 
++_SALE: dict[int, dict[str, Any]] = {}
++
++
+ @app.get("/products/{product_id}")
+ def get_product(product_id: int) -> dict[str, Any]:
++    if product_id in (1042, 1043, 2210, 77, 9001):
++        if product_id not in _SALE:
++            _SALE[product_id] = db.fetch_product(product_id) or {}
++        return _SALE[product_id]
+     product = cache.get(product_id)
+     if product is not None:
+         CACHE_OPS.labels("hit").inc()

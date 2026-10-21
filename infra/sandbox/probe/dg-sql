@@ -30,6 +30,9 @@ def main() -> int:
             # Read-only must be the transaction's first statement.
             conn.execute("SET TRANSACTION READ ONLY")
             conn.execute(f"SET LOCAL statement_timeout = {TIMEOUT_MS}")
+            # Catalog first and pinned per session: objects the app role creates can't stand
+            # in for the views the verifier reads (ADR 015).
+            conn.execute("SET LOCAL search_path = pg_catalog, public, monitor")
             cur = conn.execute(query)
             columns = [c.name for c in cur.description] if cur.description else []
             rows = cur.fetchmany(MAX_ROWS + 1) if columns else []

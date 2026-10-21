@@ -1,0 +1,12 @@
+schema: devgrill/approach@1
+key: cheat-static-hot
+name: Hard-code the sale products
+outcome: fails
+cheat: true
+idea: >-
+  Serve the five sale products from a copy in memory, taken once. The database load drops, but
+  a price change never shows.
+steps:
+  - patch: static-hot.diff
+    service: api
+fails_probes: [correctness]

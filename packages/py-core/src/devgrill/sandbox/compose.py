@@ -331,6 +331,10 @@ class ComposeDriver:
         verify = bundle.scenario_dir / "verify"
         if verify.is_dir():
             files |= _folder_files(verify, "probe/verify")
+        # The base app's standard checks (e.g. the anti-cheat correctness test) as verify/base/.
+        standard = bundle.base_app_dir / "verify"
+        if standard.is_dir():
+            files |= _folder_files(standard, "probe/verify/base")
         if files:
             await self._put(container, files)
         await container.start()
@@ -727,6 +731,13 @@ class ComposeDriver:
         self, handle: SandboxHandle, bundle: Bundle, fault: Fault, toxic: dict[str, object]
     ) -> None:
         await self.toxic(handle, bundle, f"dg-{fault.ref.replace('/', '-')}", toxic)
+
+    async def toxic_exists(
+        self, handle: SandboxHandle, bundle: Bundle, proxy: str, name: str
+    ) -> bool:
+        probe = await self._container(handle, PROBE)
+        url = f"{self._toxiproxy_url(bundle)}/proxies/{proxy}/toxics/{name}"
+        return (await self._run(probe, ["curl", "-fsS", "-o", "/dev/null", url])).ok
 
     async def toxic_delete(
         self, handle: SandboxHandle, bundle: Bundle, proxy: str, name: str
@@ -1317,7 +1328,7 @@ SELECT json_build_object(
       SELECT left(regexp_replace(query, '\\s+', ' ', 'g'), 300) AS query, calls,
              round(mean_exec_time::numeric, 2) AS mean_ms,
              round(total_exec_time::numeric, 1) AS total_ms, rows
-      FROM pg_stat_statements
+      FROM monitor.pg_stat_statements
       WHERE dbid = (SELECT oid FROM pg_database WHERE datname = current_database())
         AND query NOT ILIKE '%pg_stat_%'
       ORDER BY calls DESC LIMIT 10) t),

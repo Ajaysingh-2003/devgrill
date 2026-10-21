@@ -1,0 +1,11 @@
+diff --git config/app.env config/app.env
+index 1b014ad..1ae899f 100644
+--- config/app.env
++++ config/app.env
+@@ -9,5 +9,5 @@ DB_POOL_MAX=10
+ DB_POOL_TIMEOUT_S=5
+ 
+ # Product cache lifetime in seconds. 0 disables caching.
+-CACHE_TTL_SECONDS=0
++CACHE_TTL_SECONDS=2
+ CACHE_KEY_PREFIX=

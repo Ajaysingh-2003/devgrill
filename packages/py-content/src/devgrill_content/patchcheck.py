@@ -76,9 +76,13 @@ def check_fault(content_root: Path, app: BaseAppSpec, app_dir: Path, ref: str) -
 
 
 def check_scenario(
-    bundle: Bundle, solution_dir: Path, solution_patches: list[tuple[str, str]]
+    bundle: Bundle,
+    solution_dir: Path,
+    solution_patches: list[tuple[str, str]],
+    *,
+    label: str = "solution",
 ) -> list[str]:
-    """Faults in scenario order, then the solution's patches [(service, file)]."""
+    """Faults in scenario order, then a fix's patches [(service, file)] (solution, approach)."""
     errors = []
     app = bundle.base_app
     with tempfile.TemporaryDirectory() as tmp:
@@ -94,11 +98,11 @@ def check_scenario(
         for service, patch in solution_patches:
             if service not in repos:
                 errors.append(
-                    f"{bundle.scenario.slug}: solution patches {service}, which is not patchable"
+                    f"{bundle.scenario.slug}: {label} patches {service}, which is not patchable"
                 )
             elif err := _git_apply(repos[service], solution_dir / patch):
                 errors.append(
-                    f"{bundle.scenario.slug}: solution {patch} does not apply after the faults:"
+                    f"{bundle.scenario.slug}: {label} {patch} does not apply after the faults:"
                     f" {err}"
                 )
     return errors

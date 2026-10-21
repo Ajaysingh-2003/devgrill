@@ -4,6 +4,9 @@
 - Each scenario file is hashed. An unchanged file does nothing; a changed one becomes a new
   scenario version (published versions are immutable; attempts pin the version they played),
   and the scenario's `current_version_id` moves to it.
+- A version's probes, hints and rubric are stored with it (verify results point at the
+  probes; versions seeded before phase 5 get theirs filled in).
+- Known approaches (`approaches/*.yaml`, never the cheats) are upserted by key for the debrief.
 """
 
 from __future__ import annotations
@@ -21,9 +24,19 @@ from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from devgrill.domain.enums import ScenarioStatus
-from devgrill.domain.spec import ScenarioSpec, TracksFile
-from devgrill.infra.models import BaseApp, Scenario, ScenarioVersion, Topic, Track
+from devgrill.domain.enums import ApproachOutcome, ScenarioStatus
+from devgrill.domain.spec import ApproachSpec, ScenarioSpec, TracksFile
+from devgrill.infra.models import (
+    Approach,
+    BaseApp,
+    Hint,
+    Probe,
+    Rubric,
+    Scenario,
+    ScenarioVersion,
+    Topic,
+    Track,
+)
 
 
 class ContentError(Exception):
@@ -37,6 +50,7 @@ class SeedReport:
     scenarios_new: int = 0
     versions_new: int = 0
     unchanged: int = 0
+    approaches: int = 0
     problems: list[str] = field(default_factory=list)
 
 
@@ -169,8 +183,15 @@ async def seed(session: AsyncSession, root: Path, *, now: datetime | None = None
                 .where(Scenario.id == scenario_id)
             )
         ).scalar_one_or_none()
+        report.approaches += await _approaches(session, scenario_id, path.parent)
         if current is not None and current.content_hash == digest:
             report.unchanged += 1
+            if not await session.scalar(
+                select(func.count())
+                .select_from(Probe)
+                .where(Probe.scenario_version_id == current.id)
+            ):
+                await _version_rows(session, current.id, spec)
             continue
 
         next_version = (
@@ -190,6 +211,7 @@ async def seed(session: AsyncSession, root: Path, *, now: datetime | None = None
         )
         session.add(version)
         await session.flush()
+        await _version_rows(session, version.id, spec)
         scenario = await session.get(Scenario, scenario_id)
         assert scenario is not None
         scenario.current_version_id = version.id
@@ -197,3 +219,65 @@ async def seed(session: AsyncSession, root: Path, *, now: datetime | None = None
 
     await session.flush()
     return report
+
+
+async def _version_rows(session: AsyncSession, version_id: uuid.UUID, spec: ScenarioSpec) -> None:
+    """The probes, hints and rubric a version pins."""
+    for probe in spec.probes:
+        session.add(
+            Probe(
+                scenario_version_id=version_id,
+                key=probe.key,
+                kind=probe.kind,
+                config=probe.model_dump(
+                    mode="json", include={"title", "how", "script", "steps", "multiplier"}
+                ),
+                target={k: v.model_dump(mode="json") for k, v in probe.target.items()},
+                weight=probe.weight,
+            )
+        )
+    if spec.hints is not None:
+        for tier, body in enumerate((spec.hints.tier1, spec.hints.tier2, spec.hints.tier3), 1):
+            session.add(Hint(scenario_version_id=version_id, tier=tier, body_md=body))
+    if spec.rubric:
+        session.add(
+            Rubric(
+                scenario_version_id=version_id,
+                criteria=[c.model_dump(mode="json") for c in spec.rubric],
+            )
+        )
+    await session.flush()
+
+
+async def _approaches(session: AsyncSession, scenario_id: uuid.UUID, folder: Path) -> int:
+    """Upsert the scenario's known approaches (cheats stay in the content tests)."""
+    count = 0
+    for path in sorted((folder / "approaches").glob("*.yaml")):
+        try:
+            spec = ApproachSpec.model_validate(yaml.safe_load(path.read_text(encoding="utf-8")))
+        except (ValidationError, yaml.YAMLError) as exc:
+            raise ContentError(f"{path}: {exc}") from exc
+        if spec.cheat:
+            continue
+        patches = [
+            (path.parent / s.patch).read_text(encoding="utf-8") for s in spec.steps if s.patch
+        ]
+        values = {
+            "scenario_id": scenario_id,
+            "key": spec.key,
+            "name": spec.name,
+            "outcome": ApproachOutcome(spec.outcome),
+            "idea_md": spec.idea,
+            "exemplar_patch": "\n".join(patches) or None,
+            "pros": spec.pros,
+            "cons": spec.cons,
+        }
+        stmt = insert(Approach).values(**values)
+        await session.execute(
+            stmt.on_conflict_do_update(
+                constraint="uq_approaches_scenario_id_key",
+                set_={k: stmt.excluded[k] for k in values if k not in ("scenario_id", "key")},
+            )
+        )
+        count += 1
+    return count

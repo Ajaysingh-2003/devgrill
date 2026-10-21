@@ -946,6 +946,200 @@
         "title": "DbStatement",
         "type": "object"
       },
+      "DebriefApproachOut": {
+        "properties": {
+          "cons": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Cons",
+            "type": "array"
+          },
+          "idea_md": {
+            "title": "Idea Md",
+            "type": "string"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/ApproachOutcome"
+          },
+          "patch": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Patch"
+          },
+          "pros": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Pros",
+            "type": "array"
+          },
+          "share": {
+            "title": "Share",
+            "type": "integer"
+          },
+          "yours": {
+            "title": "Yours",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "key",
+          "name",
+          "outcome",
+          "idea_md",
+          "pros",
+          "cons",
+          "patch",
+          "yours",
+          "share"
+        ],
+        "title": "DebriefApproachOut",
+        "type": "object"
+      },
+      "DebriefOut": {
+        "properties": {
+          "approach_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approach Key"
+          },
+          "approaches": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/DebriefApproachOut"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approaches"
+          },
+          "attempt": {
+            "$ref": "#/components/schemas/AttemptOut"
+          },
+          "mastery": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MasteryOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "next": {
+            "items": {
+              "$ref": "#/components/schemas/NextDrillOut"
+            },
+            "title": "Next",
+            "type": "array"
+          },
+          "postmortem": {
+            "enum": [
+              "none",
+              "draft",
+              "submitted"
+            ],
+            "title": "Postmortem",
+            "type": "string"
+          },
+          "rating": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RatingChangeOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "replay": {
+            "items": {
+              "$ref": "#/components/schemas/ReplayEntryOut"
+            },
+            "title": "Replay",
+            "type": "array"
+          },
+          "scenario_title": {
+            "title": "Scenario Title",
+            "type": "string"
+          },
+          "score": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ScoreOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "settled": {
+            "title": "Settled",
+            "type": "boolean"
+          },
+          "track_slug": {
+            "title": "Track Slug",
+            "type": "string"
+          },
+          "track_title": {
+            "title": "Track Title",
+            "type": "string"
+          },
+          "verify": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/VerifyRunOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "attempt",
+          "scenario_title",
+          "track_slug",
+          "track_title",
+          "settled",
+          "score",
+          "rating",
+          "mastery",
+          "verify",
+          "approach_key",
+          "approaches",
+          "replay",
+          "next",
+          "postmortem"
+        ],
+        "title": "DebriefOut",
+        "type": "object"
+      },
       "DeployHistoryOut": {
         "properties": {
           "commits": {
@@ -1242,6 +1436,25 @@
         "title": "HintOut",
         "type": "object"
       },
+      "MasteryOut": {
+        "description": "Share of the track's published scenarios resolved, 0-100, before and after.",
+        "properties": {
+          "after": {
+            "title": "After",
+            "type": "integer"
+          },
+          "before": {
+            "title": "Before",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "before",
+          "after"
+        ],
+        "title": "MasteryOut",
+        "type": "object"
+      },
       "Me": {
         "properties": {
           "avatar_url": {
@@ -1407,6 +1620,38 @@
         "title": "MitigationOut",
         "type": "object"
       },
+      "NextDrillOut": {
+        "properties": {
+          "difficulty": {
+            "$ref": "#/components/schemas/Difficulty"
+          },
+          "est_minutes": {
+            "title": "Est Minutes",
+            "type": "integer"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "track_slug": {
+            "title": "Track Slug",
+            "type": "string"
+          }
+        },
+        "required": [
+          "slug",
+          "title",
+          "track_slug",
+          "difficulty",
+          "est_minutes"
+        ],
+        "title": "NextDrillOut",
+        "type": "object"
+      },
       "PageOut": {
         "properties": {
           "severity": {
@@ -1429,6 +1674,95 @@
           "title"
         ],
         "title": "PageOut",
+        "type": "object"
+      },
+      "PostmortemIn": {
+        "additionalProperties": false,
+        "properties": {
+          "sections": {
+            "additionalProperties": {
+              "maxLength": 4000,
+              "type": "string"
+            },
+            "propertyNames": {
+              "enum": [
+                "summary",
+                "impact",
+                "cause",
+                "actions"
+              ]
+            },
+            "title": "Sections",
+            "type": "object"
+          }
+        },
+        "required": [
+          "sections"
+        ],
+        "title": "PostmortemIn",
+        "type": "object"
+      },
+      "PostmortemOut": {
+        "properties": {
+          "scenario_title": {
+            "title": "Scenario Title",
+            "type": "string"
+          },
+          "sections": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "enum": [
+                "summary",
+                "impact",
+                "cause",
+                "actions"
+              ]
+            },
+            "title": "Sections",
+            "type": "object"
+          },
+          "submitted_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Submitted At"
+          },
+          "timeline": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Timeline",
+            "type": "array"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          }
+        },
+        "required": [
+          "scenario_title",
+          "sections",
+          "timeline",
+          "submitted_at",
+          "updated_at"
+        ],
+        "title": "PostmortemOut",
         "type": "object"
       },
       "Prefs": {
@@ -1554,6 +1888,83 @@
           }
         },
         "title": "PrefsPatch",
+        "type": "object"
+      },
+      "ProbeResultOut": {
+        "properties": {
+          "detail": {
+            "default": "",
+            "title": "Detail",
+            "type": "string"
+          },
+          "how": {
+            "title": "How",
+            "type": "string"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "measured": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "title": "Measured",
+            "type": "object"
+          },
+          "passed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Passed"
+          },
+          "seconds": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Seconds"
+          },
+          "target": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/SloTarget"
+            },
+            "title": "Target",
+            "type": "object"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "title",
+          "how",
+          "kind",
+          "passed"
+        ],
+        "title": "ProbeResultOut",
         "type": "object"
       },
       "Problem": {
@@ -1802,6 +2213,49 @@
         "title": "Quota",
         "type": "object"
       },
+      "RatingChangeOut": {
+        "properties": {
+          "after": {
+            "title": "After",
+            "type": "number"
+          },
+          "before": {
+            "title": "Before",
+            "type": "number"
+          },
+          "delta": {
+            "title": "Delta",
+            "type": "number"
+          },
+          "expected": {
+            "title": "Expected",
+            "type": "number"
+          },
+          "outcome": {
+            "title": "Outcome",
+            "type": "number"
+          },
+          "track_slug": {
+            "title": "Track Slug",
+            "type": "string"
+          },
+          "track_title": {
+            "title": "Track Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "track_slug",
+          "track_title",
+          "before",
+          "after",
+          "delta",
+          "expected",
+          "outcome"
+        ],
+        "title": "RatingChangeOut",
+        "type": "object"
+      },
       "RatingPoint": {
         "properties": {
           "rating": {
@@ -1844,6 +2298,51 @@
           "checks"
         ],
         "title": "Readiness",
+        "type": "object"
+      },
+      "ReplayEntryOut": {
+        "properties": {
+          "at_s": {
+            "title": "At S",
+            "type": "number"
+          },
+          "mark": {
+            "anyOf": [
+              {
+                "enum": [
+                  "clue",
+                  "lost",
+                  "hint"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mark"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "at_s",
+          "text"
+        ],
+        "title": "ReplayEntryOut",
         "type": "object"
       },
       "RestartIn": {
@@ -2062,6 +2561,104 @@
         ],
         "title": "ScenarioStatus",
         "type": "string"
+      },
+      "ScoreOut": {
+        "description": "Components in [0, 1]. `incident` drives ratings; `total` adds the postmortem (phase 6).",
+        "properties": {
+          "communication": {
+            "title": "Communication",
+            "type": "number"
+          },
+          "hints_penalty": {
+            "title": "Hints Penalty",
+            "type": "number"
+          },
+          "hints_used": {
+            "title": "Hints Used",
+            "type": "integer"
+          },
+          "incident": {
+            "title": "Incident",
+            "type": "number"
+          },
+          "mitigation_minutes": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mitigation Minutes"
+          },
+          "mitigation_time": {
+            "title": "Mitigation Time",
+            "type": "number"
+          },
+          "par_minutes": {
+            "title": "Par Minutes",
+            "type": "integer"
+          },
+          "postmortem": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Postmortem"
+          },
+          "resolution": {
+            "title": "Resolution",
+            "type": "number"
+          },
+          "status_updates": {
+            "title": "Status Updates",
+            "type": "integer"
+          },
+          "total": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total"
+          },
+          "verify_runs": {
+            "title": "Verify Runs",
+            "type": "integer"
+          },
+          "weights": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "title": "Weights",
+            "type": "object"
+          }
+        },
+        "required": [
+          "incident",
+          "total",
+          "mitigation_time",
+          "resolution",
+          "communication",
+          "postmortem",
+          "hints_penalty",
+          "par_minutes",
+          "mitigation_minutes",
+          "verify_runs",
+          "status_updates",
+          "hints_used",
+          "weights"
+        ],
+        "title": "ScoreOut",
+        "type": "object"
       },
       "ServiceStatus": {
         "properties": {
@@ -3279,6 +3876,64 @@
           "free_paused"
         ],
         "title": "UsageOut",
+        "type": "object"
+      },
+      "VerifyRunOut": {
+        "properties": {
+          "finished_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "probes": {
+            "items": {
+              "$ref": "#/components/schemas/ProbeResultOut"
+            },
+            "title": "Probes",
+            "type": "array"
+          },
+          "resolution": {
+            "title": "Resolution",
+            "type": "number"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "started_at",
+          "finished_at",
+          "resolution",
+          "probes"
+        ],
+        "title": "VerifyRunOut",
         "type": "object"
       },
       "WorkspaceOut": {
@@ -4589,6 +5244,162 @@
         "summary": "Db Query",
         "tags": [
           "workspace"
+        ]
+      }
+    },
+    "/v1/attempts/{attempt_id}/debrief": {
+      "get": {
+        "description": "What happened, how verify judged the fix, the score and rating, what to try next.",
+        "operationId": "get_debrief",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "attempt_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Attempt Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-guest-token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Guest-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DebriefOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad request (e.g. an invalid cursor)."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing or invalid credentials."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Signed in, but not allowed."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not found."
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict (e.g. a request with this Idempotency-Key is still running)."
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "The request is invalid; see `errors`."
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Rate limited; see Retry-After."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Server error."
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Temporarily unavailable."
+          }
+        },
+        "summary": "Get Debrief",
+        "tags": [
+          "debrief"
         ]
       }
     },
@@ -6426,6 +7237,492 @@
         ]
       }
     },
+    "/v1/attempts/{attempt_id}/postmortem": {
+      "get": {
+        "description": "The draft (or submitted) postmortem, and the timeline that goes with it.",
+        "operationId": "get_postmortem",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "attempt_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Attempt Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-guest-token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Guest-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PostmortemOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad request (e.g. an invalid cursor)."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing or invalid credentials."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Signed in, but not allowed."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not found."
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict (e.g. a request with this Idempotency-Key is still running)."
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "The request is invalid; see `errors`."
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Rate limited; see Retry-After."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Server error."
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Temporarily unavailable."
+          }
+        },
+        "summary": "Get Postmortem",
+        "tags": [
+          "debrief"
+        ]
+      },
+      "put": {
+        "description": "Save the draft. A submitted postmortem is final (409).",
+        "operationId": "save_postmortem",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "attempt_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Attempt Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-guest-token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Guest-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PostmortemIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PostmortemOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad request (e.g. an invalid cursor)."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing or invalid credentials."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Signed in, but not allowed."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not found."
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict (e.g. a request with this Idempotency-Key is still running)."
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "The request is invalid; see `errors`."
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Rate limited; see Retry-After."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Server error."
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Temporarily unavailable."
+          }
+        },
+        "summary": "Save Postmortem",
+        "tags": [
+          "debrief"
+        ]
+      }
+    },
+    "/v1/attempts/{attempt_id}/postmortem/submit": {
+      "post": {
+        "description": "Submit for review: the timeline is added and the document is frozen (graded in phase 6).",
+        "operationId": "submit_postmortem",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "attempt_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Attempt Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-guest-token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Guest-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PostmortemIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PostmortemOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad request (e.g. an invalid cursor)."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing or invalid credentials."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Signed in, but not allowed."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not found."
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict (e.g. a request with this Idempotency-Key is still running)."
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "The request is invalid; see `errors`."
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Rate limited; see Retry-After."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Server error."
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Temporarily unavailable."
+          }
+        },
+        "summary": "Submit Postmortem",
+        "tags": [
+          "debrief"
+        ]
+      }
+    },
     "/v1/attempts/{attempt_id}/reset": {
       "post": {
         "description": "Rebuild the sandbox in its initial broken state (the session's deadline stays).",
@@ -7219,7 +8516,7 @@
     },
     "/v1/attempts/{attempt_id}/verify": {
       "post": {
-        "description": "Run the verifier's probes against the sandbox (results arrive as a `verify` event).",
+        "description": "Run the verifier's probes against the sandbox (results arrive as a `verify` event).\n\nIdempotent: asking again while a run is in progress returns that run's attempt.",
         "operationId": "verify_attempt",
         "parameters": [
           {

@@ -2,7 +2,7 @@
 
 import { CircleCheck, Clock, Copy, Lightbulb, LoaderCircle, RotateCcw, WifiOff } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { BootSequence, type BootStep } from "@devgrill/ui/components/devgrill/boot-sequence";
 import { ProbeTable, type Probe } from "@devgrill/ui/components/devgrill/probe-table";
 import {
@@ -115,13 +115,23 @@ export function EndedOverlay({ briefingHref }: { briefingHref: string }) {
               Open the debrief
             </Link>
           ) : (
-            <Link
-              href={briefingHref}
-              className="inline-flex h-10 items-center gap-1.5 rounded-sm bg-brand px-4 text-body font-semibold text-on-brand hover:bg-brand-hover"
-            >
-              <RotateCcw className="size-4" aria-hidden="true" />
-              Back to the briefing
-            </Link>
+            <>
+              <Link
+                href={briefingHref}
+                className="inline-flex h-10 items-center gap-1.5 rounded-sm bg-brand px-4 text-body font-semibold text-on-brand hover:bg-brand-hover"
+              >
+                <RotateCcw className="size-4" aria-hidden="true" />
+                Back to the briefing
+              </Link>
+              {state !== "failed" ? (
+                <Link
+                  href={`/incident/${info.attempt.id}/debrief`}
+                  className="inline-flex h-10 items-center rounded-sm border border-border-input px-4 text-body font-medium text-fg hover:bg-raised"
+                >
+                  See what happened
+                </Link>
+              ) : null}
+            </>
           )}
           {state === "failed" ? (
             <button
@@ -255,69 +265,96 @@ export function NetworkBanner() {
 
 // ------------------------------------------------------------------------------ verify
 
-/** Shows a verify run started by the workspace (results arrive as a `verify` event). */
+/**
+ * A verify run, live (ADR 015): every probe queued, then running, then passed or failed, from
+ * the run's progress events. `previousRun` is the run already on screen when this one was
+ * asked for, so a reopened dialog never shows the last verdict as if it were new.
+ */
 export function VerifyDialog({
   open,
   onOpenChange,
-  startedAt,
-  error: verifyError,
+  previousRun,
+  error: requestError,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  startedAt: number;
+  previousRun: string | null;
   error: string | null;
 }) {
   const { info } = useSource();
-  const { events, state } = useIncident();
-  const result = useMemo(
-    () =>
-      events.filter((e) => e.type === "verify" && new Date(e.ts).getTime() >= startedAt - 5000).at(-1) ??
-      null,
-    [events, startedAt],
-  );
-
-  const probes: Probe[] = ((result?.payload.probes as Record<string, unknown>[] | undefined) ?? []).map(
-    (p) => ({
-      key: String(p.key),
-      name: String(p.title),
-      how: String(p.detail),
-      target: "",
-      outcome: p.passed ? "pass" : "fail",
-    }),
-  );
-  const passed = result?.payload.passed === true;
+  const incident = useIncident();
+  const verify = incident.verify && incident.verify.runId !== previousRun ? incident.verify : null;
+  const probes: Probe[] = (verify?.probes ?? []).map((p) => ({
+    key: p.key,
+    name: p.title,
+    how: p.detail ?? "",
+    target: "",
+    outcome:
+      p.status === "passed"
+        ? "pass"
+        : p.status === "failed"
+          ? "fail"
+          : p.status === "running"
+            ? "running"
+            : p.status === "skipped"
+              ? "skipped"
+              : "queued",
+  }));
+  const done = verify?.done ?? false;
+  const passed = done && verify?.passed === true && !verify.error;
+  const total = verify?.probes.length ?? 0;
+  const finished = verify?.probes.filter((p) => p.status === "passed" || p.status === "failed").length ?? 0;
+  const running = verify?.probes.find((p) => p.status === "running");
+  const title = !verify
+    ? "Starting verify"
+    : !done
+      ? "Verifying your fix"
+      : verify.error
+        ? "Verify couldn't finish"
+        : passed
+          ? "Verify passed"
+          : "Not fixed yet";
+  const description = !done
+    ? "Replaying the traffic, then attacking the fix: a cold cache, chaos, correctness checks. Two to four minutes; the incident is paused meanwhile."
+    : verify?.error
+      ? `${verify.error} Your sandbox is back as it was; run verify again when you're ready.`
+      : passed
+        ? "Your fix held under the replay and every check. The incident is resolved."
+        : "Some checks failed. The sandbox is still yours: keep going and verify again.";
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl">
         <DialogHeader>
-          <DialogTitle>
-            {result ? (passed ? "Verify passed" : "Not fixed yet") : "Verifying your fix"}
-          </DialogTitle>
-          <DialogDescription>
-            {result
-              ? passed
-                ? "Your fix held under the sale replay and every check. The incident is resolved."
-                : "Some checks failed. The sandbox is still yours: keep going and verify again."
-              : "Replaying the traffic, then attacking the fix (cold cache, chaos, invariants). About two minutes."}
-          </DialogDescription>
+          <DialogTitle>{title}</DialogTitle>
+          <DialogDescription>{description}</DialogDescription>
         </DialogHeader>
-        {verifyError ? <p className="text-body text-danger-text">{verifyError}</p> : null}
-        {result ? (
-          <ProbeTable probes={probes} caption="Verify results" />
-        ) : (
-          <p className="flex items-center gap-2 text-body text-fg-muted" role="status">
-            <LoaderCircle className="size-4 animate-spin motion-reduce:animate-none" aria-hidden="true" />
-            {state === "verifying" ? "Checks running…" : "Starting the verifier…"}
-          </p>
-        )}
-        {passed ? (
-          <Link
-            href={`/incident/${info.attempt.id}/debrief`}
-            className="inline-flex h-10 items-center gap-1.5 self-start rounded-sm bg-brand px-4 text-body font-semibold text-on-brand"
-          >
-            <CircleCheck className="size-4" aria-hidden="true" />
-            Open the debrief
-          </Link>
+        {requestError ? <p className="text-body text-danger-text">{requestError}</p> : null}
+        {/* One polite line for progress; the table below is read on demand, not announced. */}
+        <p className="flex items-center gap-2 text-body text-fg-muted" role="status">
+          {!done ? (
+            <>
+              <LoaderCircle className="size-4 animate-spin motion-reduce:animate-none" aria-hidden="true" />
+              {running
+                ? `Checking ${running.title} (${Math.min(finished + 1, total)} of ${total})`
+                : verify
+                  ? `${finished} of ${total} checks done`
+                  : "Starting the verifier…"}
+            </>
+          ) : (
+            `${probes.filter((p) => p.outcome === "pass").length} of ${total} checks passed.`
+          )}
+        </p>
+        {probes.length ? <ProbeTable probes={probes} caption="Verify checks" /> : null}
+        {done && !verify?.error ? (
+          passed ? (
+            <Link
+              href={`/incident/${info.attempt.id}/debrief`}
+              className="inline-flex h-10 items-center gap-1.5 self-start rounded-sm bg-brand px-4 text-body font-semibold text-on-brand"
+            >
+              <CircleCheck className="size-4" aria-hidden="true" />
+              Open the debrief
+            </Link>
+          ) : null
         ) : null}
       </DialogContent>
     </Dialog>

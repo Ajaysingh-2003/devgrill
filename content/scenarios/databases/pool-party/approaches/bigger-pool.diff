@@ -1,0 +1,13 @@
+diff --git config/app.env config/app.env
+index 6588a6a..a11bc2e 100644
+--- config/app.env
++++ config/app.env
+@@ -4,7 +4,7 @@
+ DATABASE_URL=postgresql://shopkart:shopkart@postgres-dr:5433/shopkart
+ # Postgres connections per API process (4 processes share the database's 100 slots).
+ DB_POOL_MIN=2
+-DB_POOL_MAX=10
++DB_POOL_MAX=50
+ # Seconds a request waits for a free connection before failing with 503.
+ DB_POOL_TIMEOUT_S=5
+ 

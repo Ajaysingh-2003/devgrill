@@ -333,6 +333,30 @@ class RubricCriterion(_Strict):
     anchors: dict[str, str] = Field(default_factory=dict)
 
 
+class ReplayRule(_Strict):
+    """A marker on the debrief's investigation replay, for an event the player caused.
+
+    `when` is a trigger (see devgrill.domain.events): `postgres-db.restarted`, `db.query`,
+    `api.rolledback`, `state:mitigated`... `match` narrows it with a regular expression over
+    the event's text (a console query, a deploy's diff summary).
+    """
+
+    when: str = Field(pattern=r"^[a-z0-9_.\-]+(:[a-z0-9_]+)?$", max_length=60)
+    match: str | None = Field(default=None, max_length=200)
+    mark: Literal["clue", "lost"]
+    note: str = Field(max_length=200)
+
+    @field_validator("match")
+    @classmethod
+    def _compiles(cls, value: str | None) -> str | None:
+        if value is not None:
+            try:
+                re.compile(value)
+            except re.error as exc:
+                raise ValueError(f"match is not a valid regular expression: {exc}") from exc
+        return value
+
+
 class Hints(_Strict):
     """Three tiers: a nudge, a direction, a near-answer."""
 
@@ -398,6 +422,15 @@ class ScenarioSpec(_Strict):
     rubric: list[RubricCriterion] = Field(default_factory=list, max_length=8)
     #: Minutes a sandbox lives (hard TTL). Defaults to the platform setting.
     ttl_minutes: int | None = Field(default=None, ge=10, le=120)
+    #: Par for mitigation, in minutes after the page: full mitigation-time credit up to here.
+    #: Defaults to half of `est_minutes`.
+    par_minutes: int | None = Field(default=None, ge=1, le=120)
+    #: Markers on the debrief's investigation replay (key clues, lost time).
+    replay: list[ReplayRule] = Field(default_factory=list, max_length=20)
+
+    @property
+    def mitigation_par_minutes(self) -> int:
+        return self.par_minutes or max(1, self.est_minutes // 2)
 
     @field_validator("probes")
     @classmethod
@@ -424,6 +457,11 @@ class ScenarioSpec(_Strict):
             ]
             if missing:
                 raise ValueError(f"a published playable scenario needs: {', '.join(missing)}")
+            if not any(p.kind is ProbeKind.HIDDEN_TEST for p in self.probes):
+                raise ValueError(
+                    "a published playable scenario needs a hidden_test probe (the anti-cheat"
+                    " correctness check, e.g. script: base/correctness.py)"
+                )
         for entry in self.deploy_history:
             if entry.from_fault and entry.from_fault not in {f.use for f in self.faults}:
                 raise ValueError(
@@ -442,18 +480,22 @@ class ScenarioSpec(_Strict):
 
 
 class SolutionStep(_Strict):
-    """One step of a fix: a patch to a service's repo (committed and deployed), or a command."""
+    """One step of a fix: a patch to a service's repo (committed and deployed), a command, or
+    a rollback to an earlier deploy (by its message in the deploy history)."""
 
     patch: RelPath | None = None
     #: A shell command run in `service` (e.g. `redis-cli -h redis-db LREM ...`).
     run: str | None = Field(default=None, max_length=1000)
+    #: Deploy the commit with this message again (`devgrill rollback`), e.g. the one before
+    #: the bad deploy.
+    rollback_to: str | None = Field(default=None, max_length=80)
     service: ServiceName
     message: str = Field(default="fix", max_length=80)
 
     @model_validator(mode="after")
     def _one_action(self) -> SolutionStep:
-        if bool(self.patch) == bool(self.run):
-            raise ValueError("a solution step has exactly one of: patch, run")
+        if sum(bool(a) for a in (self.patch, self.run, self.rollback_to)) != 1:
+            raise ValueError("a solution step has exactly one of: patch, run, rollback_to")
         return self
 
 
@@ -468,19 +510,59 @@ class SolutionSpec(_Strict):
 # -------------------------------------------------------------------------------- approach
 
 
+class ApproachMatch(_Strict):
+    """How the debrief recognises this approach in an attempt (rules until phase 6's AI).
+
+    Every given condition must hold: `rollback` (the player rolled a deploy back), `diff` (a
+    regular expression over the diffs the player deployed).
+    """
+
+    rollback: bool | None = None
+    diff: str | None = Field(default=None, max_length=300)
+
+    @model_validator(mode="after")
+    def _something(self) -> ApproachMatch:
+        if self.rollback is None and self.diff is None:
+            raise ValueError("a match needs rollback or diff")
+        if self.diff is not None:
+            try:
+                re.compile(self.diff)
+            except re.error as exc:
+                raise ValueError(f"diff is not a valid regular expression: {exc}") from exc
+        return self
+
+
 class ApproachSpec(_Strict):
-    """`approaches/<key>.yaml`: a known way to fix the scenario and how well it does."""
+    """`approaches/<key>.yaml`: a known way to fix the scenario and how well it does.
+
+    `devgrill-content test --approaches` applies `steps` to a broken sandbox and checks that
+    verify gives the declared outcome: `full` passes every probe, `partial` fails exactly
+    `fails_probes`, `fails` fails at least those. Cheats (`cheat: true`) are fake fixes and
+    tampering attempts that must fail verify; they are never shown to players.
+    """
 
     schema_: Literal["devgrill/approach@1"] = Field(alias="schema")
     key: Slug
     name: str = Field(max_length=80)
     outcome: Literal["full", "partial", "fails"]
     idea: str = Field(max_length=600)
-    patch: RelPath | None = None
+    steps: list[SolutionStep] = Field(min_length=1, max_length=10)
     pros: list[str] = Field(default_factory=list, max_length=6)
     cons: list[str] = Field(default_factory=list, max_length=6)
     #: Which probes this approach is expected to fail (for partial/fails outcomes).
     fails_probes: list[Slug] = Field(default_factory=list)
+    match: ApproachMatch | None = None
+    cheat: bool = False
+
+    @model_validator(mode="after")
+    def _consistent(self) -> ApproachSpec:
+        if self.outcome == "full" and self.fails_probes:
+            raise ValueError("a full approach fails no probes")
+        if self.outcome == "partial" and not self.fails_probes:
+            raise ValueError("a partial approach names the probes it fails")
+        if self.cheat and self.outcome != "fails":
+            raise ValueError("a cheat must fail verify")
+        return self
 
 
 # ----------------------------------------------------------------------------------- tracks

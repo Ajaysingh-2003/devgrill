@@ -1,0 +1,18 @@
+schema: devgrill/approach@1
+key: read-plain-key
+name: Read the old key again
+outcome: partial
+idea: >-
+  Make get() read key() like set() writes it. Reads hit again and latency recovers, but
+  invalidate() still deletes the versioned key, so a price change stays hidden until the entry
+  expires.
+steps:
+  - patch: read-plain-key.diff
+    service: api
+pros:
+  - Latency recovers immediately
+cons:
+  - "Price updates no longer show up: stale prices during a sale"
+fails_probes: [correctness, price-freshness]
+match:
+  diff: 'client\.get\(key\('

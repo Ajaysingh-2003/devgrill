@@ -1,0 +1,18 @@
+schema: devgrill/approach@1
+key: primary-endpoint
+name: Point the API back at the primary
+outcome: full
+idea: >-
+  The config deploy switched DATABASE_URL to postgres-dr, a cross-region endpoint with ~150 ms
+  per round trip. Every request held its pooled connection that much longer, so the pool ran
+  dry while Postgres sat idle. Point it back at the in-region primary.
+steps:
+  - patch: primary-endpoint.diff
+    service: api
+    message: "config: use the in-region primary database again"
+pros:
+  - Removes the cause; no extra capacity needed
+cons:
+  - Whoever wanted the HA endpoint needs another plan
+match:
+  diff: '^\+DATABASE_URL=.*@postgres:5432/'

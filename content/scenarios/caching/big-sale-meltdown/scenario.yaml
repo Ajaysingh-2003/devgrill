@@ -100,9 +100,21 @@ probes:
   - key: cache-serves-reads
     kind: load
     title: Cache does its job
-    how: During the replay most product reads come from the cache, not Postgres.
+    how: During the replay most requests never reach Postgres (from the database's own statistics).
     target:
-      cache_hit_rate: { gt: 0.6 }
+      db_scans_per_request: { lt: 1.0 }
+  - key: honest-metrics
+    kind: load
+    title: Metrics tell the truth
+    how: During the replay, the API's own request and error counts match what the verifier measured.
+    target:
+      request_count_drift: { lt: 0.1 }
+      error_rate_drift: { lt: 0.02 }
+  - key: correctness
+    kind: hidden_test
+    title: Still correct
+    how: Real product data, 404s for unknown products, search, orders and price changes all work.
+    script: base/correctness.py
   - key: cold-cache
     kind: chaos
     title: Cold cache mid-sale
@@ -144,3 +156,16 @@ rubric:
     description: Proposes a guard, e.g. a test that a set() is readable by get(), a hit-rate alert, canary deploys before peaks.
 
 ttl_minutes: 45
+par_minutes: 8
+
+replay:
+  - when: postgres-db.restarted
+    mark: lost
+    note: Postgres was the victim, not the cause; a restart only cleared its connections.
+  - when: db.query
+    match: "pg_stat_statements"
+    mark: clue
+    note: The same product query, thousands of times, points at the cache.
+  - when: api.rolledback
+    mark: clue
+    note: Rolling back the deploy two minutes before the sale is the fastest mitigation.

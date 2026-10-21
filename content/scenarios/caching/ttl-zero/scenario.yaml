@@ -85,9 +85,21 @@ probes:
   - key: db-offload
     kind: load
     title: Database offload
-    how: During the replay, Postgres serves under 75 product reads per second.
+    how: During the replay, most requests never reach Postgres (from the database's own statistics).
     target:
-      db_qps_product: { lt: 75 }
+      db_scans_per_request: { lt: 1.0 }
+  - key: honest-metrics
+    kind: load
+    title: Metrics tell the truth
+    how: During the replay, the API's own request and error counts match what the verifier measured.
+    target:
+      request_count_drift: { lt: 0.1 }
+      error_rate_drift: { lt: 0.02 }
+  - key: correctness
+    kind: hidden_test
+    title: Still correct
+    how: Real product data, 404s for unknown products, search, orders and price changes all work.
+    script: base/correctness.py
   - key: budget
     kind: budget
     title: Within budget
@@ -111,3 +123,16 @@ rubric:
     description: Proposes a guard, e.g. config validation that rejects TTL 0 or an alert on hit rate.
 
 ttl_minutes: 30
+par_minutes: 5
+
+replay:
+  - when: db.query
+    match: "pg_stat_statements|products"
+    mark: clue
+    note: Asking Postgres who is reading products shows every product page going to the database.
+  - when: postgres-db.restarted
+    mark: lost
+    note: Restarting Postgres doesn't change who is reading from it.
+  - when: redis-db.restarted
+    mark: lost
+    note: The cache was healthy; nothing was being written to it.

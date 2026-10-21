@@ -7,11 +7,21 @@ from typing import Any
 import pytest
 from conftest import valkey_url_for_tests
 from fastapi.testclient import TestClient
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from devgrill.config import Settings
 from devgrill_api.auth.jwks import JwksCache
 from devgrill_api.main import create_app
-from devgrill_api.testing import AUDIENCE, ISSUER, Signer, make_signer
+from devgrill_api.testing import (
+    AUDIENCE,
+    CONTENT,
+    ISSUER,
+    FakeGateway,
+    FakeOrchestrator,
+    Signer,
+    make_signer,
+)
+from devgrill_content.seed import seed
 
 TEST_SECRET = "test-secret-" + "x" * 40
 
@@ -70,3 +80,19 @@ def auth(signer: Signer) -> AuthHeaders:
         return {"Authorization": f"Bearer {signer.token(sub, **claims)}"}
 
     return headers
+
+
+@pytest.fixture
+async def seeded(db_session: AsyncSession) -> AsyncSession:
+    await seed(db_session, CONTENT)
+    await db_session.commit()
+    return db_session
+
+
+@pytest.fixture
+def fakes(api: TestClient) -> tuple[FakeOrchestrator, FakeGateway]:
+    orchestrator, gateway = FakeOrchestrator(), FakeGateway()
+    api.app.state.orchestrator = orchestrator  # type: ignore[attr-defined]
+    api.app.state.gateway = gateway  # type: ignore[attr-defined]
+    api.app.state.settings.content_root = CONTENT  # type: ignore[attr-defined]
+    return orchestrator, gateway

@@ -43,8 +43,15 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("list", help="list scenarios")
     for name in ("seed", "publish"):
         sub.add_parser(name, help="load content into the database")
-    for name in ("validate", "build", "test"):
+    for name in ("validate", "build"):
         sub.add_parser(name).add_argument("slug", nargs="?")
+    test = sub.add_parser("test", help="break, fix and verify in real sandboxes")
+    test.add_argument("slug", nargs="?")
+    test.add_argument("--approaches", action="store_true", help="also run every approach and cheat")
+    test.add_argument("--only", help="with --approaches: just this approach key")
+    test.add_argument(
+        "--no-reference", action="store_true", help="skip the reference fix (approaches only)"
+    )
     sub.add_parser("up").add_argument("slug")
     sub.add_parser("schema").add_argument("--out", type=Path, default=Path("content/.schema"))
     sub.add_parser("sandboxes").add_argument("--sweep", action="store_true")
@@ -69,7 +76,15 @@ def main(argv: list[str] | None = None) -> int:
         case "up":
             return asyncio.run(_up(root, args.slug))
         case "test":
-            return asyncio.run(_test(root, args.slug))
+            return asyncio.run(
+                _test(
+                    root,
+                    args.slug,
+                    approaches=args.approaches,
+                    only=args.only,
+                    reference=not args.no_reference,
+                )
+            )
         case "sandboxes":
             return asyncio.run(_sandboxes(args.sweep))
     return 2
@@ -83,7 +98,7 @@ def validate(root: Path, slug: str | None = None) -> int:
 
     from devgrill.domain.spec import FaultSpec, ScenarioSpec, TracksFile
     from devgrill.sandbox.baseapp import load_base_app
-    from devgrill.sandbox.content import ContentError, load_bundle, load_yaml
+    from devgrill.sandbox.content import ContentError, load_approaches, load_bundle, load_yaml
     from devgrill_content.patchcheck import check_fault, check_scenario
     from devgrill_content.scenario_test import load_solution
 
@@ -132,6 +147,16 @@ def validate(root: Path, slug: str | None = None) -> int:
                     solution_dir, solution_spec = solution
                     patches = [(s.service, s.patch) for s in solution_spec.steps if s.patch]
                     errors.extend(check_scenario(bundle, solution_dir, patches))
+                approaches = attempt(
+                    f"scenario {folder.name} approaches", lambda b=bundle: load_approaches(b)
+                )
+                for approach_dir, approach in approaches or []:
+                    patches = [(s.service, s.patch) for s in approach.steps if s.patch]
+                    errors.extend(
+                        check_scenario(
+                            bundle, approach_dir, patches, label=f"approach {approach.key}"
+                        )
+                    )
     if slug and not checked:
         errors.append(f"no scenario {slug!r}")
     for line in errors:
@@ -240,9 +265,11 @@ async def _up(root: Path, slug: str) -> int:
     return 0
 
 
-async def _test(root: Path, slug: str | None) -> int:
+async def _test(
+    root: Path, slug: str | None, *, approaches: bool, only: str | None, reference: bool
+) -> int:
     from devgrill.sandbox.content import ContentError, load_bundle
-    from devgrill_content.scenario_test import run_test, save_report
+    from devgrill_content.scenario_test import Report, run_approaches, run_test, save_report
 
     slugs = _playable(root, slug)
     if not slugs:
@@ -259,7 +286,9 @@ async def _test(root: Path, slug: str | None) -> int:
                 print(f"test: {name} FAIL {exc}", file=sys.stderr)
                 failed.append(name)
                 continue
-            report = await run_test(bundle, driver)
+            report = await run_test(bundle, driver) if reference else Report(name, ok=True)
+            if approaches and (report.ok or not reference):
+                await run_approaches(bundle, driver, report, only=only)
             path = save_report(root, report)
             print(
                 f"test: {name} {'PASS' if report.ok else 'FAIL ' + report.error}"
@@ -308,7 +337,7 @@ async def _seed(root: Path) -> int:
     print(
         f"seed: {report.tracks} tracks, {report.topics} topics, "
         f"{report.scenarios_new} new scenarios, {report.versions_new} new versions, "
-        f"{report.unchanged} unchanged"
+        f"{report.unchanged} unchanged, {report.approaches} approaches"
     )
     return 0
 

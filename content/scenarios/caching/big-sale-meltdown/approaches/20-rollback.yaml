@@ -1,0 +1,16 @@
+schema: devgrill/approach@1
+key: rollback
+name: Roll back the refactor
+outcome: full
+idea: >-
+  The cache went quiet two minutes before the sale, right after the key refactor. Deploy the
+  commit before it: reads and writes agree on the key again.
+steps:
+  - rollback_to: "product page: lazy-load images"
+    service: api
+pros:
+  - The fastest mitigation during a sale
+cons:
+  - The refactor (and its bug) still has to be fixed before it ships again
+match:
+  rollback: true

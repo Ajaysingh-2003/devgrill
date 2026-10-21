@@ -18,7 +18,7 @@ from devgrill.domain.attempt import (
     transition,
 )
 from devgrill.domain.enums import AttemptState, ProbeKind, StreakMode
-from devgrill.domain.scoring import Probe, ProbeOutcome, Score, verify_score
+from devgrill.domain.scoring import Probe, ProbeOutcome, verify_score
 from devgrill.domain.streaks import activity_day, compute_streak
 
 S = AttemptState
@@ -91,15 +91,7 @@ def test_no_probes_scores_zero() -> None:
     assert verify_score([]) == 0.0
 
 
-def test_hints_lower_the_rating_score_but_not_below_zero() -> None:
-    assert Score(verify=1.0, hints_used=2).rating_score == pytest.approx(0.8)
-    assert Score(verify=0.1, hints_used=3).rating_score == 0.0
-    assert Score(verify=1.0).resolved
-
-
-def test_score_bounds_are_enforced() -> None:
-    with pytest.raises(ValueError):
-        Score(verify=1.2)
+def test_probe_weights_must_be_positive() -> None:
     with pytest.raises(ValueError):
         Probe(key="x", kind=ProbeKind.LOAD, weight=0)
 

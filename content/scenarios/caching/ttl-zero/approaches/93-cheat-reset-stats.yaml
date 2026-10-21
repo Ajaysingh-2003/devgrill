@@ -1,0 +1,18 @@
+schema: devgrill/approach@1
+key: cheat-reset-stats
+name: Reset the database statistics during verify
+outcome: fails
+cheat: true
+idea: >-
+  Keep resetting Postgres's statistics so verify sees no database work. The app's role isn't a
+  superuser, so Postgres refuses, and the unfixed system still fails.
+steps:
+  - run: >-
+      PGPASSWORD=shopkart psql -h postgres -U shopkart -d shopkart -v ON_ERROR_STOP=1
+      -c "select pg_stat_reset()" -c "select monitor.pg_stat_statements_reset()"
+    service: tools
+  - run: >-
+      nohup sh -c "while true; do PGPASSWORD=shopkart psql -h postgres -U shopkart -d shopkart
+      -c 'select pg_stat_reset()'; sleep 1; done" >/dev/null 2>&1 &
+    service: tools
+fails_probes: [db-offload]

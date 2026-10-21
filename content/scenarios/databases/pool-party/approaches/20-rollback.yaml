@@ -1,0 +1,14 @@
+schema: devgrill/approach@1
+key: rollback
+name: Roll back the config deploy
+outcome: full
+idea: Deploy the commit before the endpoint change; the round trips are short again.
+steps:
+  - rollback_to: "search: limit page size to 100"
+    service: api
+pros:
+  - Fast, and works before you know why
+cons:
+  - Doesn't explain why the new endpoint hurt (write it down)
+match:
+  rollback: true

@@ -13,6 +13,7 @@ from temporalio.worker import Worker
 from devgrill.config import get_settings
 from devgrill.infra import db
 from devgrill.infra.cache import create_valkey
+from devgrill.infra.objectstore import ObjectStore
 from devgrill.infra.workflows import connect_temporal
 from devgrill.observability import configure_logging
 from devgrill.sandbox.compose import ComposeDriver
@@ -41,6 +42,7 @@ async def run_worker() -> None:
         driver=driver,
         session_factory=db.create_session_factory(engine),
         valkey=valkey,
+        store=ObjectStore.from_settings(settings),
     )
     worker = Worker(
         client,

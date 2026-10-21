@@ -1,0 +1,19 @@
+schema: devgrill/approach@1
+key: restore-ttl
+name: Restore a positive TTL
+outcome: full
+idea: >-
+  The ops deploy set CACHE_TTL_SECONDS=0, which the app treats as "don't cache". Put it back to
+  a sensible value (300 seconds) in config/app.env and deploy: reads hit Redis again and the
+  database load drops to normal.
+steps:
+  - patch: restore-ttl.diff
+    service: api
+    message: "config: restore product cache TTL (0 disables caching)"
+pros:
+  - One-line, reviewable change in config-as-code
+  - Keeps the rest of the ops deploy
+cons:
+  - Nothing stops the next TTL=0 from shipping; add config validation
+match:
+  diff: '^\+CACHE_TTL_SECONDS=[1-9]'

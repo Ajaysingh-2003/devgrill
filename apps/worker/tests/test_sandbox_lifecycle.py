@@ -1,8 +1,9 @@
 """SandboxLifecycle under Temporal's time-skipping test server, with fake activities.
 
 Proves the lifecycle rules without Docker: TTL expiry, idle timeout (and touch keeping it
-alive), abandon, reset, extend limits, verify, faults due after T, a failing provision, and a
-worker crash mid-provision. Teardown must run exactly once in every case.
+alive), abandon, reset, extend limits, verify (a VerifyRun child workflow), faults due after
+T, a failing provision, and a worker crash mid-provision. Teardown must run exactly once in
+every case, and the result is settled once, after it.
 """
 
 from __future__ import annotations
@@ -26,10 +27,19 @@ from devgrill_worker.sandbox_activities import (
     ApplyFaultInput,
     BeatInput,
     ExtendInput,
+    ProbeGroupInput,
     SetStateInput,
+    SettleInput,
     TeardownInput,
+    VerifyBegun,
+    VerifyFinishInput,
+    VerifyInput,
 )
 from devgrill_worker.sandbox_lifecycle import SandboxLifecycle
+from devgrill_worker.verify_run import VerifyRun
+
+#: Two probe groups per verify run, as the verifier's plan() would give.
+GROUPS = [["sale-replay", "db-offload"], ["correctness"]]
 
 
 class Fakes:
@@ -40,6 +50,7 @@ class Fakes:
         *,
         provision_fails: int = 0,
         verify_passes: bool = True,
+        probes_crash: bool = False,
         later: list[LaterFault] | None = None,
         beats: list[TimedBeat] | None = None,
     ) -> None:
@@ -49,6 +60,11 @@ class Fakes:
         self.extends: list[bool] = []
         self.provision_fails = provision_fails
         self.verify_passes = verify_passes
+        self.probes_crash = probes_crash
+        self.verify_runs: list[int] = []
+        self.probe_groups: list[list[str]] = []
+        self.finishes: list[VerifyFinishInput] = []
+        self.order: list[str] = []
         self.later = later or []
         self.beats = beats or []
         self.states: list[str] = []
@@ -87,15 +103,33 @@ class Fakes:
         async def extended(inp: ExtendInput) -> None:
             self.extends.append(inp.granted)
 
-        @activity.defn(name="sandbox.verify")
-        async def verify(inp: LifecycleInput) -> bool:
+        @activity.defn(name="verify.begin")
+        async def verify_begin(inp: VerifyInput) -> VerifyBegun:
             self.calls["verify"] += 1
-            return self.verify_passes
+            self.verify_runs.append(inp.run)
+            return VerifyBegun(f"run-{inp.run}", "active", [list(g) for g in GROUPS])
+
+        @activity.defn(name="verify.probes")
+        async def verify_probes(inp: ProbeGroupInput) -> None:
+            if self.probes_crash:
+                raise ApplicationError("the probe container is gone", non_retryable=True)
+            self.probe_groups.append(inp.keys)
+
+        @activity.defn(name="verify.finish")
+        async def verify_finish(inp: VerifyFinishInput) -> bool:
+            self.finishes.append(inp)
+            return self.verify_passes and not inp.error
 
         @activity.defn(name="sandbox.teardown")
         async def teardown(inp: TeardownInput) -> None:
             self.teardowns.append(inp)
+            self.order.append("teardown")
             self.torn_down_at = activity.info().scheduled_time
+
+        @activity.defn(name="attempt.settle")
+        async def settle(inp: SettleInput) -> None:
+            self.calls["settle"] += 1
+            self.order.append("settle")
 
         @activity.defn(name="sandbox.monitor")
         async def monitor(inp: LifecycleInput) -> None:
@@ -111,7 +145,20 @@ class Fakes:
         async def beat(inp: BeatInput) -> None:
             self.fired.append(inp.index)
 
-        return [provision, reset, apply_fault, extended, verify, teardown, monitor, set_state, beat]
+        return [
+            provision,
+            reset,
+            apply_fault,
+            extended,
+            verify_begin,
+            verify_probes,
+            verify_finish,
+            teardown,
+            settle,
+            monitor,
+            set_state,
+            beat,
+        ]
 
 
 def lifecycle_input(**kw: object) -> LifecycleInput:
@@ -138,7 +185,10 @@ async def env():
 async def run(env: WorkflowEnvironment, fakes: Fakes, inp: LifecycleInput, script=None) -> str:
     queue = f"q-{uuid.uuid4().hex[:8]}"
     async with Worker(
-        env.client, task_queue=queue, workflows=[SandboxLifecycle], activities=fakes.activities()
+        env.client,
+        task_queue=queue,
+        workflows=[SandboxLifecycle, VerifyRun],
+        activities=fakes.activities(),
     ):
         handle = await env.client.start_workflow(
             SandboxLifecycle.run, inp, id=f"wf-{uuid.uuid4().hex[:8]}", task_queue=queue
@@ -224,6 +274,11 @@ async def test_verify_pass_resolves(env):
 
     assert await run(env, fakes, lifecycle_input(), verify) == "resolved"
     assert [t.outcome for t in fakes.teardowns] == ["resolved"]
+    # One VerifyRun: every probe group in order, then the decision.
+    assert fakes.verify_runs == [1]
+    assert fakes.probe_groups == GROUPS
+    assert [f.error for f in fakes.finishes] == [""]
+    assert fakes.order == ["teardown", "settle"]
 
 
 async def test_verify_fail_returns_to_the_incident(env):
@@ -235,6 +290,49 @@ async def test_verify_fail_returns_to_the_incident(env):
 
     assert await run(env, fakes, lifecycle_input(idle_minutes=60), verify) == "expired"
     assert fakes.calls["verify"] == 1
+
+
+async def test_verify_runs_are_numbered_and_requests_during_a_run_are_absorbed(env):
+    fakes = Fakes(verify_passes=False)
+
+    async def verify_twice(handle):
+        await env.sleep(timedelta(minutes=2))
+        await handle.signal("verify")
+        await handle.signal("verify")  # double-click: answered by the same run
+        await env.sleep(timedelta(minutes=5))
+        await handle.signal("verify")
+        await env.sleep(timedelta(minutes=5))
+        await handle.signal("abandon")
+
+    assert await run(env, fakes, lifecycle_input(idle_minutes=60), verify_twice) == "abandoned"
+    assert fakes.verify_runs == [1, 2]
+
+
+async def test_a_crashed_probe_group_is_an_error_not_a_fail(env):
+    fakes = Fakes(probes_crash=True)
+
+    async def verify(handle):
+        await env.sleep(timedelta(minutes=2))
+        await handle.signal("verify")
+        await env.sleep(timedelta(minutes=5))
+        await handle.signal("abandon")
+
+    assert await run(env, fakes, lifecycle_input(idle_minutes=60), verify) == "abandoned"
+    assert len(fakes.finishes) == 1
+    assert "probe container" in fakes.finishes[0].error
+
+
+async def test_every_ending_is_settled_once_after_teardown(env):
+    for outcome_script, expected in ((None, "expired"),):
+        fakes = Fakes()
+        assert (
+            await run(env, fakes, lifecycle_input(ttl_minutes=10, idle_minutes=60), outcome_script)
+            == expected
+        )
+        assert fakes.order == ["teardown", "settle"]
+    failing = Fakes(provision_fails=99)
+    assert await run(env, failing, lifecycle_input()) == "failed"
+    assert failing.order == ["teardown", "settle"]
 
 
 async def test_faults_due_after_t_fire_on_time(env):

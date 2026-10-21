@@ -561,3 +561,127 @@ class ProfileHookOut(Model):
     user_id: uuid.UUID
     handle: str
     created: bool
+
+
+# --------------------------------------------------------------- debrief, postmortem (phase 5)
+
+
+class ScoreOut(Model):
+    """Components in [0, 1]. `incident` drives ratings; `total` adds the postmortem (phase 6)."""
+
+    incident: float
+    total: float | None
+    mitigation_time: float
+    resolution: float
+    communication: float
+    postmortem: float | None
+    hints_penalty: float
+    par_minutes: int
+    mitigation_minutes: float | None
+    verify_runs: int
+    status_updates: int
+    hints_used: int
+    weights: dict[str, float]
+
+
+class RatingChangeOut(Model):
+    track_slug: str
+    track_title: str
+    before: float
+    after: float
+    delta: float
+    #: The result the rating expected (0..1) and the one achieved.
+    expected: float
+    outcome: float
+
+
+class ProbeResultOut(Model):
+    key: str
+    title: str
+    how: str
+    kind: str
+    passed: bool | None
+    detail: str = ""
+    measured: dict[str, float | None] = Field(default_factory=dict)
+    target: dict[str, SloTarget] = Field(default_factory=dict)
+    seconds: float | None = None
+
+
+class VerifyRunOut(Model):
+    id: uuid.UUID
+    status: str
+    started_at: datetime | None
+    finished_at: datetime | None
+    resolution: float
+    probes: list[ProbeResultOut]
+
+
+class ReplayEntryOut(Model):
+    at_s: float
+    text: str
+    mark: Literal["clue", "lost", "hint"] | None = None
+    note: str | None = None
+
+
+class DebriefApproachOut(Model):
+    key: str
+    name: str
+    outcome: ApproachOutcome
+    idea_md: str
+    pros: list[str]
+    cons: list[str]
+    patch: str | None
+    yours: bool
+    #: Share of this scenario's resolved attempts that used it, 0-100.
+    share: int
+
+
+class NextDrillOut(Model):
+    slug: str
+    title: str
+    track_slug: str
+    difficulty: Difficulty
+    est_minutes: int
+
+
+class MasteryOut(Model):
+    """Share of the track's published scenarios resolved, 0-100, before and after."""
+
+    before: int
+    after: int
+
+
+class DebriefOut(Model):
+    attempt: AttemptOut
+    scenario_title: str
+    track_slug: str
+    track_title: str
+    #: False until the worker has settled the attempt (a few seconds after it ends).
+    settled: bool
+    score: ScoreOut | None
+    rating: RatingChangeOut | None
+    mastery: MasteryOut | None
+    verify: VerifyRunOut | None
+    #: The approach recognised in this attempt, if any.
+    approach_key: str | None
+    #: Known approaches; None until the player has resolved this scenario (spoilers).
+    approaches: list[DebriefApproachOut] | None
+    replay: list[ReplayEntryOut]
+    next: list[NextDrillOut]
+    postmortem: Literal["none", "draft", "submitted"]
+
+
+PostmortemSection = Literal["summary", "impact", "cause", "actions"]
+
+
+class PostmortemOut(Model):
+    scenario_title: str
+    sections: dict[PostmortemSection, str]
+    #: The incident's timeline from the trail; added to the document when it is submitted.
+    timeline: list[str]
+    submitted_at: datetime | None
+    updated_at: datetime | None
+
+
+class PostmortemIn(Input):
+    sections: dict[PostmortemSection, Annotated[str, Field(max_length=4000)]]

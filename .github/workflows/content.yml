@@ -37,9 +37,16 @@ permissions:
 
 jobs:
   break-fix:
-    name: content · break, fix, verify
+    # Phase 5 gate (ADR 015): the reference fix passes verify, every known approach gives its
+    # declared outcome, and every cheat (fake fixes, tampering) fails. One job per scenario:
+    # each run is a fresh sandbox, broken, fixed and verified.
+    name: content · break, fix, verify (${{ matrix.scenario }})
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        scenario: [ttl-zero, pool-party, big-sale-meltdown]
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
@@ -47,8 +54,8 @@ jobs:
           version: "0.13.0"
       - run: uv sync --all-packages --locked
       - run: uv run python -m devgrill_content.cli validate
-      - run: uv run python -m devgrill_content.cli build
-      - run: uv run python -m devgrill_content.cli test
+      - run: uv run python -m devgrill_content.cli build ${{ matrix.scenario }}
+      - run: uv run python -m devgrill_content.cli test ${{ matrix.scenario }} --approaches
       - name: leftover sandboxes
         if: always()
         run: uv run python -m devgrill_content.cli sandboxes --sweep
@@ -56,14 +63,14 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: content-reports
+          name: content-reports-${{ matrix.scenario }}
           path: content/.reports/
           retention-days: 14
 
   workspace:
-    # Phase 4 gate: the core loop in a real browser on the real stack (web, API, worker,
+    # Phase 4 and 5 gates: the full loop in a real browser on the real stack (web, API, worker,
     # gateway, Temporal, Docker sandboxes): start, terminal, logs and metrics, roll back,
-    # mitigated (detected), edit and deploy, the in-sandbox CLI, leave.
+    # mitigated (detected), edit and deploy, the in-sandbox CLI, verify, debrief, postmortem.
     name: workspace · real sandbox, browser end to end
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -88,8 +95,8 @@ jobs:
           uv run python -m devgrill_content.cli seed
       - run: uv run python -m devgrill_content.cli build
       - run: pnpm exec playwright install --with-deps chromium
-      - name: core loop in the browser
-        timeout-minutes: 15
+      - name: full loop in the browser (to the debrief)
+        timeout-minutes: 20
         run: |
           # Own process group, no stdin: the stack stops when this step ends, pass or fail.
           setsid uv run python scripts/dev.py > dev.log 2>&1 < /dev/null &

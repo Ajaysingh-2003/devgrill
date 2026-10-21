@@ -1,7 +1,8 @@
 import { Check, Loader, Minus, X, type LucideIcon } from "lucide-react";
 import { cn } from "@devgrill/ui/lib/utils";
 
-export type ProbeOutcome = "pass" | "fail" | "partial" | "running" | "queued";
+/** `skipped`: the run ended (on our side) before this probe ran. */
+export type ProbeOutcome = "pass" | "fail" | "partial" | "running" | "queued" | "skipped";
 
 export type Probe = {
   key: string;
@@ -19,6 +20,7 @@ const OUTCOME: Record<ProbeOutcome, { label: string; icon: LucideIcon; tone: str
   partial: { label: "Partial", icon: Minus, tone: "bg-warning-subtle text-warning-text" },
   running: { label: "Running", icon: Loader, tone: "bg-info-subtle text-info-text" },
   queued: { label: "Queued", icon: Minus, tone: "bg-raised text-fg-subtle" },
+  skipped: { label: "Not run", icon: Minus, tone: "bg-raised text-fg-subtle" },
 };
 
 export function ProbeOutcomeBadge({ outcome }: { outcome: ProbeOutcome }) {
@@ -43,7 +45,13 @@ export function ProbeOutcomeBadge({ outcome }: { outcome: ProbeOutcome }) {
 /** What verify threw at the fix. A real table: probes are compared across columns. */
 export function ProbeTable({ probes, caption }: { probes: Probe[]; caption: string }) {
   return (
-    <div className="overflow-x-auto rounded-md border border-border bg-surface">
+    // Scrolls sideways on narrow screens; focusable so keyboard users can scroll it too.
+    <div
+      role="region"
+      aria-label={caption}
+      tabIndex={0}
+      className="overflow-x-auto rounded-md border border-border bg-surface"
+    >
       <table className="w-full min-w-[40rem] border-collapse text-left text-body">
         <caption className="sr-only">{caption}</caption>
         <thead>

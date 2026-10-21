@@ -298,7 +298,15 @@ async def reset_attempt(
 async def verify_attempt(
     attempt_id: uuid.UUID, request: Request, session: SessionDep, user: OptionalUser, jti: GuestJti
 ) -> AttemptOut:
-    """Run the verifier's probes against the sandbox (results arrive as a `verify` event)."""
+    """Run the verifier's probes against the sandbox (results arrive as a `verify` event).
+
+    Idempotent: asking again while a run is in progress returns that run's attempt.
+    """
+    attempt = await _owned(session, attempt_id, _owner(user, jti))
+    if attempt.state is AttemptState.VERIFYING:
+        return await _attempt_out(session, attempt)
+    if attempt.state is AttemptState.PROVISIONING:
+        raise AppError(409, "not_ready", "The sandbox is still starting.")
     return await _steer(request, session, attempt_id, _owner(user, jti), SIGNAL_VERIFY)
 
 

@@ -6,7 +6,9 @@
            signals: abandon, reset, extend, verify, touch (player activity), health
   health:  active -> mitigated when the SLO holds again after the breach;
            mitigated -> active when it breaks again (regressed)
-  finally: teardown (measure, destroy, close the session, settle the attempt's state)
+  verify:  a VerifyRun child workflow (ADR 015); passing resolves the incident
+  finally: teardown (measure, destroy, close the session, settle the attempt's state),
+           then settle the result (score, approach, ratings)
 
 Deterministic: no I/O, clocks or randomness here; activities do all of it. The teardown runs
 in `finally`, so expiry, abandonment, failures, cancellation and worker crashes all end in it.
@@ -45,15 +47,19 @@ with workflow.unsafe.imports_passed_through():
         ExtendInput,
         SandboxActivities,
         SetStateInput,
+        SettleInput,
         TeardownInput,
+        VerifyInput,
     )
+    from devgrill_worker.verify_run import VerifyRun, verify_workflow_id
 
 PROVISION_TIMEOUT = timedelta(minutes=5)
 PROVISION_HEARTBEAT = timedelta(seconds=30)
 PROVISION_RETRY = RetryPolicy(initial_interval=timedelta(seconds=2), maximum_attempts=3)
 STEP_TIMEOUT = timedelta(minutes=3)
 STEP_RETRY = RetryPolicy(initial_interval=timedelta(seconds=1), maximum_attempts=3)
-VERIFY_TIMEOUT = timedelta(minutes=10)
+#: A verify run must finish within this (its probes are bounded well inside it).
+VERIFY_TIMEOUT = timedelta(minutes=15)
 MONITOR_HEARTBEAT = timedelta(seconds=30)
 # The monitor keeps sampling through hiccups (Docker busy, a worker restart).
 MONITOR_RETRY = RetryPolicy(
@@ -79,6 +85,7 @@ class SandboxLifecycle:
         self._expires_at: datetime | None = None
         self._extends_used = 0
         self._resets_used = 0
+        self._verify_runs = 0
         self._reason = ""
 
     # ----------------------------------------------------------------- signals, query
@@ -147,6 +154,19 @@ class SandboxLifecycle:
                 retry_policy=TEARDOWN_RETRY,
             )
             self._state = outcome
+            # The result is settled once the sandbox is gone; a failure here is logged by
+            # Temporal and never undoes the teardown.
+            try:
+                await workflow.execute_activity_method(
+                    SandboxActivities.settle,
+                    SettleInput(inp.attempt_id, inp.scenario_slug),
+                    start_to_close_timeout=STEP_TIMEOUT,
+                    retry_policy=STEP_RETRY,
+                )
+            except ActivityError:
+                workflow.logger.warning(
+                    "settling the attempt failed", extra={"attempt_id": inp.attempt_id}
+                )
         return outcome
 
     async def _set_state(self, inp: LifecycleInput, state: str, reason: str = "") -> None:
@@ -254,19 +274,20 @@ class SandboxLifecycle:
                     faults = sorted(provisioned.later_faults, key=lambda f: f.at_seconds)
                     idle_deadline = start + idle
             if self._verify:
-                self._verify = False
                 previous = self._state
                 self._state = "verifying"
-                passed: bool = await workflow.execute_activity_method(
-                    SandboxActivities.verify,
-                    inp,
-                    start_to_close_timeout=VERIFY_TIMEOUT,
-                    heartbeat_timeout=timedelta(minutes=2),
-                    retry_policy=RetryPolicy(maximum_attempts=1),
+                self._verify_runs += 1
+                passed: bool = await workflow.execute_child_workflow(
+                    VerifyRun.run,
+                    VerifyInput(inp.attempt_id, inp.scenario_slug, self._verify_runs),
+                    id=verify_workflow_id(inp.attempt_id, self._verify_runs),
+                    execution_timeout=VERIFY_TIMEOUT,
                 )
+                # Requests that arrived while verifying are answered by this run.
+                self._verify = False
                 if passed:
                     return "resolved"
-                self._state = previous  # the verify activity moved the attempt back too
+                self._state = previous  # the run moved the attempt back too
                 idle_deadline = workflow.now() + idle
             now = workflow.now()
             while faults and start + timedelta(seconds=faults[0].at_seconds) <= now:

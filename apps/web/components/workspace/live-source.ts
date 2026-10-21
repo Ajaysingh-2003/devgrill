@@ -32,7 +32,9 @@ import {
   type IncidentSnapshot,
   type IncidentState,
   type LogsSnapshot,
+  type ProbeStatus,
   type TelemetrySnapshot,
+  type VerifyProgress,
   type TerminalLink,
   type WorkspaceSource,
 } from "./model";
@@ -75,8 +77,57 @@ export function reduceEvent(snap: IncidentSnapshot, event: IncidentEvent): Incid
       if (p.action === "destroyed" && typeof p.reason === "string" && p.reason) next.endedReason = p.reason;
       if (p.action === "reset" && p.status === "started") next.boot = [];
       break;
+    case "verify_progress":
+      next.verify = reduceVerifyProgress(next.verify, p);
+      break;
+    case "verify":
+      next.verify = reduceVerifyResult(next.verify, p);
+      break;
   }
   return next;
+}
+
+type ProbePayload = { key: string; title?: string; passed?: boolean | null; detail?: string };
+
+/** A run starts with every probe queued; each probe then reports running, passed or failed. */
+export function reduceVerifyProgress(
+  current: VerifyProgress | null,
+  p: Record<string, unknown>,
+): VerifyProgress | null {
+  const runId = String(p.run_id);
+  if (p.status === "started") {
+    const probes = ((p.probes as ProbePayload[] | undefined) ?? []).map((x) => ({
+      key: x.key,
+      title: x.title ?? x.key,
+      status: "queued" as const,
+    }));
+    return { runId, probes, done: false, passed: null, error: null };
+  }
+  if (!current || current.runId !== runId || typeof p.key !== "string") return current;
+  return {
+    ...current,
+    probes: current.probes.map((x) => (x.key === p.key ? { ...x, status: p.status as ProbeStatus } : x)),
+  };
+}
+
+/** The run's verdict: every probe's outcome and detail. */
+export function reduceVerifyResult(
+  current: VerifyProgress | null,
+  p: Record<string, unknown>,
+): VerifyProgress {
+  const probes = ((p.probes as ProbePayload[] | undefined) ?? []).map((x) => ({
+    key: x.key,
+    title: x.title ?? x.key,
+    status: (x.passed == null ? "skipped" : x.passed ? "passed" : "failed") as ProbeStatus,
+    detail: x.detail,
+  }));
+  return {
+    runId: String(p.run_id ?? current?.runId ?? ""),
+    probes,
+    done: true,
+    passed: Boolean(p.passed),
+    error: typeof p.error === "string" ? p.error : null,
+  };
 }
 
 /** A WebSocket as a TerminalLink (binary frames are screen bytes; text frames are control). */
@@ -114,6 +165,7 @@ export function createLiveSource(info: WorkspaceOut): WorkspaceSource {
     endedReason: null,
     events_connection: "connecting",
     eventsDownSince: null,
+    verify: null,
   });
   const telemetry = new Store<TelemetrySnapshot>({ samples: [], connection: "connecting", downSince: null });
   const logs = new Store<LogsSnapshot>({ lines: [], dropped: 0 });
