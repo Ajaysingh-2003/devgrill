@@ -77,6 +77,10 @@ Date: 2026-10-21 · Result: **PASS (M1 reached)**; the owner reviews the demo ca
 - **The postmortem** has four fixed sections plus the timeline. Rubric-based grading arrives in phase 6, and the score shows it as pending.
 - **Toxic-based chaos** isn't used by the three scenarios. Its tamper check is unit-tested; the network split that stops an app bypassing Toxiproxy comes with the first such probe.
 
+## Follow-up found by CI
+
+- **big-sale-meltdown's latency page is hardware-sensitive.** On GitHub's 2-CPU runners, later sandboxes in a run show the cache fault (hit rate collapses within 6–12 s) but p99 doesn't cross 500 ms within 60 s. Every approach and cheat still got its declared verdict. The break check is informational for approach runs; the reference run still gates it. Fix before Phase 7's content sprint: tie the page to a hardware-independent signal (database load per request) or scale the sale load to the machine.
+
 ## Owed by the owner
 
 - Watch the M1 capture and confirm the loop reads well end to end.
