@@ -84,9 +84,14 @@ constraints:
   no_scale_up: [postgres-db]
   cache_max_memory_mb: 256
 
+# Latency and errors are what users feel; the hit rate is what this incident breaks. It keeps
+# the page hardware-independent: on a fast machine Postgres can absorb the misses for a while,
+# but the cache still does nothing until the key mismatch is fixed.
 slo:
   p99_latency_ms: 500
   error_rate: 0.01
+  thresholds:
+    cache_hit_rate: { gt: 0.5 }
   for_s: 30
 
 probes:

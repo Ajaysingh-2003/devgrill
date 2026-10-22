@@ -79,9 +79,9 @@ Date: 2026-10-21 · Result: **PASS (M1 reached)**; the owner reviews the demo ca
 
 ## Follow-up found by CI
 
-- **big-sale-meltdown's latency page is hardware-sensitive.** On GitHub's 2-CPU runners, later sandboxes in a run show the cache fault (hit rate collapses within 6–12 s) but p99 doesn't cross 500 ms within 60 s. Every approach and cheat still got its declared verdict. The break check is informational for approach runs; the reference run still gates it. Fix before Phase 7's content sprint: tie the page to a hardware-independent signal (database load per request) or scale the sale load to the machine.
+- **big-sale-meltdown's latency page was hardware-sensitive.** On fast CI runners Postgres absorbed the cache misses, so p99 sometimes stayed under 500 ms and the reference run reported "the scenario does not break as declared" (push run on c55215d; the nightly on the same commit passed). **Fixed on 2026-10-22:** the scenario's SLO adds `cache_hit_rate > 0.5`. That is what this incident breaks (0.0 broken, about 0.8 fixed), whatever the hardware. Latency and errors still have to recover for mitigation. On a fast machine the page title ("p99 > 1.5s") can overstate the latency the player sees; calibrating load to the sandbox's CPU is a hosting item (Track H).
 
 ## Owed by the owner
 
 - Watch the M1 capture and confirm the loop reads well end to end.
-- Carried over from phase 4: an NVDA pass, `/review-animations`, and 3 usability sessions.
+- Carried over from phase 4: an NVDA pass and 3 usability sessions. (`/review-animations` ran on 2026-10-22; its findings are fixed.)
