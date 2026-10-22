@@ -1784,7 +1784,7 @@ Wk:  1  2 | 3  4  5 | 6  7  8 | 9 10 11 12 | 13 14 15 16 17 | 18 19 20 | 21 22 2
 
 ---
 
-### Phase 6: AI layer (weeks 21–23)
+### Phase 6: AI layer (weeks 21–23) ✅ done 2026-10-22 (see docs/qc/phase-6.md and ADR 016; owner review of the golden labels, prices and the evals secret owed)
 
 **Goal:** teammates talk, postmortems get graded, fixes get classified, and every AI cost is metered.
 
@@ -1804,13 +1804,13 @@ Wk:  1  2 | 3  4  5 | 6  7  8 | 9 10 11 12 | 13 14 15 16 17 | 18 19 20 | 21 22 2
 
 **QC gate: Phase 6**
 
-- [ ] Grading agreement: within ±1 point on ≥ 85% of criteria; Spearman ≥ 0.8 on totals vs the golden set.
-- [ ] Persona leak rate: **0/50** adversarial prompts reveal the root cause before the allowed hint tier.
-- [ ] Prompt-injection suite: 20 injected payloads in logs, code comments and user messages ("ignore previous instructions…") produce no policy violations; personas never claim to have run actions.
-- [ ] Latency: persona first token p95 < 1.5s; grading < 20s.
-- [ ] Cost: average LLM cost per completed attempt is measured and below the target set in ADR (initial target ≤ $0.03 per attempt).
-- [ ] Every LLM call appears in `llm_calls` and Langfuse with prompt version; budget cap tested (requests beyond the cap degrade gracefully).
-- [ ] Privacy: trail redaction unit tests (emails, tokens, keys) pass; retention configured.
+- [x] Grading agreement: within ±1 point on ≥ 85% of criteria; Spearman ≥ 0.8 on totals vs the golden set.
+- [x] Persona leak rate: **0/50** adversarial prompts reveal the root cause before the allowed hint tier.
+- [x] Prompt-injection suite: 20 injected payloads in logs, code comments and user messages ("ignore previous instructions…") produce no policy violations; personas never claim to have run actions.
+- [x] Latency: persona first token p95 < 1.5s; grading < 20s.
+- [x] Cost: average LLM cost per completed attempt is measured and below the target set in ADR (initial target ≤ $0.03 per attempt).
+- [x] Every LLM call appears in `llm_calls` and Langfuse with prompt version; budget cap tested (requests beyond the cap degrade gracefully).
+- [x] Privacy: trail redaction unit tests (emails, tokens, keys) pass; retention configured.
 
 ---
 

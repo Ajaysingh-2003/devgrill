@@ -10,6 +10,7 @@ import {
   scenario,
 } from "@/lib/mock";
 import {
+  NO_ASSIST,
   Store,
   parseLog,
   type IncidentEvent,
@@ -141,6 +142,7 @@ export function createDemoSource(): WorkspaceSource {
     events_connection: "open",
     eventsDownSince: null,
     verify: null,
+    assist: NO_ASSIST,
   });
 
   const samples = CHART_TS.map((t, i) => ({
@@ -263,6 +265,17 @@ export function createDemoSource(): WorkspaceSource {
       };
       incident.set((s) => ({ ...s, hints: [...s.hints, hint] }));
       return hint;
+    },
+    nudge: async () => {
+      const text = "Compare the key the app asks the cache for with the keys that are stored.";
+      incident.set((s) => ({
+        ...s,
+        events: [
+          ...s.events,
+          { id: s.events.length + 100, type: "nudge", ts: new Date().toISOString(), payload: { text } },
+        ],
+      }));
+      return text;
     },
     message: async (text) => {
       incident.set((s) => ({

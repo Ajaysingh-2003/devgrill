@@ -13,10 +13,12 @@ from temporalio.worker import Worker
 from devgrill.config import get_settings
 from devgrill.infra import db
 from devgrill.infra.cache import create_valkey
+from devgrill.infra.llm import OpenAiLlm
 from devgrill.infra.objectstore import ObjectStore
 from devgrill.infra.workflows import connect_temporal
 from devgrill.observability import configure_logging
 from devgrill.sandbox.compose import ComposeDriver
+from devgrill_worker.ai_activities import AiActivities
 from devgrill_worker.sandbox_activities import SandboxActivities
 from devgrill_worker.workflows import ACTIVITIES, WORKFLOWS, PingWorkflow
 
@@ -37,23 +39,32 @@ async def run_worker() -> None:
         probe_build_dir=PROBE_BUILD_DIR if HAVE_PROBE_SOURCE else None,
         healthy_timeout_s=settings.sandbox_provision_timeout_s,
     )
+    session_factory = db.create_session_factory(engine)
     sandbox = SandboxActivities(
         settings=settings,
         driver=driver,
-        session_factory=db.create_session_factory(engine),
+        session_factory=session_factory,
         valkey=valkey,
         store=ObjectStore.from_settings(settings),
+    )
+    llm = OpenAiLlm(settings, session_factory)
+    ai = AiActivities(
+        llm=llm,
+        judge_model=settings.llm_model_judge,
+        session_factory=session_factory,
+        valkey=valkey,
     )
     worker = Worker(
         client,
         task_queue=settings.temporal_task_queue,
         workflows=WORKFLOWS,
-        activities=[*ACTIVITIES, *sandbox.all()],
+        activities=[*ACTIVITIES, *sandbox.all(), *ai.all()],
     )
     log.info("worker_started", task_queue=settings.temporal_task_queue)
     try:
         await worker.run()
     finally:
+        await llm.close()
         await driver.close()
         await valkey.aclose()
         await engine.dispose()

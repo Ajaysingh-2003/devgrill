@@ -1,0 +1,449 @@
+scenario: big-sale-meltdown
+# Labels drafted by Claude against the rubric anchors; the owner confirms or corrects each
+# (set reviewed: true) before the grading gate counts them.
+reviewed: false
+items:
+  - id: big-sale-meltdown-01
+    note: strong, blameless, full mechanism and timeline
+    postmortem: |
+      ## Summary
+
+      A cache key refactor shipped at 19:58, two minutes before the 8 p.m. sale. Reads and writes stopped agreeing on the key, so the cache served nothing and sale traffic overloaded Postgres.
+
+      ## Impact
+
+      From 20:00 to 20:14, product pages ran at a p99 of about 2.8 s (SLO 500 ms) with roughly 18% errors, and checkout timed out for some users. All of it during the first 14 minutes of the sale.
+
+      ## Root cause
+
+      The deploy "refactor: add version prefix to cache keys" made get() and invalidate() use versioned_key() while set() still wrote key(). Every write went to a key nobody read, so every read missed and went to Postgres. At normal traffic this was survivable; sale traffic turned the misses into a pinned database.
+
+      ## Action items
+
+      - Unit test: a value written by set() is returned by get() (owner: catalogue team).
+      - Alert when the product cache hit rate falls below 50% for 2 minutes.
+      - Deploy freeze from 30 minutes before a sale, canary for anything urgent.
+    human:
+      scores: { impact: 2, timeline: 2, root-cause: 3, prevention: 3 }
+      blameless: true
+      blame: []
+  - id: big-sale-meltdown-02
+    note: strong, two guards
+    postmortem: |
+      ## Summary
+
+      Product pages crawled at the start of the sale because the cache stopped serving reads after a key refactor.
+
+      ## Impact
+
+      p99 on product pages around 2.5 s and ~15% 5xx from 20:00 to about 20:12, while the sale was live. Checkout timeouts reported by support.
+
+      ## Root cause
+
+      The key refactor deployed two minutes before the sale; the hit rate dropped to nearly zero right after it. get() read the new versioned key, set() wrote the old one, so nothing ever hit. Under sale load all those misses landed on Postgres and pinned its CPU.
+
+      ## Action items
+
+      - Add a set-then-get test for the cache module.
+      - Hit-rate alert on the product cache.
+    human:
+      scores: { impact: 2, timeline: 2, root-cause: 3, prevention: 2 }
+      blameless: true
+      blame: []
+  - id: big-sale-meltdown-03
+    note: strong cause and actions, timeline loosely tied
+    postmortem: |
+      ## Summary
+
+      Cache misses on every product read during the sale; fixed by writing with the versioned key.
+
+      ## Impact
+
+      Product page p99 near 3 s and about 20% errors for roughly a quarter of an hour at the start of the sale.
+
+      ## Root cause
+
+      There was a recent refactor of cache keys. After it, get() and invalidate() used versioned_key() but set() still used key(), so writes and reads never met. Sale traffic multiplied the misses and Postgres went to 100% CPU.
+
+      ## Action items
+
+      1. Contract test: set() then get() returns the same product.
+      2. Alert on hit rate under 50%.
+      3. No deploys in the hour before a sale; canary first if one is unavoidable.
+    human:
+      scores: { impact: 2, timeline: 1, root-cause: 3, prevention: 3 }
+      blameless: true
+      blame: []
+  - id: big-sale-meltdown-04
+    note: strong cause, impact numbers without duration
+    postmortem: |
+      ## Summary
+
+      The 19:58 key refactor broke caching right before the sale.
+
+      ## Impact
+
+      p99 went above 2 s and errors were around 15% on product pages.
+
+      ## Root cause
+
+      "refactor: add version prefix to cache keys" shipped at 19:58 and the cache hit rate fell off a cliff straight after. The read path used versioned_key() and the write path key(), so every read missed. With sale traffic those misses overloaded Postgres.
+
+      ## Action items
+
+      - Test that a set() is readable by get().
+      - Hit-rate alerting.
+      - Canary deploys and a freeze before big sales.
+    human:
+      scores: { impact: 1, timeline: 2, root-cause: 3, prevention: 3 }
+      blameless: true
+      blame: []
+  - id: big-sale-meltdown-05
+    note: good, mechanism without why-now
+    postmortem: |
+      ## Summary
+
+      Hi team, PFB the postmortem for the sale-time slowness. The cache keys were mismatched after the refactor deploy at 7:58 pm.
+
+      ## Impact
+
+      Product pages p99 ~2.6 s, error rate ~17%, from 8:00 to 8:13 pm during the sale.
+
+      ## Root cause
+
+      After the refactor, the code reads the cache with the versioned key but writes with the plain key. Hence nothing written is read back and all reads are misses.
+
+      ## Action items
+
+      - Add test for cache read/write key consistency.
+      - Add alert on the hit rate.
+    human:
+      scores: { impact: 2, timeline: 2, root-cause: 2, prevention: 2 }
+      blameless: true
+      blame: []
+  - id: big-sale-meltdown-06
+    note: good, impact partial
+    postmortem: |
+      ## Summary
+
+      Key mismatch after the refactor disabled caching in practice; rolled back.
+
+      ## Impact
+
+      Pages were slow, p99 above 2 seconds.
+
+      ## Root cause
+
+      The refactor deployed two minutes before the sale started; the hit rate went to zero right after. Reads and writes used different keys (v2:product:ID vs product:ID), so the cache never returned anything.
+
+      ## Action items
+
+      - set-then-get unit test on the cache client
+      - alert on cache hit rate below 50%
+      - deploy freeze 30 min before sales, canary otherwise
+    human:
+      scores: { impact: 1, timeline: 2, root-cause: 2, prevention: 3 }
+      blameless: true
+      blame: []
+  - id: big-sale-meltdown-07
+    note: decent, vague timeline and action
+    postmortem: |
+      ## Summary
+
+      Slow product pages during the sale due to cache problems after a deploy.
+
+      ## Impact
+
+      p99 around 2.5 s and 15% errors for the first 10-12 minutes of the sale, product pages and checkout.
+
+      ## Root cause
+
+      There was a deploy recently. After it the cache was being written with one key and read with another, so all reads missed.
+
+      ## Action items
+
+      Improve testing.
+    human:
+      scores: { impact: 2, timeline: 1, root-cause: 2, prevention: 1 }
+      blameless: true
+      blame: []
+  - id: big-sale-meltdown-08
+    note: partial throughout
+    postmortem: |
+      ## Summary
+
+      The cache stopped working when the sale began.
+
+      ## Impact
+
+      Pages slow, p99 over 2 s.
+
+      ## Root cause
+
+      The cache wasn't serving reads after the recent deploy. Rolling back fixed it.
+
+      ## Action items
+
+      Better monitoring.
+    human:
+      scores: { impact: 1, timeline: 1, root-cause: 1, prevention: 1 }
+      blameless: true
+      blame: []
+  - id: big-sale-meltdown-09
+    note: partial, no actions
+    postmortem: |
+      ## Summary
+
+      Sale traffic hit Postgres directly because the cache had a key problem.
+
+      ## Impact
+
+      Errors on product pages around 20%.
+
+      ## Root cause
+
+      Some deploy before the sale changed how cache keys are built. Reads and writes didn't use the same key anymore so the cache never hit.
+
+      ## Action items
+
+    human:
+      scores: { impact: 1, timeline: 1, root-cause: 2, prevention: 0 }
+      blameless: true
+      blame: []
+  - id: big-sale-meltdown-10
+    note: good impact, weak cause and timeline
+    postmortem: |
+      ## Summary
+
+      Product pages degraded for the first 15 minutes of the sale.
+
+      ## Impact
+
+      From 20:00 to 20:15 product page p99 was ~2.9 s against a 500 ms SLO and ~19% of requests failed; this was peak sale traffic.
+
+      ## Root cause
+
+      Caching stopped working and Postgres took all the load.
+
+      ## Action items
+
+      Add better dashboards for the cache.
+    human:
+      scores: { impact: 2, timeline: 0, root-cause: 1, prevention: 1 }
+      blameless: true
+      blame: []
+  - id: big-sale-meltdown-11
+    note: wrong cause, Postgres capacity
+    postmortem: |
+      ## Summary
+
+      Postgres could not handle the sale traffic. We need a bigger database.
+
+      ## Impact
+
+      Pages slow, p99 > 2 s.
+
+      ## Root cause
+
+      Postgres CPU was pinned at 100% because the instance is too small for sale-level traffic.
+
+      ## Action items
+
+      Scale Postgres to a larger instance before the next sale and add read replicas.
+    human:
+      scores: { impact: 1, timeline: 0, root-cause: 0, prevention: 1 }
+      blameless: true
+      blame: []
+  - id: big-sale-meltdown-12
+    note: wrong cause, Redis crash
+    postmortem: |
+      ## Summary
+
+      Redis crashed under sale load.
+
+      ## Impact
+
+      Site was slow.
+
+      ## Root cause
+
+      Redis ran out of memory when the sale traffic came, so all reads went to Postgres.
+
+      ## Action items
+
+      Increase Redis memory.
+    human:
+      scores: { impact: 0, timeline: 0, root-cause: 0, prevention: 1 }
+      blameless: true
+      blame: []
+  - id: big-sale-meltdown-13
+    note: wrong cause, traffic alone
+    postmortem: |
+      ## Summary
+
+      Huge traffic at sale start caused slowness.
+
+      ## Impact
+
+      40% more traffic than last year's sale, pages slow.
+
+      ## Root cause
+
+      Traffic was more than we planned for.
+
+      ## Action items
+
+    human:
+      scores: { impact: 1, timeline: 0, root-cause: 0, prevention: 0 }
+      blameless: true
+      blame: []
+  - id: big-sale-meltdown-14
+    note: one-liner
+    postmortem: |
+      ## Summary
+
+      rolled back, works now
+
+      ## Impact
+
+      ## Root cause
+
+      ## Action items
+
+    human:
+      scores: { impact: 0, timeline: 0, root-cause: 0, prevention: 0 }
+      blameless: true
+      blame: []
+  - id: big-sale-meltdown-15
+    note: thin, mentions deploy and cache
+    postmortem: |
+      ## Summary
+
+      cache broke after deploy
+
+      ## Impact
+
+      slow
+
+      ## Root cause
+
+      deploy before sale broke the cache
+
+      ## Action items
+
+    human:
+      scores: { impact: 0, timeline: 1, root-cause: 1, prevention: 0 }
+      blameless: true
+      blame: []
+  - id: big-sale-meltdown-16
+    note: excellent content but blames the author
+    postmortem: |
+      ## Summary
+
+      A key refactor shipped two minutes before the sale and made every cache read miss.
+
+      ## Impact
+
+      20:00 to 20:14: product page p99 about 2.7 s, ~18% errors, checkout timeouts, all during sale traffic.
+
+      ## Root cause
+
+      Karan pushed the refactor two minutes before the sale like an amateur. After it, get() read versioned_key() while set() wrote key(), so nothing written was read back; sale traffic turned the misses into Postgres overload. The hit rate dropped right after the 19:58 deploy.
+
+      ## Action items
+
+      - set-then-get test for the cache module.
+      - Hit-rate alert below 50%.
+      - Deploy freeze and canaries before sales.
+    human:
+      scores: { impact: 2, timeline: 2, root-cause: 3, prevention: 3 }
+      blameless: false
+      blame: ["Karan pushed the refactor two minutes before the sale like an amateur."]
+  - id: big-sale-meltdown-17
+    note: partial and blames the team
+    postmortem: |
+      ## Summary
+
+      The catalogue team broke the cache again.
+
+      ## Impact
+
+      Slow pages, p99 over 2 s.
+
+      ## Root cause
+
+      The catalogue team is sloppy and never tests their changes. Their deploy before the sale broke the cache somehow.
+
+      ## Action items
+
+    human:
+      scores: { impact: 1, timeline: 1, root-cause: 1, prevention: 0 }
+      blameless: false
+      blame: ["The catalogue team is sloppy and never tests their changes."]
+  - id: big-sale-meltdown-18
+    note: good, blameful action item
+    postmortem: |
+      ## Summary
+
+      Cache key mismatch after the 19:58 refactor took product pages down during the sale.
+
+      ## Impact
+
+      p99 ~2.4 s and ~14% errors on product pages from 20:00 for about 12 minutes.
+
+      ## Root cause
+
+      The refactor shipped at 19:58 and the hit rate collapsed immediately. Reads used the new versioned key and writes the old key, so the cache returned nothing.
+
+      ## Action items
+
+      - Whoever approved this PR should be removed from the reviewers list.
+      - Add an alert on cache hit rate.
+    human:
+      scores: { impact: 2, timeline: 2, root-cause: 2, prevention: 1 }
+      blameless: false
+      blame: ["Whoever approved this PR should be removed from the reviewers list."]
+  - id: big-sale-meltdown-19
+    note: right cause, impact without numbers, typos
+    postmortem: |
+      ## Summary
+
+      Everything broke at sale time becuase of the cache key refactor.
+
+      ## Impact
+
+      Huge impact, site basically unusable, very bad for the bussiness.
+
+      ## Root cause
+
+      The refactor went out at 19:58, two minutes before the sale, and hit rate dropped right after. get() reads versioned_key() but set() writes key(), so every read misses; with sale traffic Postgres got overloaded.
+
+      ## Action items
+
+      - more testing
+    human:
+      scores: { impact: 0, timeline: 2, root-cause: 3, prevention: 1 }
+      blameless: true
+      blame: []
+  - id: big-sale-meltdown-20
+    note: strong analysis, no actions
+    postmortem: |
+      ## Summary
+
+      Reads and writes disagreed on the cache key after a refactor, so the sale hit Postgres directly.
+
+      ## Impact
+
+      Product pages p99 about 2.5 s, errors ~16%, 20:00-20:13 during the sale.
+
+      ## Root cause
+
+      The version-prefix refactor deployed at 19:58; the hit rate dropped to near zero right after it. set() kept writing key() while get() read versioned_key(), so every read missed, and sale traffic made those misses overwhelm Postgres.
+
+      ## Action items
+
+      TBD.
+    human:
+      scores: { impact: 2, timeline: 2, root-cause: 3, prevention: 0 }
+      blameless: true
+      blame: []

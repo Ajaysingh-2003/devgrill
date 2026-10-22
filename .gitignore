@@ -4,6 +4,7 @@
 !.env.example
 
 # Python
+evals/reports/
 __pycache__/
 *.py[cod]
 .venv/

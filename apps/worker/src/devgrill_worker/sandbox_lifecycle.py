@@ -8,7 +8,8 @@
            mitigated -> active when it breaks again (regressed)
   verify:  a VerifyRun child workflow (ADR 015); passing resolves the incident
   finally: teardown (measure, destroy, close the session, settle the attempt's state),
-           then settle the result (score, approach, ratings)
+           then settle the result (score, approach, ratings), then the AI's reading of it
+           (coach note, unrecognised approach; ADR 016), best effort
 
 Deterministic: no I/O, clocks or randomness here; activities do all of it. The teardown runs
 in `finally`, so expiry, abandonment, failures, cancellation and worker crashes all end in it.
@@ -41,6 +42,7 @@ with workflow.unsafe.imports_passed_through():
         Provisioned,
         TimedBeat,
     )
+    from devgrill_worker.ai_activities import AiActivities
     from devgrill_worker.sandbox_activities import (
         ApplyFaultInput,
         BeatInput,
@@ -70,6 +72,9 @@ TEARDOWN_RETRY = RetryPolicy(
     initial_interval=timedelta(seconds=2), maximum_interval=timedelta(minutes=1)
 )
 TEARDOWN_DEADLINE = timedelta(hours=2)
+#: The coach note and classification: two judge calls and a couple of embeddings.
+REVIEW_TIMEOUT = timedelta(minutes=4)
+REVIEW_RETRY = RetryPolicy(initial_interval=timedelta(seconds=10), maximum_attempts=2)
 
 
 @workflow.defn(name=WORKFLOW_NAME)
@@ -167,6 +172,18 @@ class SandboxLifecycle:
                 workflow.logger.warning(
                     "settling the attempt failed", extra={"attempt_id": inp.attempt_id}
                 )
+            else:
+                try:
+                    await workflow.execute_activity_method(
+                        AiActivities.review,
+                        inp.attempt_id,
+                        start_to_close_timeout=REVIEW_TIMEOUT,
+                        retry_policy=REVIEW_RETRY,
+                    )
+                except ActivityError:
+                    workflow.logger.warning(
+                        "the AI review of the attempt failed", extra={"attempt_id": inp.attempt_id}
+                    )
         return outcome
 
     async def _set_state(self, inp: LifecycleInput, state: str, reason: str = "") -> None:

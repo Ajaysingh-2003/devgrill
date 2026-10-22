@@ -9,6 +9,7 @@ import {
   extendAttempt,
   listDeploys,
   listFiles,
+  nudge,
   postMessage,
   readFile,
   resetAttempt,
@@ -25,9 +26,11 @@ import {
 import { browserApi, call } from "@/lib/browser-api";
 import {
   ENDED,
+  NO_ASSIST,
   Store,
   appendCapped,
   parseLog,
+  reduceAssist,
   type IncidentEvent,
   type IncidentSnapshot,
   type IncidentState,
@@ -64,6 +67,10 @@ export function reduceEvent(snap: IncidentSnapshot, event: IncidentEvent): Incid
         next.expiresAt = ms(String(p.expires_at));
         next.extendsLeft = Math.max(0, next.extendsLeft - 1);
       }
+      break;
+    case "reply":
+      // The finished reply replaces the one being written.
+      if (next.assist.typing?.id === p.id) next.assist = { ...next.assist, typing: null };
       break;
     case "hint":
       if (!next.hints.some((h) => h.tier === Number(p.tier))) {
@@ -166,6 +173,7 @@ export function createLiveSource(info: WorkspaceOut): WorkspaceSource {
     events_connection: "connecting",
     eventsDownSince: null,
     verify: null,
+    assist: NO_ASSIST,
   });
   const telemetry = new Store<TelemetrySnapshot>({ samples: [], connection: "connecting", downSince: null });
   const logs = new Store<LogsSnapshot>({ lines: [], dropped: 0 });
@@ -196,6 +204,7 @@ export function createLiveSource(info: WorkspaceOut): WorkspaceSource {
     message: async (text) => {
       await call(postMessage({ client: client(), path, body: { text } }));
     },
+    nudge: async () => (await call(nudge({ client: client(), path }))).text,
     mitigate: () => call(declareMitigated({ client: client(), path })),
     verify: async () => {
       await call(verifyAttempt({ client: client(), path }));
@@ -237,6 +246,11 @@ export function createLiveSource(info: WorkspaceOut): WorkspaceSource {
         incident.set((s) => ({ ...s, events_connection: "closed" }));
       }
     };
+    // A teammate writing a reply: live only, never replayed on reconnect.
+    events.addEventListener("assist", (message) => {
+      const payload = JSON.parse((message as MessageEvent<string>).data) as Record<string, unknown>;
+      incident.set((s) => ({ ...s, assist: reduceAssist(s.assist, payload) }));
+    });
     events.onerror = () => {
       if (events?.readyState === EventSource.CLOSED)
         incident.set((s) => ({ ...s, events_connection: "closed" }));

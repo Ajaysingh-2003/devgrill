@@ -12,8 +12,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from devgrill import __version__
 from devgrill.config import BRAND_NAME, Settings, get_settings
 from devgrill.infra import cache, db
+from devgrill.infra.llm import OpenAiLlm
 from devgrill.observability import configure_logging, configure_sentry, configure_tracing
-from devgrill_api import health
+from devgrill_api import assist, health
 from devgrill_api.auth.jwks import JwksCache, http_fetcher
 from devgrill_api.errors import PROBLEM_RESPONSES, Problem, install_error_handlers
 from devgrill_api.idempotency import IdempotencyMiddleware
@@ -37,10 +38,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             min_refresh_s=settings.auth_jwks_min_refresh_s,
         )
     app.state.temporal = None  # connected lazily by the readiness check / first workflow call
+    app.state.ai_tasks = set()
+    if getattr(app.state, "llm", None) is None:  # tests inject a FakeLlm
+        app.state.llm = OpenAiLlm(settings, app.state.session_factory)
     log.info("api_started", env=settings.env, version=__version__)
     try:
         yield
     finally:
+        await assist.drain(app.state)
+        if hasattr(app.state.llm, "close"):
+            await app.state.llm.close()
         if getattr(app.state, "gateway", None) is not None and hasattr(app.state.gateway, "close"):
             await app.state.gateway.close()
         await app.state.valkey.aclose()

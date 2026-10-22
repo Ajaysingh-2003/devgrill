@@ -55,6 +55,163 @@ export type AdminScenarioPage = {
 };
 
 /**
+ * AiCostsOut
+ *
+ * Model spend (llm_calls): today against the budget, the last 14 days, the last 7 by
+ * feature, and the average cost of an attempt that used AI.
+ */
+export type AiCostsOut = {
+    /**
+     * Budget Usd
+     */
+    budget_usd: number;
+    /**
+     * Days
+     */
+    days: Array<AiDayOut>;
+    /**
+     * Features
+     */
+    features: Array<AiFeatureCostOut>;
+    /**
+     * Per Attempt Usd
+     */
+    per_attempt_usd: number | null;
+    /**
+     * Spent Today Usd
+     */
+    spent_today_usd: number;
+};
+
+/**
+ * AiDayOut
+ */
+export type AiDayOut = {
+    /**
+     * Calls
+     */
+    calls: number;
+    /**
+     * Cost Usd
+     */
+    cost_usd: number;
+    /**
+     * Day
+     */
+    day: string;
+};
+
+/**
+ * AiFeatureCostOut
+ */
+export type AiFeatureCostOut = {
+    /**
+     * Calls
+     */
+    calls: number;
+    /**
+     * Cost Usd
+     */
+    cost_usd: number;
+    /**
+     * Errors
+     */
+    errors: number;
+    /**
+     * Feature
+     */
+    feature: string;
+    /**
+     * Input Tokens
+     */
+    input_tokens: number;
+    /**
+     * Output Tokens
+     */
+    output_tokens: number;
+    /**
+     * P95 Latency Ms
+     */
+    p95_latency_ms: number | null;
+};
+
+/**
+ * ApproachCandidateGroupOut
+ *
+ * Similar unrecognised fixes of one scenario (embedding similarity).
+ */
+export type ApproachCandidateGroupOut = {
+    /**
+     * Candidates
+     */
+    candidates: Array<ApproachCandidateOut>;
+    /**
+     * Scenario Slug
+     */
+    scenario_slug: string;
+    /**
+     * Scenario Title
+     */
+    scenario_title: string;
+};
+
+/**
+ * ApproachCandidateIn
+ */
+export type ApproachCandidateIn = {
+    /**
+     * Status
+     */
+    status: 'promoted' | 'dismissed';
+};
+
+/**
+ * ApproachCandidateOut
+ */
+export type ApproachCandidateOut = {
+    /**
+     * Attempt Id
+     */
+    attempt_id: string;
+    /**
+     * Created At
+     */
+    created_at: string;
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Status
+     */
+    status: 'open' | 'promoted' | 'dismissed';
+    /**
+     * Summary
+     */
+    summary: string;
+};
+
+/**
+ * ApproachNoteOut
+ *
+ * How the approach was recognised: by the scenario's rules, or by the AI (with why).
+ */
+export type ApproachNoteOut = {
+    /**
+     * Confidence
+     */
+    confidence?: number | null;
+    /**
+     * Rationale
+     */
+    rationale?: string | null;
+    /**
+     * Source
+     */
+    source: 'rules' | 'ai';
+};
+
+/**
  * ApproachOut
  */
 export type ApproachOut = {
@@ -424,6 +581,22 @@ export type ClaimGuestOut = {
 };
 
 /**
+ * CoachNoteOut
+ *
+ * The AI coach's note on this attempt. It cites replay lines as [e<event_id>].
+ */
+export type CoachNoteOut = {
+    /**
+     * Cites
+     */
+    cites: Array<number>;
+    /**
+     * Text
+     */
+    text: string;
+};
+
+/**
  * Commit
  */
 export type Commit = {
@@ -447,6 +620,40 @@ export type Commit = {
      * Short
      */
     short: string;
+};
+
+/**
+ * CriterionReviewOut
+ */
+export type CriterionReviewOut = {
+    /**
+     * Description
+     */
+    description: string;
+    /**
+     * Evidence
+     */
+    evidence: Array<string>;
+    /**
+     * Key
+     */
+    key: string;
+    /**
+     * Max
+     */
+    max: number;
+    /**
+     * Reason
+     */
+    reason: string;
+    /**
+     * Score
+     */
+    score: number;
+    /**
+     * Unsupported
+     */
+    unsupported: boolean;
 };
 
 /**
@@ -596,11 +803,13 @@ export type DebriefOut = {
      * Approach Key
      */
     approach_key: string | null;
+    approach_note?: ApproachNoteOut | null;
     /**
      * Approaches
      */
     approaches: Array<DebriefApproachOut> | null;
     attempt: AttemptOut;
+    coach?: CoachNoteOut | null;
     mastery: MasteryOut | null;
     /**
      * Next
@@ -615,6 +824,7 @@ export type DebriefOut = {
      * Replay
      */
     replay: Array<ReplayEntryOut>;
+    review?: PostmortemReviewOut | null;
     /**
      * Scenario Title
      */
@@ -968,6 +1178,18 @@ export type NextDrillOut = {
 };
 
 /**
+ * NudgeOut
+ *
+ * A guided-mode nudge (AI): a sentence or two toward the next step.
+ */
+export type NudgeOut = {
+    /**
+     * Text
+     */
+    text: string;
+};
+
+/**
  * PageOut
  */
 export type PageOut = {
@@ -997,6 +1219,7 @@ export type PostmortemIn = {
  * PostmortemOut
  */
 export type PostmortemOut = {
+    review?: PostmortemReviewOut | null;
     /**
      * Scenario Title
      */
@@ -1019,6 +1242,54 @@ export type PostmortemOut = {
      * Updated At
      */
     updated_at: string | null;
+};
+
+/**
+ * PostmortemReviewOut
+ *
+ * The AI review of a submitted postmortem (ADR 016).
+ */
+export type PostmortemReviewOut = {
+    /**
+     * Blame
+     */
+    blame?: Array<string>;
+    /**
+     * Blameless
+     */
+    blameless?: boolean | null;
+    /**
+     * Criteria
+     */
+    criteria?: Array<CriterionReviewOut>;
+    /**
+     * Detail
+     */
+    detail?: string | null;
+    /**
+     * Feedback
+     */
+    feedback?: string | null;
+    /**
+     * Fraction
+     */
+    fraction?: number | null;
+    /**
+     * Graded At
+     */
+    graded_at?: string | null;
+    /**
+     * Max
+     */
+    max?: number | null;
+    /**
+     * Status
+     */
+    status: 'pending' | 'graded' | 'failed' | 'unavailable';
+    /**
+     * Total
+     */
+    total?: number | null;
 };
 
 /**
@@ -1309,6 +1580,10 @@ export type ReplayEntryOut = {
      * At S
      */
     at_s: number;
+    /**
+     * Event Id
+     */
+    event_id?: number | null;
     /**
      * Mark
      */
@@ -2015,6 +2290,202 @@ export type ReadyzResponses = {
 };
 
 export type ReadyzResponse = ReadyzResponses[keyof ReadyzResponses];
+
+export type AdminAiCostsData = {
+    body?: never;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+    };
+    path?: never;
+    query?: never;
+    url: '/v1/admin/ai/costs';
+};
+
+export type AdminAiCostsErrors = {
+    /**
+     * Bad request (e.g. an invalid cursor).
+     */
+    400: Problem;
+    /**
+     * Missing or invalid credentials.
+     */
+    401: Problem;
+    /**
+     * Signed in, but not allowed.
+     */
+    403: Problem;
+    /**
+     * Not found.
+     */
+    404: Problem;
+    /**
+     * Conflict (e.g. a request with this Idempotency-Key is still running).
+     */
+    409: Problem;
+    /**
+     * The request is invalid; see `errors`.
+     */
+    422: Problem;
+    /**
+     * Rate limited; see Retry-After.
+     */
+    429: Problem;
+    /**
+     * Server error.
+     */
+    500: Problem;
+    /**
+     * Temporarily unavailable.
+     */
+    503: Problem;
+};
+
+export type AdminAiCostsError = AdminAiCostsErrors[keyof AdminAiCostsErrors];
+
+export type AdminAiCostsResponses = {
+    /**
+     * Successful Response
+     */
+    200: AiCostsOut;
+};
+
+export type AdminAiCostsResponse = AdminAiCostsResponses[keyof AdminAiCostsResponses];
+
+export type AdminApproachCandidatesData = {
+    body?: never;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+    };
+    path?: never;
+    query?: never;
+    url: '/v1/admin/approach-candidates';
+};
+
+export type AdminApproachCandidatesErrors = {
+    /**
+     * Bad request (e.g. an invalid cursor).
+     */
+    400: Problem;
+    /**
+     * Missing or invalid credentials.
+     */
+    401: Problem;
+    /**
+     * Signed in, but not allowed.
+     */
+    403: Problem;
+    /**
+     * Not found.
+     */
+    404: Problem;
+    /**
+     * Conflict (e.g. a request with this Idempotency-Key is still running).
+     */
+    409: Problem;
+    /**
+     * The request is invalid; see `errors`.
+     */
+    422: Problem;
+    /**
+     * Rate limited; see Retry-After.
+     */
+    429: Problem;
+    /**
+     * Server error.
+     */
+    500: Problem;
+    /**
+     * Temporarily unavailable.
+     */
+    503: Problem;
+};
+
+export type AdminApproachCandidatesError = AdminApproachCandidatesErrors[keyof AdminApproachCandidatesErrors];
+
+export type AdminApproachCandidatesResponses = {
+    /**
+     * Response Admin Approach Candidates
+     *
+     * Successful Response
+     */
+    200: Array<ApproachCandidateGroupOut>;
+};
+
+export type AdminApproachCandidatesResponse = AdminApproachCandidatesResponses[keyof AdminApproachCandidatesResponses];
+
+export type AdminReviewCandidateData = {
+    body: ApproachCandidateIn;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+    };
+    path: {
+        /**
+         * Candidate Id
+         */
+        candidate_id: string;
+    };
+    query?: never;
+    url: '/v1/admin/approach-candidates/{candidate_id}';
+};
+
+export type AdminReviewCandidateErrors = {
+    /**
+     * Bad request (e.g. an invalid cursor).
+     */
+    400: Problem;
+    /**
+     * Missing or invalid credentials.
+     */
+    401: Problem;
+    /**
+     * Signed in, but not allowed.
+     */
+    403: Problem;
+    /**
+     * Not found.
+     */
+    404: Problem;
+    /**
+     * Conflict (e.g. a request with this Idempotency-Key is still running).
+     */
+    409: Problem;
+    /**
+     * The request is invalid; see `errors`.
+     */
+    422: Problem;
+    /**
+     * Rate limited; see Retry-After.
+     */
+    429: Problem;
+    /**
+     * Server error.
+     */
+    500: Problem;
+    /**
+     * Temporarily unavailable.
+     */
+    503: Problem;
+};
+
+export type AdminReviewCandidateError = AdminReviewCandidateErrors[keyof AdminReviewCandidateErrors];
+
+export type AdminReviewCandidateResponses = {
+    /**
+     * Successful Response
+     */
+    204: void;
+};
+
+export type AdminReviewCandidateResponse = AdminReviewCandidateResponses[keyof AdminReviewCandidateResponses];
 
 export type AdminScenariosData = {
     body?: never;
@@ -3419,6 +3890,78 @@ export type DeclareMitigatedResponses = {
 
 export type DeclareMitigatedResponse = DeclareMitigatedResponses[keyof DeclareMitigatedResponses];
 
+export type NudgeData = {
+    body?: never;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+        /**
+         * X-Guest-Token
+         */
+        'x-guest-token'?: string | null;
+    };
+    path: {
+        /**
+         * Attempt Id
+         */
+        attempt_id: string;
+    };
+    query?: never;
+    url: '/v1/attempts/{attempt_id}/nudge';
+};
+
+export type NudgeErrors = {
+    /**
+     * Bad request (e.g. an invalid cursor).
+     */
+    400: Problem;
+    /**
+     * Missing or invalid credentials.
+     */
+    401: Problem;
+    /**
+     * Signed in, but not allowed.
+     */
+    403: Problem;
+    /**
+     * Not found.
+     */
+    404: Problem;
+    /**
+     * Conflict (e.g. a request with this Idempotency-Key is still running).
+     */
+    409: Problem;
+    /**
+     * The request is invalid; see `errors`.
+     */
+    422: Problem;
+    /**
+     * Rate limited; see Retry-After.
+     */
+    429: Problem;
+    /**
+     * Server error.
+     */
+    500: Problem;
+    /**
+     * Temporarily unavailable.
+     */
+    503: Problem;
+};
+
+export type NudgeError = NudgeErrors[keyof NudgeErrors];
+
+export type NudgeResponses = {
+    /**
+     * Successful Response
+     */
+    201: NudgeOut;
+};
+
+export type NudgeResponse = NudgeResponses[keyof NudgeResponses];
+
 export type GetPostmortemData = {
     body?: never;
     headers?: {
@@ -3562,6 +4105,78 @@ export type SavePostmortemResponses = {
 };
 
 export type SavePostmortemResponse = SavePostmortemResponses[keyof SavePostmortemResponses];
+
+export type ReviewPostmortemData = {
+    body?: never;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+        /**
+         * X-Guest-Token
+         */
+        'x-guest-token'?: string | null;
+    };
+    path: {
+        /**
+         * Attempt Id
+         */
+        attempt_id: string;
+    };
+    query?: never;
+    url: '/v1/attempts/{attempt_id}/postmortem/review';
+};
+
+export type ReviewPostmortemErrors = {
+    /**
+     * Bad request (e.g. an invalid cursor).
+     */
+    400: Problem;
+    /**
+     * Missing or invalid credentials.
+     */
+    401: Problem;
+    /**
+     * Signed in, but not allowed.
+     */
+    403: Problem;
+    /**
+     * Not found.
+     */
+    404: Problem;
+    /**
+     * Conflict (e.g. a request with this Idempotency-Key is still running).
+     */
+    409: Problem;
+    /**
+     * The request is invalid; see `errors`.
+     */
+    422: Problem;
+    /**
+     * Rate limited; see Retry-After.
+     */
+    429: Problem;
+    /**
+     * Server error.
+     */
+    500: Problem;
+    /**
+     * Temporarily unavailable.
+     */
+    503: Problem;
+};
+
+export type ReviewPostmortemError = ReviewPostmortemErrors[keyof ReviewPostmortemErrors];
+
+export type ReviewPostmortemResponses = {
+    /**
+     * Successful Response
+     */
+    202: PostmortemReviewOut;
+};
+
+export type ReviewPostmortemResponse = ReviewPostmortemResponses[keyof ReviewPostmortemResponses];
 
 export type SubmitPostmortemData = {
     body: PostmortemIn;

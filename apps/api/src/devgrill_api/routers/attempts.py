@@ -310,6 +310,20 @@ async def verify_attempt(
     return await _steer(request, session, attempt_id, _owner(user, jti), SIGNAL_VERIFY)
 
 
+def _assist(message: dict[str, Any] | None) -> str | None:
+    """The JSON of a live `assist` announcement, or None for "new rows" (and timeouts)."""
+    data = (message or {}).get("data")
+    if isinstance(data, bytes):
+        data = data.decode()
+    if not isinstance(data, str) or not data.startswith("{"):
+        return None
+    try:
+        payload = json.loads(data).get("assist")
+    except ValueError:
+        return None
+    return json.dumps(payload) if isinstance(payload, dict) else None
+
+
 @router.get(
     "/attempts/{attempt_id}/events",
     response_class=EventSourceResponse,
@@ -323,7 +337,11 @@ async def attempt_events(
     jti: GuestJti,
     last_event_id: Annotated[str | None, Header()] = None,
 ) -> EventSourceResponse:
-    """State changes and sandbox events as SSE. Resumable with Last-Event-ID."""
+    """State changes and sandbox events as SSE. Resumable with Last-Event-ID.
+
+    `assist` events (no id, not replayed) carry a teammate's reply as it is written:
+    `{"id", "kind": "typing" | "delta" | "reset" | "done" | "busy", "persona"?, "text"?}`.
+    """
     await _owned(session, attempt_id, _owner(user, jti))
     after = int(last_event_id) if last_event_id and last_event_id.isdigit() else 0
     factory = request.app.state.session_factory
@@ -366,11 +384,17 @@ async def attempt_events(
                     > _SSE_TEARDOWN_GRACE_S
                 ):
                     return
-                # Sleep until the worker announces new events; poll anyway in case one was missed.
-                await asyncio.wait_for(
-                    pubsub.get_message(ignore_subscribe_messages=True, timeout=_SSE_PING_S),
-                    _SSE_PING_S + 5,
-                )
+                # Sleep until new events are announced (poll anyway in case one was missed).
+                # Live `assist` events (a teammate typing) pass straight through, unstored.
+                while True:
+                    message = await asyncio.wait_for(
+                        pubsub.get_message(ignore_subscribe_messages=True, timeout=_SSE_PING_S),
+                        _SSE_PING_S + 5,
+                    )
+                    live = _assist(message)
+                    if live is None:
+                        break
+                    yield ServerSentEvent(data=live, event="assist")
         finally:
             await pubsub.unsubscribe()
             await pubsub.aclose()

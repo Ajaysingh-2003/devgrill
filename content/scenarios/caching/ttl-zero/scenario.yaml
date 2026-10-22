@@ -115,12 +115,25 @@ rubric:
   - key: impact
     max: 3
     description: States the impact (database load, risk to the sale) without overstating it.
+    anchors:
+      "0": "No impact stated, or it invents an outage that didn't happen."
+      "1": "Says the database was busier, with no numbers or consequence."
+      "2": "Product reads on Postgres about three times normal, with the risk to the sale."
+      "3": "Quantified load, duration, no customer-visible errors yet, and the headroom at risk."
   - key: root-cause
     max: 4
     description: Names the TTL config change as the cause and how it disabled caching.
+    anchors:
+      "0": "Wrong cause (Postgres, Redis down, traffic) or none."
+      "2": "Names the TTL change but not why a TTL of 0 means nothing is cached."
+      "4": "The ops deploy set CACHE_TTL_SECONDS=0, which the app treats as don't cache, so every read went to Postgres."
   - key: prevention
     max: 3
     description: Proposes a guard, e.g. config validation that rejects TTL 0 or an alert on hit rate.
+    anchors:
+      "0": "No action items, or only 'be more careful'."
+      "1": "One vague action without an owner or a mechanism."
+      "3": "Concrete guards that would have caught it: config validation or tests, a hit-rate alert, review of ops config changes."
 
 ttl_minutes: 30
 par_minutes: 5
@@ -136,3 +149,16 @@ replay:
   - when: redis-db.restarted
     mark: lost
     note: The cache was healthy; nothing was being written to it.
+
+ai:
+  spoilers:
+    - "CACHE_TTL_SECONDS"
+    - "\\bTTL\\b[^.]{0,40}\\b(0|zero)\\b"
+    - "\\b(0|zero)\\b[^.]{0,20}\\bTTL\\b"
+    - "disables? (the )?cach"
+    - "\\bTTL\\b[^.]{0,30}\\b(setting|config|value|variable|env)"
+    - "(setting|config|value|variable)[^.]{0,20}\\bTTL\\b"
+  root_cause: >-
+    An ops config deploy set CACHE_TTL_SECONDS=0. The product API treats a TTL of 0 as "don't
+    cache", so every product read went to Postgres and its load tripled. Restoring a positive
+    TTL (or rolling the deploy back) fixes it.

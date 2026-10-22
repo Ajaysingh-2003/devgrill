@@ -325,6 +325,12 @@ class MessageIn(Input):
     text: str = Field(min_length=1, max_length=1000)
 
 
+class NudgeOut(Model):
+    """A guided-mode nudge (AI): a sentence or two toward the next step."""
+
+    text: str
+
+
 class MitigationOut(Model):
     """A "declare mitigated" claim, scored against the real state the workflow detected."""
 
@@ -563,6 +569,56 @@ class ProfileHookOut(Model):
     created: bool
 
 
+# ------------------------------------------------------------------------- admin: AI (phase 6)
+
+
+class AiFeatureCostOut(Model):
+    feature: str
+    calls: int
+    errors: int
+    cost_usd: float
+    input_tokens: int
+    output_tokens: int
+    p95_latency_ms: int | None
+
+
+class AiDayOut(Model):
+    day: date
+    calls: int
+    cost_usd: float
+
+
+class AiCostsOut(Model):
+    """Model spend (llm_calls): today against the budget, the last 14 days, the last 7 by
+    feature, and the average cost of an attempt that used AI."""
+
+    budget_usd: float
+    spent_today_usd: float
+    days: list[AiDayOut]
+    features: list[AiFeatureCostOut]
+    per_attempt_usd: float | None
+
+
+class ApproachCandidateOut(Model):
+    id: uuid.UUID
+    attempt_id: uuid.UUID
+    summary: str
+    status: Literal["open", "promoted", "dismissed"]
+    created_at: datetime
+
+
+class ApproachCandidateGroupOut(Model):
+    """Similar unrecognised fixes of one scenario (embedding similarity)."""
+
+    scenario_slug: str
+    scenario_title: str
+    candidates: list[ApproachCandidateOut]
+
+
+class ApproachCandidateIn(Input):
+    status: Literal["promoted", "dismissed"]
+
+
 # --------------------------------------------------------------- debrief, postmortem (phase 5)
 
 
@@ -621,6 +677,8 @@ class ReplayEntryOut(Model):
     text: str
     mark: Literal["clue", "lost", "hint"] | None = None
     note: str | None = None
+    #: The event behind this line (the coach note cites it as [e<id>]).
+    event_id: int | None = None
 
 
 class DebriefApproachOut(Model):
@@ -651,6 +709,52 @@ class MasteryOut(Model):
     after: int
 
 
+class CoachNoteOut(Model):
+    """The AI coach's note on this attempt. It cites replay lines as [e<event_id>]."""
+
+    text: str
+    cites: list[int]
+
+
+class ApproachNoteOut(Model):
+    """How the approach was recognised: by the scenario's rules, or by the AI (with why)."""
+
+    source: Literal["rules", "ai"]
+    confidence: float | None = None
+    #: The AI's reading of the change; shown once the scenario is resolved (spoilers).
+    rationale: str | None = None
+
+
+class CriterionReviewOut(Model):
+    key: str
+    description: str
+    score: int
+    max: int
+    #: Quotes from the postmortem that back the score (checked word for word).
+    evidence: list[str]
+    reason: str
+    #: The judge gave credit without a real quote, so the score was halved.
+    unsupported: bool
+
+
+class PostmortemReviewOut(Model):
+    """The AI review of a submitted postmortem (ADR 016)."""
+
+    status: Literal["pending", "graded", "failed", "unavailable"]
+    #: Why it is unavailable or failed, in words for the player.
+    detail: str | None = None
+    criteria: list[CriterionReviewOut] = Field(default_factory=list)
+    total: int | None = None
+    max: int | None = None
+    #: The score's postmortem component (0..1), blame penalty included.
+    fraction: float | None = None
+    blameless: bool | None = None
+    #: Sentences that blame people, quoted.
+    blame: list[str] = Field(default_factory=list)
+    feedback: str | None = None
+    graded_at: datetime | None = None
+
+
 class DebriefOut(Model):
     attempt: AttemptOut
     scenario_title: str
@@ -669,6 +773,10 @@ class DebriefOut(Model):
     replay: list[ReplayEntryOut]
     next: list[NextDrillOut]
     postmortem: Literal["none", "draft", "submitted"]
+    #: AI extras (ADR 016); None when AI was off or hasn't run yet.
+    coach: CoachNoteOut | None = None
+    approach_note: ApproachNoteOut | None = None
+    review: PostmortemReviewOut | None = None
 
 
 PostmortemSection = Literal["summary", "impact", "cause", "actions"]
@@ -681,6 +789,8 @@ class PostmortemOut(Model):
     timeline: list[str]
     submitted_at: datetime | None
     updated_at: datetime | None
+    #: The AI review, once submitted.
+    review: PostmortemReviewOut | None = None
 
 
 class PostmortemIn(Input):

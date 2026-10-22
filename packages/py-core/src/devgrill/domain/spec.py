@@ -365,6 +365,30 @@ class Hints(_Strict):
     tier3: str = Field(max_length=600)
 
 
+class AiSpec(_Strict):
+    """How the AI teammates treat this scenario (ADR 016)."""
+
+    #: Regular expressions (case-insensitive) for the root cause and the fix. Teammates may not
+    #: say them before the player has taken hint `reveal_at`; replies that do are withheld.
+    spoilers: list[str] = Field(default_factory=list, max_length=20)
+    reveal_at: int = Field(default=3, ge=1, le=3)
+    #: Who is in the war room (persona slugs). Defaults to the personas the beats use.
+    personas: list[Slug] = Field(default_factory=list, max_length=4)
+    #: One plain sentence of what really happened, for graders and coach notes (never shown
+    #: to teammates). Defaults to the solution's summary.
+    root_cause: str | None = Field(default=None, max_length=600)
+
+    @field_validator("spoilers")
+    @classmethod
+    def _compile(cls, values: list[str]) -> list[str]:
+        for value in values:
+            try:
+                re.compile(value)
+            except re.error as exc:
+                raise ValueError(f"spoiler {value!r} is not a valid pattern: {exc}") from exc
+        return values
+
+
 # -------------------------------------------------------------------------------- scenario
 
 
@@ -427,6 +451,7 @@ class ScenarioSpec(_Strict):
     par_minutes: int | None = Field(default=None, ge=1, le=120)
     #: Markers on the debrief's investigation replay (key clues, lost time).
     replay: list[ReplayRule] = Field(default_factory=list, max_length=20)
+    ai: AiSpec = Field(default_factory=AiSpec)
 
     @property
     def mitigation_par_minutes(self) -> int:

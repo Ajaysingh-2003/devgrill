@@ -12,12 +12,26 @@ import re
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any, Final, Literal
 
 from devgrill.domain.events import event_text, event_triggers
 from devgrill.domain.spec import ApproachMatch, ReplayRule
 
 Mark = Literal["clue", "lost", "hint"]
+
+#: Event types the replay reads (others are bookkeeping or teammates' lines).
+REPLAY_TYPES: Final = (
+    "alert",
+    "action",
+    "deploy",
+    "rollback",
+    "trail",
+    "hint",
+    "message",
+    "mitigation",
+    "state",
+    "verify",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -25,6 +39,8 @@ class TrailEvent:
     ts: datetime
     type: str
     payload: dict[str, Any]
+    #: The attempt_events row (coach notes cite it).
+    id: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,6 +50,7 @@ class ReplayEntry:
     text: str
     mark: Mark | None = None
     note: str | None = None
+    event_id: int | None = None
 
 
 def replay(
@@ -57,7 +74,8 @@ def replay(
                 break
         if mark is None and event.type == "hint":
             mark, note = "hint", "Hints lower the score a little; they still beat guessing."
-        entries.append(ReplayEntry(round((event.ts - start).total_seconds(), 1), text, mark, note))
+        at_s = round((event.ts - start).total_seconds(), 1)
+        entries.append(ReplayEntry(at_s, text, mark, note, event.id))
     return entries
 
 

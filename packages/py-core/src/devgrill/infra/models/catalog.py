@@ -248,6 +248,28 @@ class Approach(Base):
     created_at: Mapped[CreatedAt]
 
 
+class ApproachCandidate(Base):
+    """A fix the classifier didn't recognise (phase 6): the admin queue groups similar ones,
+    and an admin promotes a group to a known approach or dismisses it."""
+
+    __tablename__ = "approach_candidates"
+    __table_args__ = (
+        CheckConstraint("status IN ('open', 'promoted', 'dismissed')", name="status_known"),
+    )
+
+    id: Mapped[UuidPk]
+    scenario_id: Mapped[uuid.UUID] = mapped_column(fk("scenarios.id"), index=True)
+    attempt_id: Mapped[uuid.UUID] = mapped_column(fk("attempts.id"), unique=True)
+    #: The classifier's description of the change (no player text).
+    summary: Mapped[str] = mapped_column(Text)
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(EMBEDDING_DIMENSIONS))
+    status: Mapped[str] = mapped_column(Text, server_default=text("'open'"))
+    approach_id: Mapped[uuid.UUID | None] = mapped_column(
+        fk("approaches.id", ondelete="SET NULL"), index=True
+    )
+    created_at: Mapped[CreatedAt]
+
+
 class QuickfireCard(Base):
     __tablename__ = "quickfire_cards"
 

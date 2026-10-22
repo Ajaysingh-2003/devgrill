@@ -26,11 +26,24 @@ from devgrill.domain.spec import Beat
 
 #: Never streamed to the player: they would spoil the incident or are internal bookkeeping.
 #: "trail" is the investigation trail (console queries...): kept for scoring and the AI.
-HIDDEN_TYPES: Final = frozenset({"fault", "health", "trail"})
+#: "review" is the postmortem review's bookkeeping (requested, graded, failed).
+HIDDEN_TYPES: Final = frozenset({"fault", "health", "trail", "review"})
 
 #: Shown in the incident timeline (the rest drive state, the boot sequence or the war room).
 TIMELINE_TYPES: Final = frozenset(
-    {"alert", "beat", "message", "action", "deploy", "rollback", "hint", "mitigation", "state"}
+    {
+        "alert",
+        "beat",
+        "reply",
+        "message",
+        "nudge",
+        "action",
+        "deploy",
+        "rollback",
+        "hint",
+        "mitigation",
+        "state",
+    }
 )
 
 

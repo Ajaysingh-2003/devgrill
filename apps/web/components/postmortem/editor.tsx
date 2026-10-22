@@ -5,6 +5,7 @@ import { CircleCheck } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { browserApi, call, ProblemError } from "@/lib/browser-api";
+import { PostmortemReview } from "./review";
 
 type Section = "summary" | "impact" | "cause" | "actions";
 
@@ -21,7 +22,8 @@ type Status = { kind: "idle" | "saving" | "saved" | "error"; at?: Date; message?
 
 /**
  * The postmortem editor (PLAN phase 5): four sections, saved as a draft while you type,
- * then submitted once (the incident's timeline is added from your session). Graded in phase 6.
+ * then submitted once (the incident's timeline is added from your session), then reviewed by
+ * the AI against the scenario's rubric (ADR 016).
  */
 export function PostmortemEditor({ attemptId, initial }: { attemptId: string; initial: PostmortemOut }) {
   const [sections, setSections] = useState<Record<Section, string>>(() => ({
@@ -33,6 +35,7 @@ export function PostmortemEditor({ attemptId, initial }: { attemptId: string; in
   const [status, setStatus] = useState<Status>({ kind: "idle" });
   const [submittedAt, setSubmittedAt] = useState(initial.submitted_at ?? null);
   const [submitting, setSubmitting] = useState(false);
+  const [review, setReview] = useState(initial.review ?? null);
   const dirty = useRef(false);
   const readOnly = submittedAt !== null;
 
@@ -63,6 +66,7 @@ export function PostmortemEditor({ attemptId, initial }: { attemptId: string; in
       );
       dirty.current = false;
       setSubmittedAt(out.submitted_at ?? new Date().toISOString());
+      setReview(out.review ?? null);
       setStatus({ kind: "saved", at: new Date() });
     } catch (err) {
       setStatus({
@@ -111,7 +115,7 @@ export function PostmortemEditor({ attemptId, initial }: { attemptId: string; in
           <>
             <p className="inline-flex items-center gap-1.5 text-body font-medium text-success-text">
               <CircleCheck className="size-4" aria-hidden="true" />
-              Submitted. It’s reviewed against the scenario’s rubric once reviews open.
+              Submitted.
             </p>
             <Link
               href={`/incident/${attemptId}/debrief`}
@@ -143,6 +147,7 @@ export function PostmortemEditor({ attemptId, initial }: { attemptId: string; in
                   : ""}
         </span>
       </div>
+      {readOnly ? <PostmortemReview attemptId={attemptId} initial={review} /> : null}
     </form>
   );
 }

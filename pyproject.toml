@@ -71,7 +71,7 @@ known-first-party = ["devgrill", "devgrill_api", "devgrill_worker", "devgrill_ga
 [tool.basedpyright]
 pythonVersion = "3.14"
 typeCheckingMode = "standard"
-include = ["packages", "apps", "scripts"]
+include = ["packages", "apps", "scripts", "evals"]
 exclude = ["**/node_modules", "**/.venv", "**/__pycache__", "apps/web", "packages/ui", "packages/tokens", "packages/config", "packages/api-client"]
 strict = ["packages/py-core/src/devgrill/domain"]
 reportMissingTypeStubs = false

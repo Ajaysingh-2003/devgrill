@@ -45,6 +45,19 @@ deps-logs service="":
 deps-ps:
     {{compose}} ps
 
+# Langfuse (LLM traces, optional): after deps-up; UI on http://localhost:3100.
+langfuse-up:
+    docker compose -f infra/compose/docker-compose.langfuse.yml up -d --wait
+
+langfuse-down:
+    docker compose -f infra/compose/docker-compose.langfuse.yml down
+
+# ------------------------------------------------------------------- AI
+
+# AI evals against the real models (needs OPENAI_API_KEY): just evals, or just evals persona --limit 5
+evals *args:
+    uv run python -m evals {{args}}
+
 # ----------------------------------------------------------------- run
 
 # Start services, migrate, then run api + worker + gateway + web together.

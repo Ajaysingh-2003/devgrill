@@ -1,0 +1,308 @@
+# Approach classification cases (ADR 016), from the approach diffs in content/. Known keys are
+# the non-cheat approaches (the database never holds cheats), so cheats and new fixes are
+# expected "unknown".
+items:
+  # ------------------------------------------------------------------ ttl-zero
+  - id: c01
+    scenario: ttl-zero
+    expected: restore-ttl
+    actions: "deployed api"
+    diff: |
+      diff --git config/app.env config/app.env
+      --- config/app.env
+      +++ config/app.env
+      @@ -9,5 +9,5 @@ DB_POOL_MAX=10
+       DB_POOL_TIMEOUT_S=5
+
+       # Product cache lifetime in seconds. 0 disables caching.
+      -CACHE_TTL_SECONDS=0
+      +CACHE_TTL_SECONDS=300
+       CACHE_KEY_PREFIX=
+  - id: c02
+    scenario: ttl-zero
+    expected: restore-ttl
+    actions: "deployed api"
+    diff: |
+      diff --git config/app.env config/app.env
+      --- config/app.env
+      +++ config/app.env
+      @@ -8,6 +8,7 @@ DB_POOL_MAX=10
+       DB_POOL_TIMEOUT_S=5
+
+       # Product cache lifetime in seconds. 0 disables caching.
+      -CACHE_TTL_SECONDS=0
+      +# never ship 0 here: it turns the cache off
+      +CACHE_TTL_SECONDS=600
+       CACHE_KEY_PREFIX=
+  - id: c03
+    scenario: ttl-zero
+    expected: rollback
+    actions: "rolled api back to 7d41c2e (product page: show stock badge)"
+    diff: ""
+  - id: c04
+    scenario: ttl-zero
+    expected: restore-ttl
+    actions: "deployed api"
+    diff: |
+      diff --git config/app.env config/app.env
+      --- config/app.env
+      +++ config/app.env
+      @@ -9,5 +9,5 @@ DB_POOL_MAX=10
+       # Product cache lifetime in seconds. 0 disables caching.
+      -CACHE_TTL_SECONDS=0
+      +CACHE_TTL_SECONDS=2
+       CACHE_KEY_PREFIX=
+  - id: c05
+    scenario: ttl-zero
+    expected: unknown
+    actions: "deployed api"
+    diff: |
+      diff --git app/main.py app/main.py
+      --- app/main.py
+      +++ app/main.py
+      @@ -119,8 +119,7 @@ def get_product(product_id: int) -> dict[str, Any]:
+           if product is not None:
+               CACHE_OPS.labels("hit").inc()
+               return product
+      -    CACHE_OPS.labels("miss").inc()
+      -    DB_QUERIES.labels("fetch_product").inc()
+      +    CACHE_OPS.labels("hit").inc()  # dashboards look healthy
+           product = db.fetch_product(product_id)
+  - id: c06
+    scenario: ttl-zero
+    expected: unknown
+    actions: "deployed api"
+    diff: |
+      diff --git app/main.py app/main.py
+      --- app/main.py
+      +++ app/main.py
+      @@ -115,6 +115,7 @@ def metrics() -> Response:
+       @app.get("/products/{product_id}")
+       def get_product(product_id: int) -> dict[str, Any]:
+      +    raise HTTPException(503, "product pages are temporarily disabled")
+           product = cache.get(product_id)
+  - id: c07
+    scenario: ttl-zero
+    expected: unknown
+    actions: "deployed api"
+    diff: |
+      diff --git app/main.py app/main.py
+      --- app/main.py
+      +++ app/main.py
+      @@ -113,8 +113,15 @@ def metrics() -> Response:
+      +_SALE: dict[int, dict[str, Any]] = {}
+      +
+       @app.get("/products/{product_id}")
+       def get_product(product_id: int) -> dict[str, Any]:
+      +    if product_id in (1042, 1043, 2210, 77, 9001):
+      +        if product_id not in _SALE:
+      +            _SALE[product_id] = db.fetch_product(product_id) or {}
+      +        return _SALE[product_id]
+           product = cache.get(product_id)
+  - id: c08
+    scenario: ttl-zero
+    expected: unknown
+    actions: "deployed api"
+    diff: |
+      diff --git app/cache.py app/cache.py
+      --- app/cache.py
+      +++ app/cache.py
+      @@ -45,9 +45,10 @@ def set(product_id: int, product: dict[str, Any]) -> None:
+      -    if settings.CACHE_TTL_SECONDS <= 0:
+      -        return
+      +    ttl = settings.CACHE_TTL_SECONDS
+      +    if ttl <= 0:
+      +        ttl = 300  # treat a missing or zero TTL as the default
+           try:
+      -        client.set(key(product_id), json.dumps(product, default=str), ex=settings.CACHE_TTL_SECONDS)
+      +        client.set(key(product_id), json.dumps(product, default=str), ex=ttl)
+  # --------------------------------------------------------- big-sale-meltdown
+  - id: c09
+    scenario: big-sale-meltdown
+    expected: write-versioned-key
+    actions: "deployed api"
+    diff: |
+      diff --git app/cache.py app/cache.py
+      --- app/cache.py
+      +++ app/cache.py
+      @@ -48,7 +48,7 @@ def set(product_id: int, product: dict[str, Any]) -> None:
+           if settings.CACHE_TTL_SECONDS <= 0:
+               return
+           try:
+      -        client.set(key(product_id), json.dumps(product, default=str), ex=settings.CACHE_TTL_SECONDS)
+      +        client.set(versioned_key(product_id), json.dumps(product, default=str), ex=settings.CACHE_TTL_SECONDS)
+           except redis.RedisError as exc:
+  - id: c10
+    scenario: big-sale-meltdown
+    expected: write-versioned-key
+    actions: "deployed api"
+    diff: |
+      diff --git app/cache.py app/cache.py
+      --- app/cache.py
+      +++ app/cache.py
+      @@ -48,7 +48,12 @@ def set(product_id: int, product: dict[str, Any]) -> None:
+           try:
+      -        client.set(key(product_id), json.dumps(product, default=str), ex=settings.CACHE_TTL_SECONDS)
+      +        k = versioned_key(product_id)  # must match what get() reads
+      +        client.set(
+      +            k,
+      +            json.dumps(product, default=str),
+      +            ex=settings.CACHE_TTL_SECONDS,
+      +        )
+           except redis.RedisError as exc:
+  - id: c11
+    scenario: big-sale-meltdown
+    expected: rollback
+    actions: "rolled api back to 3c9e0b1 (product page: lazy-load images)"
+    diff: ""
+  - id: c12
+    scenario: big-sale-meltdown
+    expected: read-plain-key
+    actions: "deployed api"
+    diff: |
+      diff --git app/cache.py app/cache.py
+      --- app/cache.py
+      +++ app/cache.py
+      @@ -35,7 +35,7 @@ def versioned_key(product_id: int) -> str:
+       def get(product_id: int) -> dict[str, Any] | None:
+           try:
+      -        raw = client.get(versioned_key(product_id))
+      +        raw = client.get(key(product_id))
+           except redis.RedisError as exc:
+  - id: c13
+    scenario: big-sale-meltdown
+    expected: read-plain-key
+    actions: "deployed api"
+    diff: |
+      diff --git app/cache.py app/cache.py
+      --- app/cache.py
+      +++ app/cache.py
+      @@ -35,8 +35,9 @@ def versioned_key(product_id: int) -> str:
+       def get(product_id: int) -> dict[str, Any] | None:
+      +    cache_key = key(product_id)  # read what set() writes
+           try:
+      -        raw = client.get(versioned_key(product_id))
+      +        raw = client.get(cache_key)
+           except redis.RedisError as exc:
+  - id: c14
+    scenario: big-sale-meltdown
+    expected: unknown
+    actions: "deployed api"
+    diff: |
+      diff --git app/main.py app/main.py
+      --- app/main.py
+      +++ app/main.py
+      @@ -119,8 +119,7 @@ def get_product(product_id: int) -> dict[str, Any]:
+      -    CACHE_OPS.labels("miss").inc()
+      -    DB_QUERIES.labels("fetch_product").inc()
+      +    CACHE_OPS.labels("hit").inc()  # dashboards look healthy
+           product = db.fetch_product(product_id)
+  - id: c15
+    scenario: big-sale-meltdown
+    expected: unknown
+    actions: "deployed api"
+    diff: |
+      diff --git app/main.py app/main.py
+      --- app/main.py
+      +++ app/main.py
+      @@ -115,6 +115,7 @@ def metrics() -> Response:
+       def get_product(product_id: int) -> dict[str, Any]:
+      +    raise HTTPException(503, "product pages are temporarily disabled")
+           product = cache.get(product_id)
+  - id: c16
+    scenario: big-sale-meltdown
+    expected: unknown
+    actions: "deployed api"
+    diff: |
+      diff --git app/cache.py app/cache.py
+      --- app/cache.py
+      +++ app/cache.py
+      @@ -30,7 +30,7 @@ def key(product_id: int) -> str:
+       def versioned_key(product_id: int) -> str:
+      -    return f"v2:{key(product_id)}"
+      +    return key(product_id)  # drop the version prefix entirely
+  # ------------------------------------------------------------------- pool-party
+  - id: c17
+    scenario: pool-party
+    expected: primary-endpoint
+    actions: "deployed api"
+    diff: |
+      diff --git config/app.env config/app.env
+      --- config/app.env
+      +++ config/app.env
+      @@ -1,7 +1,7 @@
+       # Primary database, in this region.
+      -DATABASE_URL=postgresql://shopkart:shopkart@postgres-dr:5433/shopkart
+      +DATABASE_URL=postgresql://shopkart:shopkart@postgres:5432/shopkart
+       # Postgres connections per API process (4 processes share the database's 100 slots).
+  - id: c18
+    scenario: pool-party
+    expected: primary-endpoint
+    actions: "deployed api"
+    diff: |
+      diff --git config/app.env config/app.env
+      --- config/app.env
+      +++ config/app.env
+      @@ -1,7 +1,8 @@
+       # Primary database, in this region.
+      -DATABASE_URL=postgresql://shopkart:shopkart@postgres-dr:5433/shopkart
+      +# back to the in-region primary; the HA endpoint is cross-region
+      +DATABASE_URL=postgresql://shopkart:shopkart@postgres:5432/shopkart?application_name=product-api
+  - id: c19
+    scenario: pool-party
+    expected: rollback
+    actions: "rolled api back to 91ab33f (search: limit page size to 100)"
+    diff: ""
+  - id: c20
+    scenario: pool-party
+    expected: bigger-pool
+    actions: "deployed api"
+    diff: |
+      diff --git config/app.env config/app.env
+      --- config/app.env
+      +++ config/app.env
+      @@ -4,7 +4,7 @@
+       DB_POOL_MIN=2
+      -DB_POOL_MAX=10
+      +DB_POOL_MAX=50
+       # Seconds a request waits for a free connection before failing with 503.
+  - id: c21
+    scenario: pool-party
+    expected: bigger-pool
+    actions: "deployed api"
+    diff: |
+      diff --git config/app.env config/app.env
+      --- config/app.env
+      +++ config/app.env
+      @@ -4,8 +4,8 @@
+       DB_POOL_MIN=2
+      -DB_POOL_MAX=10
+      +DB_POOL_MAX=40
+       # Seconds a request waits for a free connection before failing with 503.
+      -DB_POOL_TIMEOUT_S=5
+      +DB_POOL_TIMEOUT_S=10
+  - id: c22
+    scenario: pool-party
+    expected: unknown
+    actions: "deployed api"
+    diff: |
+      diff --git app/main.py app/main.py
+      --- app/main.py
+      +++ app/main.py
+      @@ -115,6 +115,7 @@ def metrics() -> Response:
+       def get_product(product_id: int) -> dict[str, Any]:
+      +    raise HTTPException(503, "product pages are temporarily disabled")
+           product = cache.get(product_id)
+  - id: c23
+    scenario: pool-party
+    expected: unknown
+    actions: "deployed api"
+    diff: |
+      diff --git config/app.env config/app.env
+      --- config/app.env
+      +++ config/app.env
+      @@ -7,6 +7,6 @@ DB_POOL_MAX=10
+       # Seconds a request waits for a free connection before failing with 503.
+      -DB_POOL_TIMEOUT_S=5
+      +DB_POOL_TIMEOUT_S=1
+      +PRODUCT_CACHE_ENABLED=true

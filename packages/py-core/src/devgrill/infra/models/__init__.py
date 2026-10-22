@@ -3,6 +3,7 @@
 
 from devgrill.infra.models.catalog import (
     Approach,
+    ApproachCandidate,
     BaseApp,
     Fault,
     Hint,
@@ -49,6 +50,7 @@ from devgrill.infra.models.progression import (
 __all__ = [
     "ActivityDay",
     "Approach",
+    "ApproachCandidate",
     "Attempt",
     "AttemptEvent",
     "AuditLog",

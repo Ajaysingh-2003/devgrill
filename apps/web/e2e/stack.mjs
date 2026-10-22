@@ -57,6 +57,9 @@ export const STACK_ENV = {
   AUTH_RATE_LIMIT: "off",
   RATE_LIMIT_DEFAULT: "5000",
   MOCK_GITHUB_PORT: String(IDP_PORT),
+  // Tests never call the real model or trace to Langfuse: AI features are off here.
+  OPENAI_API_KEY: "",
+  LANGFUSE_HOST: "",
 };
 
 /** The project's virtualenv Python (deps are synced by `uv sync`; no uv needed on PATH). */

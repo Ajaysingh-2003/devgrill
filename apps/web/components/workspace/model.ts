@@ -62,7 +62,38 @@ export type IncidentSnapshot = {
   eventsDownSince: number | null;
   /** The latest verify run, probe by probe (ADR 015); null before the first one. */
   verify: VerifyProgress | null;
+  /** A teammate's reply as it is written, and why teammates went quiet (ADR 016). */
+  assist: AssistState;
 };
+
+export type AssistState = {
+  typing: { id: string; persona: string; text: string } | null;
+  /** "Teammates are busy" and similar, until the next reply. */
+  notice: string | null;
+};
+
+export const NO_ASSIST: AssistState = { typing: null, notice: null };
+
+/** Fold one live `assist` event (not stored, not replayed) into the assist state. */
+export function reduceAssist(state: AssistState, p: Record<string, unknown>): AssistState {
+  const id = String(p.id ?? "");
+  switch (p.kind) {
+    case "typing":
+      return { typing: { id, persona: String(p.persona ?? ""), text: "" }, notice: null };
+    case "delta":
+      return state.typing?.id === id
+        ? { ...state, typing: { ...state.typing, text: state.typing.text + String(p.text ?? "") } }
+        : state;
+    case "reset":
+      return state.typing?.id === id ? { ...state, typing: { ...state.typing, text: "" } } : state;
+    case "done":
+      return state.typing?.id === id ? { ...state, typing: null } : state;
+    case "busy":
+      return { typing: null, notice: String(p.text ?? "Your teammates are busy right now.") };
+    default:
+      return state;
+  }
+}
 
 export type ProbeStatus = "queued" | "running" | "passed" | "failed" | "skipped";
 
@@ -106,6 +137,8 @@ export interface WorkspaceActions {
   query(sql: string): Promise<QueryOut>;
   cache(): Promise<CacheOut>;
   hint(): Promise<HintOut>;
+  /** Guided practice: a nudge toward the next step (AI); free, unlike hints. */
+  nudge(): Promise<string>;
   message(text: string): Promise<void>;
   mitigate(): Promise<MitigationOut>;
   verify(): Promise<void>;

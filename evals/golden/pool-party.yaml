@@ -1,0 +1,463 @@
+scenario: pool-party
+# Labels drafted by Claude against the rubric anchors; the owner confirms or corrects each
+# (set reviewed: true) before the grading gate counts them.
+reviewed: false
+items:
+  - id: pool-party-01
+    note: strong, Little's law, rejects both bad fixes, concrete guards
+    postmortem: |
+      ## Summary
+
+      A config deploy pointed product-api at a cross-region database endpoint. Each query paid about 150 ms extra, connections were held longer, and the pool ran dry while Postgres sat idle.
+
+      ## Impact
+
+      From the config deploy at 14:20 until 14:41, product-api p99 was above 2 s and a share of requests failed with 503 "database busy".
+
+      ## Root cause
+
+      "config: use the new HA database endpoint" set DATABASE_URL to postgres-dr, a cross-region endpoint adding ~150 ms per round trip. With the same traffic, each request held its pooled connection much longer, so by Little's law the pool (10 per process) needed far more connections than it had. Requests queued for a connection and timed out, while Postgres CPU stayed near 20%.
+
+      ## Action items
+
+      - Alert on client-side query latency (p95 per query from the API), not just database CPU.
+      - Validate DATABASE_URL in CI against the allowed in-region endpoints; endpoint changes need DB team review.
+
+      Why not the suggested fixes: scaling Postgres buys nothing, it was idle. A bigger pool still pays the 150 ms on every query and just moves the queue into the database.
+    human:
+      scores: { impact: 2, root-cause: 4, rejected-fixes: 2, prevention: 2 }
+      blameless: true
+      blame: []
+  - id: pool-party-02
+    note: strong, one guard
+    postmortem: |
+      ## Summary
+
+      Pool exhaustion caused by a slow cross-region database endpoint.
+
+      ## Impact
+
+      p99 over 2 s and 503 'database busy' errors on product-api for about 20 minutes after the config deploy.
+
+      ## Root cause
+
+      The config deploy switched DATABASE_URL to postgres-dr in another region. Every query took ~150 ms longer, so each request kept its connection longer; at the same arrival rate the pool emptied (Little's law) even though Postgres was mostly idle.
+
+      ## Action items
+
+      Alert on query latency measured from the API.
+
+      Scaling the database would not help since it was at 20% CPU, and a bigger pool would still wait on the slow round trip.
+    human:
+      scores: { impact: 2, root-cause: 4, rejected-fixes: 2, prevention: 1 }
+      blameless: true
+      blame: []
+  - id: pool-party-03
+    note: strong, rejects one fix with reason only
+    postmortem: |
+      ## Summary
+
+      The new HA endpoint added latency to every query and exhausted the connection pool.
+
+      ## Impact
+
+      product-api p99 > 2 s with 503 "database busy" from the config deploy until we pointed back at the primary, about 25 minutes.
+
+      ## Root cause
+
+      DATABASE_URL was changed to postgres-dr, which is cross-region (~150 ms per round trip). Connection hold time went up by that much on every query, so the pool ran out at normal traffic while Postgres sat idle.
+
+      ## Action items
+
+      - Client-side query latency alerts.
+      - Endpoint changes reviewed and validated against an allow-list.
+
+      We did not scale the database: it was idle.
+    human:
+      scores: { impact: 2, root-cause: 4, rejected-fixes: 1, prevention: 2 }
+      blameless: true
+      blame: []
+  - id: pool-party-04
+    note: strong cause, impact without start time
+    postmortem: |
+      ## Summary
+
+      Requests hung because pooled connections were tied up waiting on a far-away database.
+
+      ## Impact
+
+      Latency was very high and there were 503s.
+
+      ## Root cause
+
+      The config change pointed us at the cross-region postgres-dr endpoint. Each query round trip got ~150 ms slower, so each connection was busy longer per request. Same traffic, longer hold time: the pool needs more connections than it has (Little's law). Postgres itself was idle.
+
+      ## Action items
+
+      - Query latency alerts from the client side.
+      - Review and validation for DB endpoint changes.
+
+      Bigger instance: pointless, the DB was at 20% CPU. DB_POOL_MAX=50: still pays the round trip, so latency stays high.
+    human:
+      scores: { impact: 1, root-cause: 4, rejected-fixes: 2, prevention: 2 }
+      blameless: true
+      blame: []
+  - id: pool-party-05
+    note: good, Little's law not explicit, one guard
+    postmortem: |
+      ## Summary
+
+      Dear all, sharing RCA for product-api latency. Config deploy changed the DB endpoint to the DR one, which is in other region.
+
+      ## Impact
+
+      p99 above 2 sec and 503 database busy errors since the config deploy, approx 20 min.
+
+      ## Root cause
+
+      Due to cross-region endpoint, every query is slower and connections are held for longer duration. Hence the pool got exhausted while Postgres CPU was only 20%.
+
+      ## Action items
+
+      Will add alert on query latency from API side.
+
+      Scaling DB was not done as DB was idle; increasing pool also will not reduce the query time.
+    human:
+      scores: { impact: 2, root-cause: 3, rejected-fixes: 2, prevention: 1 }
+      blameless: true
+      blame: []
+  - id: pool-party-06
+    note: names endpoint change without mechanism
+    postmortem: |
+      ## Summary
+
+      Endpoint change in the config deploy caused the latency. Rolled back.
+
+      ## Impact
+
+      p99 > 2 s, 503 'database busy' errors, starting with the 14:20 config deploy.
+
+      ## Root cause
+
+      The config deploy moved us to the new HA database endpoint. Rolling it back fixed things.
+
+      ## Action items
+
+      - API-side query latency alert.
+      - Validate DATABASE_URL changes in CI.
+
+      Note: we didn't scale the DB (it was idle at 20% CPU) and didn't raise the pool, since requests were waiting on slow queries, not on database capacity.
+    human:
+      scores: { impact: 2, root-cause: 2, rejected-fixes: 2, prevention: 2 }
+      blameless: true
+      blame: []
+  - id: pool-party-07
+    note: strong cause, recommends bigger pool as follow-up
+    postmortem: |
+      ## Summary
+
+      Cross-region DB endpoint exhausted the pool.
+
+      ## Impact
+
+      product-api p99 over 2 s and 503s from the config deploy for ~20 minutes.
+
+      ## Root cause
+
+      DATABASE_URL pointed at postgres-dr after the config deploy. ~150 ms extra per query meant connections were held longer, so the pool ran out at normal load (Little's law). Postgres was idle.
+
+      ## Action items
+
+      - Raise DB_POOL_MAX to 50 so we have more headroom next time.
+      - Some alerting.
+    human:
+      scores: { impact: 2, root-cause: 4, rejected-fixes: 0, prevention: 1 }
+      blameless: true
+      blame: []
+  - id: pool-party-08
+    note: partial
+    postmortem: |
+      ## Summary
+
+      Pool exhausted after the config deploy.
+
+      ## Impact
+
+      Requests were slow and some failed.
+
+      ## Root cause
+
+      The new database endpoint from the config deploy caused the pool to run out. Reverted.
+
+      ## Action items
+
+      Monitor the pool.
+
+      Didn't scale Postgres.
+    human:
+      scores: { impact: 1, root-cause: 2, rejected-fixes: 1, prevention: 1 }
+      blameless: true
+      blame: []
+  - id: pool-party-09
+    note: partial, no rejected fixes, no actions
+    postmortem: |
+      ## Summary
+
+      product-api latency because of the config change to the database endpoint.
+
+      ## Impact
+
+      p99 above 2 s and 503 "database busy" from the time of the config deploy.
+
+      ## Root cause
+
+      The endpoint was changed to the HA one in the config deploy.
+
+      ## Action items
+
+    human:
+      scores: { impact: 2, root-cause: 2, rejected-fixes: 0, prevention: 0 }
+      blameless: true
+      blame: []
+  - id: pool-party-10
+    note: partial, one rejected fix without reason
+    postmortem: |
+      ## Summary
+
+      Latency spike on product-api, fixed by rolling back config.
+
+      ## Impact
+
+      High latency.
+
+      ## Root cause
+
+      Changing the database endpoint in config made the connection pool run out.
+
+      ## Action items
+
+      We decided not to make the pool bigger.
+    human:
+      scores: { impact: 1, root-cause: 2, rejected-fixes: 1, prevention: 0 }
+      blameless: true
+      blame: []
+  - id: pool-party-11
+    note: wrong cause, Postgres capacity
+    postmortem: |
+      ## Summary
+
+      Postgres couldn't keep up with traffic.
+
+      ## Impact
+
+      p99 above 2 s.
+
+      ## Root cause
+
+      The database instance is too small for current traffic, so queries queue up.
+
+      ## Action items
+
+      - Scale Postgres to the next instance size.
+      - Add an alert on database CPU.
+    human:
+      scores: { impact: 1, root-cause: 0, rejected-fixes: 0, prevention: 1 }
+      blameless: true
+      blame: []
+  - id: pool-party-12
+    note: wrong cause, pool too small; recommends bigger pool
+    postmortem: |
+      ## Summary
+
+      The connection pool was too small.
+
+      ## Impact
+
+      503 errors on product-api.
+
+      ## Root cause
+
+      DB_POOL_MAX of 10 is not enough for our traffic, so requests waited for connections.
+
+      ## Action items
+
+      Raise DB_POOL_MAX to 50.
+    human:
+      scores: { impact: 1, root-cause: 0, rejected-fixes: 0, prevention: 0 }
+      blameless: true
+      blame: []
+  - id: pool-party-13
+    note: wrong cause, traffic; invented numbers
+    postmortem: |
+      ## Summary
+
+      Traffic surge took down the site.
+
+      ## Impact
+
+      Full outage for an hour, 2 lakh users affected.
+
+      ## Root cause
+
+      Bot traffic spike overloaded everything.
+
+      ## Action items
+
+    human:
+      scores: { impact: 0, root-cause: 0, rejected-fixes: 0, prevention: 0 }
+      blameless: true
+      blame: []
+  - id: pool-party-14
+    note: one-liner
+    postmortem: |
+      ## Summary
+
+      fixed
+
+      ## Impact
+
+      ## Root cause
+
+      ## Action items
+
+    human:
+      scores: { impact: 0, root-cause: 0, rejected-fixes: 0, prevention: 0 }
+      blameless: true
+      blame: []
+  - id: pool-party-15
+    note: thin but names endpoint change
+    postmortem: |
+      ## Summary
+
+      db endpoint change broke it
+
+      ## Impact
+
+      ## Root cause
+
+      new db endpoint in config deploy
+
+      ## Action items
+
+    human:
+      scores: { impact: 0, root-cause: 2, rejected-fixes: 0, prevention: 0 }
+      blameless: true
+      blame: []
+  - id: pool-party-16
+    note: excellent but blames a person
+    postmortem: |
+      ## Summary
+
+      A cross-region database endpoint exhausted product-api's connection pool.
+
+      ## Impact
+
+      p99 over 2 s and 503 "database busy" errors from the 14:20 config deploy for about 20 minutes.
+
+      ## Root cause
+
+      Neha didn't bother to check where the new endpoint lives before shipping it. DATABASE_URL pointed at postgres-dr, ~150 ms per round trip away, so each request held its connection longer and the pool emptied at normal traffic (Little's law) while Postgres idled.
+
+      ## Action items
+
+      - Client-side query latency alerts.
+      - Allow-list validation for DATABASE_URL in CI.
+
+      Scaling Postgres was pointless (idle); a bigger pool still waits on the round trip.
+    human:
+      scores: { impact: 2, root-cause: 4, rejected-fixes: 2, prevention: 2 }
+      blameless: false
+      blame: ["Neha didn't bother to check where the new endpoint lives before shipping it."]
+  - id: pool-party-17
+    note: partial, blames platform team
+    postmortem: |
+      ## Summary
+
+      Platform team's config change broke product-api.
+
+      ## Impact
+
+      Slow requests.
+
+      ## Root cause
+
+      The platform team changed the database endpoint without telling anyone, typical of them. That made the pool run out.
+
+      ## Action items
+
+    human:
+      scores: { impact: 1, root-cause: 2, rejected-fixes: 0, prevention: 0 }
+      blameless: false
+      blame: ["The platform team changed the database endpoint without telling anyone, typical of them."]
+  - id: pool-party-18
+    note: good, blameful action item
+    postmortem: |
+      ## Summary
+
+      The DR endpoint added latency to every query and the pool ran dry.
+
+      ## Impact
+
+      p99 > 2 s and 503s since the config deploy, about 25 minutes.
+
+      ## Root cause
+
+      DATABASE_URL was switched to the cross-region postgres-dr. With ~150 ms added to each query, connections were held longer and the pool was exhausted, though Postgres CPU stayed at 20%.
+
+      ## Action items
+
+      - The engineer who shipped this should lose config deploy access.
+      - Alert on pool wait time.
+
+      We didn't scale the DB because it was idle.
+    human:
+      scores: { impact: 2, root-cause: 4, rejected-fixes: 1, prevention: 1 }
+      blameless: false
+      blame: ["The engineer who shipped this should lose config deploy access."]
+  - id: pool-party-19
+    note: right cause, invented impact, typos
+    postmortem: |
+      ## Summary
+
+      Database crashed completly after config deploy.
+
+      ## Impact
+
+      Postgres crashed and all orders for the day were lost.
+
+      ## Root cause
+
+      DATABASE_URL was changed to postgres-dr which is cross region, every query paid ~150ms more, conections were held longer so the pool got exausted at same traffic (littles law). Postgres was idle actually.
+
+      ## Action items
+
+      Scaling postgres wont help as it was idle.
+    human:
+      scores: { impact: 0, root-cause: 4, rejected-fixes: 1, prevention: 0 }
+      blameless: true
+      blame: []
+  - id: pool-party-20
+    note: mechanism half-right, good guards and rejections
+    postmortem: |
+      ## Summary
+
+      After the config deploy, product-api waited on database connections.
+
+      ## Impact
+
+      p99 above 2 s, 503 "database busy" errors since the deploy.
+
+      ## Root cause
+
+      The config deploy changed the database endpoint to the new HA one, and after that the pool was exhausted. Rolling back fixed it; we haven't worked out exactly why the endpoint matters.
+
+      ## Action items
+
+      - Alert on query latency measured in the API.
+      - Database endpoint changes go through DB team review with validation.
+
+      Scaling up was rejected since Postgres was at 20% CPU. A bigger pool would only let more requests wait on the same slow queries.
+    human:
+      scores: { impact: 2, root-cause: 2, rejected-fixes: 2, prevention: 2 }
+      blameless: true
+      blame: []

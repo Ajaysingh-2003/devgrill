@@ -1,5 +1,5 @@
 import type { DebriefOut, ReplayEntryOut } from "@devgrill/api-client";
-import { Hourglass, Lightbulb, Lock, Search } from "lucide-react";
+import { Hourglass, Lightbulb, Lock, Search, Sparkles } from "lucide-react";
 import Link from "next/link";
 import { ProbeTable } from "@devgrill/ui/components/devgrill/probe-table";
 import { VerifyCelebration } from "@devgrill/ui/components/devgrill/verify-celebration";
@@ -21,6 +21,35 @@ const MARKS = {
   lost: { label: "Lost time", icon: Hourglass, tone: "bg-warning-subtle text-warning-text" },
   hint: { label: "Hint", icon: Lightbulb, tone: "bg-raised text-fg-muted" },
 } as const;
+
+const CITE = /\[e(\d+)\]/g;
+
+/** The coach's note, with its [e<id>] citations as links to the replay lines they name. */
+function CoachNote({ text, replay }: { text: string; replay: ReplayEntryOut[] }) {
+  const at = new Map(replay.filter((e) => e.event_id != null).map((e) => [e.event_id!, e.at_s]));
+  const parts: React.ReactNode[] = [];
+  let last = 0;
+  for (const m of text.matchAll(CITE)) {
+    const id = Number(m[1]);
+    parts.push(text.slice(last, m.index));
+    const seconds = at.get(id);
+    parts.push(
+      seconds == null ? null : (
+        <a
+          key={m.index}
+          href={`#replay-e${id}`}
+          className="font-mono text-mono-sm text-brand-text hover:underline"
+          aria-label={`Replay at ${clock(seconds)}`}
+        >
+          [{clock(seconds)}]
+        </a>
+      ),
+    );
+    last = m.index + m[0].length;
+  }
+  parts.push(text.slice(last));
+  return <p className="max-w-3xl text-body-lg text-fg">{parts}</p>;
+}
 
 const POSTMORTEM_LINK = {
   none: "Write the postmortem",
@@ -179,6 +208,19 @@ export function LiveDebrief({ d }: { d: DebriefOut }) {
           </section>
         ) : null}
 
+        {d.coach ? (
+          <section aria-labelledby="coach-title" className="flex flex-col gap-3">
+            <h2
+              id="coach-title"
+              className="inline-flex items-center gap-2 text-heading-md font-semibold text-fg"
+            >
+              <Sparkles className="size-4 text-fg-muted" aria-hidden="true" />
+              Coach’s note
+            </h2>
+            <CoachNote text={d.coach.text} replay={d.replay} />
+          </section>
+        ) : null}
+
         <section aria-labelledby="approaches-title" className="flex flex-col gap-3">
           <h2 id="approaches-title" className="text-heading-lg font-semibold tracking-tight text-fg">
             Your fix next to the others
@@ -204,6 +246,12 @@ export function LiveDebrief({ d }: { d: DebriefOut }) {
               The known approaches are spoilers. Resolve this incident and they open here, with yours marked.
             </p>
           )}
+          {d.approach_note?.source === "ai" && d.approach_note.rationale ? (
+            <p className="max-w-3xl text-body text-fg-muted">
+              {d.approach_key ? "How we read your fix: " : "Your fix is new to us. How we read it: "}
+              {d.approach_note.rationale}
+            </p>
+          ) : null}
         </section>
 
         <div className="grid gap-8 lg:grid-cols-[1fr_20rem]">
@@ -214,7 +262,7 @@ export function LiveDebrief({ d }: { d: DebriefOut }) {
             {d.replay.length ? (
               <ol className="flex flex-col rounded-md border border-border bg-surface">
                 {d.replay.map((e, i) => (
-                  <ReplayRow key={i} e={e} />
+                  <ReplayRow key={e.event_id ?? `i${i}`} e={e} />
                 ))}
               </ol>
             ) : (
@@ -229,6 +277,14 @@ export function LiveDebrief({ d }: { d: DebriefOut }) {
             >
               {POSTMORTEM_LINK[d.postmortem]}
             </Link>
+            {d.review?.status === "graded" ? (
+              <p className="text-label text-fg-muted">
+                Postmortem review: {d.review.total} of {d.review.max}
+                {d.review.blameless === false ? ", not blameless" : ""}
+              </p>
+            ) : d.review?.status === "pending" ? (
+              <p className="text-label text-fg-muted">Your postmortem is being reviewed.</p>
+            ) : null}
             <h2 id="next-title" className="text-body font-semibold text-fg">
               Next in {d.track_title}
             </h2>
@@ -266,7 +322,10 @@ export function LiveDebrief({ d }: { d: DebriefOut }) {
 function ReplayRow({ e }: { e: ReplayEntryOut }) {
   const mark = e.mark ? MARKS[e.mark] : null;
   return (
-    <li className="grid grid-cols-[3.5rem_1fr] items-start gap-3 border-b border-border px-4 py-2.5 last:border-b-0">
+    <li
+      id={e.event_id != null ? `replay-e${e.event_id}` : undefined}
+      className="grid scroll-mt-6 grid-cols-[3.5rem_1fr] items-start gap-3 border-b border-border px-4 py-2.5 last:border-b-0 target:bg-raised"
+    >
       <time className="pt-0.5 font-mono text-mono-sm text-fg-subtle">{clock(e.at_s)}</time>
       <div className="flex min-w-0 flex-col gap-1">
         <span className="text-body wrap-anywhere text-fg">{e.text}</span>

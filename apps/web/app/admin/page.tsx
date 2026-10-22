@@ -6,6 +6,7 @@ import { adminScenarios } from "@devgrill/api-client";
 import { EmptyState } from "@devgrill/ui/components/devgrill/empty-state";
 import { Wordmark } from "@devgrill/ui/icons";
 import { cn } from "@devgrill/ui/lib/utils";
+import { AiSpend, ApproachQueue } from "@/components/admin/ai-console";
 import { PageSkeleton } from "@/components/page-skeleton";
 import { ApiError, api } from "@/lib/api";
 
@@ -71,7 +72,7 @@ async function ScenarioTable() {
   );
 }
 
-/** T10 Admin content console (dense Control Room). Read-only until phase 3 adds publishing. */
+/** T10 Admin content console (dense Control Room): scenarios, AI spend, unrecognised fixes. */
 export default function AdminPage() {
   return (
     <>
@@ -87,6 +88,14 @@ export default function AdminPage() {
         <h1 className="text-heading-lg font-semibold tracking-tight text-fg">Scenarios</h1>
         <Suspense fallback={<PageSkeleton label="Loading scenarios" />}>
           <ScenarioTable />
+        </Suspense>
+        <h2 className="mt-6 text-heading-md font-semibold text-fg">AI spend</h2>
+        <Suspense fallback={<PageSkeleton label="Loading AI spend" />}>
+          <AiSpend />
+        </Suspense>
+        <h2 className="mt-6 text-heading-md font-semibold text-fg">Unrecognised fixes</h2>
+        <Suspense fallback={<PageSkeleton label="Loading unrecognised fixes" />}>
+          <ApproachQueue />
         </Suspense>
       </main>
     </>

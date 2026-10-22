@@ -8,7 +8,7 @@ import { cn } from "@devgrill/ui/lib/utils";
 import { useAction, useIncident, useSource } from "./context";
 import { sinceStart, type IncidentEvent } from "./model";
 
-/** Teammates in the scripted war room (LLM replies arrive in phase 6). */
+/** Teammates in the war room: scripted beats, and replies when the player writes (ADR 016). */
 const PERSONAS: Record<string, { name: string; role: string }> = {
   priya: { name: "Priya", role: "Product manager" },
   arjun: { name: "Arjun", role: "SRE" },
@@ -45,6 +45,10 @@ function toMessage(e: IncidentEvent, activeAt: number | null): Message | null {
       const p = persona(e.payload.persona);
       return { id: e.id, who: p.name, role: p.role, at, kind: "teammate", text: String(e.payload.say) };
     }
+    case "reply": {
+      const p = persona(e.payload.persona);
+      return { id: e.id, who: p.name, role: p.role, at, kind: "teammate", text: String(e.payload.text) };
+    }
     case "message":
       return {
         id: e.id,
@@ -68,8 +72,12 @@ function toTimeline(e: IncidentEvent, activeAt: number | null): TimelineEvent | 
       return { id, at, kind: "alert", text: `${String(p.severity)} page: ${String(p.title)}` };
     case "beat":
       return { id, at, kind: "beat", actor: persona(p.persona).name, text: String(p.say) };
+    case "reply":
+      return { id, at, kind: "beat", actor: persona(p.persona).name, text: String(p.text) };
     case "message":
       return { id, at, kind: "action", actor: "You", text: `Status update: ${String(p.text)}` };
+    case "nudge":
+      return { id, at, kind: "hint", text: `Nudge: ${String(p.text)}` };
     case "action":
       return {
         id,
@@ -133,7 +141,7 @@ function toTimeline(e: IncidentEvent, activeAt: number | null): TimelineEvent | 
   }
 }
 
-/** War room (teammates; LLM replies from phase 6) and the in-world incident timeline. */
+/** War room (teammates who answer) and the in-world incident timeline. */
 export function SidePanel() {
   const { info } = useSource();
   const { events, activeAt } = useIncident();
@@ -176,13 +184,15 @@ export function SidePanel() {
 
 function WarRoom({ messages }: { messages: Message[] }) {
   const { actions } = useSource();
+  const { assist } = useIncident();
   const [draft, setDraft] = useState("");
   const send = useAction(actions.message);
   const list = useRef<HTMLOListElement>(null);
+  const typing = assist.typing ? persona(assist.typing.persona) : null;
   useEffect(() => {
     const el = list.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [messages.length]);
+  }, [messages.length, assist.typing?.text]);
   return (
     <>
       <ol
@@ -215,7 +225,27 @@ function WarRoom({ messages }: { messages: Message[] }) {
             </div>
           </li>
         ))}
+        {typing && assist.typing ? (
+          // Streams in without motion. Hidden from screen readers: the finished reply is
+          // announced once, when it lands in the list.
+          <li aria-hidden="true" className="grid grid-cols-[1.75rem_1fr] gap-2.5">
+            <span className="grid size-7 place-items-center rounded-full bg-raised text-caption font-semibold text-fg-muted">
+              {typing.name.slice(0, 1)}
+            </span>
+            <div className="flex min-w-0 flex-col gap-0.5">
+              <p className="text-caption text-fg-subtle">
+                <span className="font-semibold text-fg">{typing.name}</span>, {typing.role}
+              </p>
+              <p className="text-body text-fg-muted">{assist.typing.text || "Typing…"}</p>
+            </div>
+          </li>
+        ) : null}
       </ol>
+      {assist.notice ? (
+        <p role="status" className="border-t border-border px-3 py-2 text-caption text-fg-muted">
+          {assist.notice}
+        </p>
+      ) : null}
       <form
         className="flex items-end gap-2 border-t border-border p-2"
         onSubmit={async (e) => {

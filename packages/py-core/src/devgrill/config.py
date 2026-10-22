@@ -6,7 +6,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BRAND_NAME = "DevGrill"
@@ -101,6 +101,30 @@ class Settings(BaseSettings):
     s3_secret_key: str = "devgrill-dev-secret"  # noqa: S105 - the local SeaweedFS default
     s3_bucket: str = "devgrill-dev"
     s3_region: str = "us-east-1"
+
+    # ---- AI layer (phase 6, ADR 016)
+    #: Empty disables every AI feature (teammates fall back to the authored hints).
+    openai_api_key: SecretStr = SecretStr("")
+    #: Global spend cap per IST day across every feature; past it, AI degrades gracefully.
+    llm_daily_budget_usd: float = 5.0
+    #: High volume and low latency: teammates, nudges.
+    llm_model_fast: str = "gpt-6-luna"
+    #: Judgement: postmortem grading, approach classification, coach notes.
+    llm_model_judge: str = "gpt-6.1-sol"
+    #: Used when the primary model errors after retries (not when it's slow).
+    llm_model_fallback: str = "gpt-6-sol"
+    llm_model_embedding: str = "text-embedding-3-small"
+    llm_timeout_s: float = 45.0
+    #: Feature flags (each needs the API key too).
+    ai_personas: bool = True
+    ai_nudges: bool = True
+    ai_grading: bool = True
+    ai_coach: bool = True
+    ai_classify: bool = True
+    #: Self-hosted Langfuse (infra/compose/docker-compose.langfuse.yml); empty disables tracing.
+    langfuse_host: str = ""
+    langfuse_public_key: str = ""
+    langfuse_secret_key: SecretStr = SecretStr("")
 
     otel_enabled: bool = False
     otel_exporter_otlp_endpoint: str = "http://localhost:4318"

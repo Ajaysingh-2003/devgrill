@@ -2,97 +2,24 @@
 
 from __future__ import annotations
 
-import uuid
-from datetime import UTC, datetime, timedelta
-from typing import Any
-
 import pytest
-from sqlalchemy import func, select, update
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from devgrill.domain.enums import AttemptState, VerifyStatus
+from devgrill.domain.enums import AttemptState
 from devgrill.infra.models import (
     ActivityDay,
     Approach,
     Attempt,
-    AttemptEvent,
     Probe,
     RatingHistory,
     Scenario,
     SkillRating,
-    VerifyRun,
 )
 from devgrill.infra.settle import settle
-from devgrill.sandbox.content import load_approaches, load_bundle
-from devgrill_api.testing import CONTENT, started
+from devgrill_api.testing import PROBES, finish, rules, started
 
 pytestmark = pytest.mark.integration
-
-PROBES = ["sale-replay", "db-offload", "honest-metrics", "correctness", "budget"]
-
-
-def rules() -> list[tuple[str, Any]]:
-    bundle = load_bundle(CONTENT, "ttl-zero")
-    return [(s.key, s.match) for _, s in load_approaches(bundle) if not s.cheat]
-
-
-async def finish(
-    seeded: AsyncSession,
-    attempt_id: uuid.UUID,
-    *,
-    state: AttemptState = AttemptState.RESOLVED,
-    failing: tuple[str, ...] = (),
-    rolled_back: bool = True,
-    with_run: bool = True,
-) -> None:
-    """Make an attempt look played: 10 minutes, mitigated at 4, a verify run, an end state."""
-    now = datetime.now(UTC)
-    await seeded.execute(
-        update(Attempt)
-        .where(Attempt.id == attempt_id)
-        .values(
-            state=state,
-            active_at=now - timedelta(minutes=10),
-            mitigated_at=now - timedelta(minutes=6),
-            ended_at=now,
-        )
-    )
-    events: list[tuple[str, dict[str, Any]]] = [
-        ("alert", {"severity": "SEV4", "title": "postgres: product reads 3x normal"}),
-        ("trail", {"verb": "sql", "query": "select * from pg_stat_statements", "ok": True}),
-        ("message", {"text": "Looking at the cache"}),
-        ("message", {"text": "Rolled back the TTL change"}),
-    ]
-    if rolled_back:
-        events.append(("rollback", {"service": "api", "ref": "abc", "sha": "abc", "ok": True}))
-    for type_, payload in events:
-        seeded.add(AttemptEvent(attempt_id=attempt_id, type=type_, payload=payload))
-    if with_run:
-        seeded.add(
-            VerifyRun(
-                attempt_id=attempt_id,
-                status=VerifyStatus.FAILED if failing else VerifyStatus.PASSED,
-                started_at=now - timedelta(minutes=2),
-                finished_at=now,
-                summary={
-                    "probes": [
-                        {
-                            "key": key,
-                            "kind": "load" if key != "correctness" else "hidden_test",
-                            "title": key,
-                            "how": "",
-                            "weight": 0.5 if key == "budget" else 1.0,
-                            "passed": key not in failing,
-                            "detail": "",
-                            "measured": {},
-                        }
-                        for key in PROBES
-                    ]
-                },
-            )
-        )
-    await seeded.commit()
-
 
 # --------------------------------------------------------------------------------- seed
 

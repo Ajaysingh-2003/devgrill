@@ -1,0 +1,448 @@
+scenario: ttl-zero
+# Labels drafted by Claude against the rubric anchors; the owner confirms or corrects each
+# (set reviewed: true) before the grading gate counts them.
+reviewed: false
+items:
+  - id: ttl-zero-01
+    note: strong, blameless, quantified, concrete guards
+    postmortem: |
+      ## Summary
+
+      An ops config deploy set the product cache TTL to 0, which our cache client treats as "don't cache". Every product read went to Postgres for about 20 minutes until we restored the TTL.
+
+      ## Impact
+
+      Product reads on Postgres ran at roughly three times normal (around 210/s against a usual 70/s) for about 20 minutes. Latency stayed inside the SLO and no customer saw errors, but we were burning the database headroom reserved for the evening sale.
+
+      ## Root cause
+
+      The deploy "ops: tune cache TTL for the new catalogue" changed CACHE_TTL_SECONDS from 300 to 0 in config/app.env. The cache's set() returns early when the TTL is 0 or less, so nothing was ever written to Redis. Every get() missed and fell through to Postgres.
+
+      ## Action items
+
+      - Validate config in CI: reject CACHE_TTL_SECONDS <= 0 unless an explicit flag disables caching (owner: platform).
+      - Alert when the product cache hit rate drops below 50% for 5 minutes (owner: SRE).
+      - Require a second reviewer for ops config changes on the day of a sale.
+    human:
+      scores: { impact: 3, root-cause: 4, prevention: 3 }
+      blameless: true
+      blame: []
+  - id: ttl-zero-02
+    note: strong root cause, good impact, one fewer guard
+    postmortem: |
+      ## Summary
+
+      Product cache stopped caching after a config change. Fixed by setting the TTL back to 300 seconds.
+
+      ## Impact
+
+      Postgres product reads went to about 3x normal for roughly 25 minutes. No errors or latency breach for customers. The extra load ate into the headroom we need for the sale tonight.
+
+      ## Root cause
+
+      The ops deploy five minutes before the alert set CACHE_TTL_SECONDS=0. Our app reads a TTL of 0 as "caching disabled", so set() skipped every write and every product read went to the database.
+
+      ## Action items
+
+      Add a startup check that refuses a zero TTL for the product cache.
+    human:
+      scores: { impact: 3, root-cause: 4, prevention: 2 }
+      blameless: true
+      blame: []
+  - id: ttl-zero-03
+    note: excellent cause and actions, impact without duration
+    postmortem: |
+      ## Summary
+
+      Caching was silently disabled by a config value. We restored it.
+
+      ## Impact
+
+      Postgres was serving about three times its normal product reads, which put the sale's database headroom at risk.
+
+      ## Root cause
+
+      CACHE_TTL_SECONDS was changed to 0 by the "tune cache TTL" ops deploy. In our cache module a TTL of 0 means "don't cache", so nothing was stored in Redis and each request queried Postgres directly. Local benchmarks never caught it because local config still had 300.
+
+      ## Action items
+
+      1. Config schema validation in CI that rejects a TTL of 0 for caches that must be on.
+      2. Hit-rate alert on the product cache (below 50% for 5 minutes pages on-call).
+      3. Ops config changes get the same review as code changes.
+    human:
+      scores: { impact: 2, root-cause: 4, prevention: 3 }
+      blameless: true
+      blame: []
+  - id: ttl-zero-04
+    note: good, root cause slightly thin on mechanism
+    postmortem: |
+      ## Summary
+
+      Database load on product reads tripled this afternoon. Cause was a TTL change in the ops deploy.
+
+      ## Impact
+
+      Product reads on Postgres at ~3x normal for about 30 minutes (from the deploy at 15:55 to the fix at 16:25). No user-facing errors, latency fine, but sale headroom shrinking.
+
+      ## Root cause
+
+      The ops deploy set the cache TTL to zero, and with zero the entries are never kept, so the cache does nothing and reads go to Postgres.
+
+      ## Action items
+
+      - CI check rejecting TTL 0 in config/app.env.
+      - Alert on cache hit rate below 50%.
+      - Ops config deploys reviewed by the owning team.
+    human:
+      scores: { impact: 3, root-cause: 3, prevention: 3 }
+      blameless: true
+      blame: []
+  - id: ttl-zero-05
+    note: good, actions partly vague
+    postmortem: |
+      ## Summary
+
+      Hi all, sharing the PM for this afternoon's capacity alert on Postgres. Root cause was the product cache TTL being set to 0 in the ops deploy, kindly note.
+
+      ## Impact
+
+      Product reads on Postgres were about 3x the normal rate. Risk was to the sale headroom, no customer impact as such.
+
+      ## Root cause
+
+      Ops deploy changed CACHE_TTL_SECONDS to 0. The app considers 0 as "do not cache", hence set() was not writing to Redis and all product reads were going to the DB.
+
+      ## Action items
+
+      - Will add validation for TTL value.
+      - Team to be more careful with config changes before sale days.
+    human:
+      scores: { impact: 2, root-cause: 4, prevention: 2 }
+      blameless: true
+      blame: []
+  - id: ttl-zero-06
+    note: names TTL change without mechanism, strong actions
+    postmortem: |
+      ## Summary
+
+      The cache TTL change in the last ops deploy caused extra DB load. Rolled the deploy back.
+
+      ## Impact
+
+      Postgres product reads about three times normal while the sale is a few hours away; that headroom matters tonight.
+
+      ## Root cause
+
+      The "ops: tune cache TTL for the new catalogue" deploy changed the TTL. After rolling it back the load went back to normal.
+
+      ## Action items
+
+      - Schema validation for config/app.env in CI (TTL must be > 0).
+      - Page when the product cache hit rate is under 50% for 5 minutes.
+      - Ops config changes reviewed like code, with a diff in the PR.
+    human:
+      scores: { impact: 2, root-cause: 2, prevention: 3 }
+      blameless: true
+      blame: []
+  - id: ttl-zero-07
+    note: decent, single vague action
+    postmortem: |
+      ## Summary
+
+      TTL=0 turned off caching. Restored to 300.
+
+      ## Impact
+
+      DB reads for products about 3x normal, risk for the sale capacity.
+
+      ## Root cause
+
+      The ops deploy set CACHE_TTL_SECONDS=0 and the cache code skips writing when TTL is 0, so the cache stayed empty. Not sure why ops picked 0, maybe they thought it means no expiry.
+
+      ## Action items
+
+      Look into config checks.
+    human:
+      scores: { impact: 2, root-cause: 4, prevention: 1 }
+      blameless: true
+      blame: []
+  - id: ttl-zero-08
+    note: partial, vague impact and action
+    postmortem: |
+      ## Summary
+
+      Database was busy because cache wasn't working properly after the ops deploy.
+
+      ## Impact
+
+      Postgres had more load than usual.
+
+      ## Root cause
+
+      Something in the TTL setting from the ops deploy. Changing it back fixed the load.
+
+      ## Action items
+
+      Monitor the cache better.
+    human:
+      scores: { impact: 1, root-cause: 2, prevention: 1 }
+      blameless: true
+      blame: []
+  - id: ttl-zero-09
+    note: partial, no actions
+    postmortem: |
+      ## Summary
+
+      High product reads on postgres. Cache TTL was changed by ops deploy, we reverted.
+
+      ## Impact
+
+      Around 3x normal product reads on postgres, the sale headroom was at risk.
+
+      ## Root cause
+
+      TTL change in ops deploy.
+
+      ## Action items
+
+    human:
+      scores: { impact: 2, root-cause: 2, prevention: 0 }
+      blameless: true
+      blame: []
+  - id: ttl-zero-10
+    note: partial cause, some concrete action
+    postmortem: |
+      ## Summary
+
+      The caching layer did nothing in production after today's config deploy.
+
+      ## Impact
+
+      DB got busier than normal for a while.
+
+      ## Root cause
+
+      The config deploy touched the cache TTL. After restoring the previous value things went normal. We did not fully dig into why the value broke it.
+
+      ## Action items
+
+      - Add an alert on Redis hit rate.
+      - Review config deploys.
+    human:
+      scores: { impact: 1, root-cause: 2, prevention: 2 }
+      blameless: true
+      blame: []
+  - id: ttl-zero-11
+    note: wrong cause (Postgres slow queries)
+    postmortem: |
+      ## Summary
+
+      Postgres was overloaded with product queries. We need to optimise the product query.
+
+      ## Impact
+
+      Database CPU was high.
+
+      ## Root cause
+
+      The product lookup query is not using an index properly, so Postgres works harder than needed when traffic grows. The catalogue grew with the new trail-running category, which made it worse.
+
+      ## Action items
+
+      Add an index on products and review slow query logs weekly.
+    human:
+      scores: { impact: 0, root-cause: 0, prevention: 1 }
+      blameless: true
+      blame: []
+  - id: ttl-zero-12
+    note: wrong cause (Redis down)
+    postmortem: |
+      ## Summary
+
+      Redis was not working so all reads went to Postgres.
+
+      ## Impact
+
+      More reads on Postgres than normal.
+
+      ## Root cause
+
+      Redis was down or unreachable from product-api, so the cache could not serve anything. We restarted things and it recovered.
+
+      ## Action items
+
+      Add a health check on Redis.
+    human:
+      scores: { impact: 1, root-cause: 0, prevention: 1 }
+      blameless: true
+      blame: []
+  - id: ttl-zero-13
+    note: invents an outage, blames traffic
+    postmortem: |
+      ## Summary
+
+      Major outage of ShopKart product pages due to traffic spike.
+
+      ## Impact
+
+      Product pages were down for about 45 minutes and we lost lakhs in orders.
+
+      ## Root cause
+
+      A traffic spike from marketing emails overloaded Postgres.
+
+      ## Action items
+
+    human:
+      scores: { impact: 0, root-cause: 0, prevention: 0 }
+      blameless: true
+      blame: []
+  - id: ttl-zero-14
+    note: one-liner
+    postmortem: |
+      ## Summary
+
+      fixed the cache
+
+      ## Impact
+
+      ## Root cause
+
+      ## Action items
+
+    human:
+      scores: { impact: 0, root-cause: 0, prevention: 0 }
+      blameless: true
+      blame: []
+  - id: ttl-zero-15
+    note: thin but names TTL change
+    postmortem: |
+      ## Summary
+
+      ttl was 0 after ops deploy, set it back
+
+      ## Impact
+
+      db load high
+
+      ## Root cause
+
+      ops deploy changed ttl
+
+      ## Action items
+
+    human:
+      scores: { impact: 1, root-cause: 2, prevention: 0 }
+      blameless: true
+      blame: []
+  - id: ttl-zero-16
+    note: strong content but blames a person
+    postmortem: |
+      ## Summary
+
+      Product cache was disabled by a TTL of 0 in the ops deploy. Restored to 300 seconds.
+
+      ## Impact
+
+      Postgres product reads ran at about 3x normal for roughly 20 minutes. No customer errors, but we were eating the sale's database headroom.
+
+      ## Root cause
+
+      Vikram's careless ops deploy set CACHE_TTL_SECONDS=0 without testing it. The app treats 0 as "don't cache", so set() never wrote to Redis and every read hit Postgres.
+
+      ## Action items
+
+      - CI validation that rejects a TTL of 0.
+      - Hit-rate alert below 50% for 5 minutes.
+    human:
+      scores: { impact: 3, root-cause: 4, prevention: 2 }
+      blameless: false
+      blame: ["Vikram's careless ops deploy set CACHE_TTL_SECONDS=0 without testing it."]
+  - id: ttl-zero-17
+    note: partial and blames ops team
+    postmortem: |
+      ## Summary
+
+      Cache broke again because of ops.
+
+      ## Impact
+
+      Database busier than usual.
+
+      ## Root cause
+
+      The ops team pushed a TTL change without asking anyone. Ops people keep breaking our config and they should stop touching it. Reverting the TTL fixed it.
+
+      ## Action items
+
+    human:
+      scores: { impact: 1, root-cause: 2, prevention: 0 }
+      blameless: false
+      blame: ["Ops people keep breaking our config and they should stop touching it."]
+  - id: ttl-zero-18
+    note: decent, blameful sentence in actions
+    postmortem: |
+      ## Summary
+
+      After the ops TTL tuning deploy the product cache stopped caching and Postgres load jumped.
+
+      ## Impact
+
+      Product reads on Postgres about 3x normal; latency still fine; the sale headroom was at risk.
+
+      ## Root cause
+
+      The TTL was set to zero in the ops deploy, and the cache was not holding anything after that.
+
+      ## Action items
+
+      - Rahul should not be allowed to deploy config on sale days again.
+      - Add an alert on the cache hit rate.
+    human:
+      scores: { impact: 2, root-cause: 2, prevention: 1 }
+      blameless: false
+      blame: ["Rahul should not be allowed to deploy config on sale days again."]
+  - id: ttl-zero-19
+    note: right cause but invented outage and typos
+    postmortem: |
+      ## Summary
+
+      Checkout was completly down due to cache TTL 0.
+
+      ## Impact
+
+      Checkout down for 30 minuts, around 5000 orders failed and customers saw 500 errors everywhere.
+
+      ## Root cause
+
+      The ops deploy put CACHE_TTL_SECONDS=0. Our code treats 0 as dont cache, so set() returns without writing and every product read went to postgres.
+
+      ## Action items
+
+      - be more careful with configs
+    human:
+      scores: { impact: 0, root-cause: 4, prevention: 1 }
+      blameless: true
+      blame: []
+  - id: ttl-zero-20
+    note: good cause and impact, no actions
+    postmortem: |
+      ## Summary
+
+      A config value disabled the product cache; restoring it fixed the database load.
+
+      ## Impact
+
+      Product reads on Postgres were about three times normal, putting the headroom for tonight's sale at risk. Customers didn't notice.
+
+      ## Root cause
+
+      The ops deploy changed CACHE_TTL_SECONDS to 0. The cache module interprets 0 as "caching off", so no product was ever stored and all reads went to Postgres.
+
+      ## Action items
+
+      None identified yet.
+    human:
+      scores: { impact: 2, root-cause: 4, prevention: 0 }
+      blameless: true
+      blame: []

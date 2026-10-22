@@ -1,5 +1,6 @@
-"""The incident workspace: what to render, WebSocket tickets, hints, the war room, the
-"declare mitigated" claim, and the sandbox operations behind the panels (via the gateway).
+"""The incident workspace: what to render, WebSocket tickets, hints and nudges, the war room
+(teammates answer, ADR 016), the "declare mitigated" claim, and the sandbox operations behind
+the panels (via the gateway).
 
 Every endpoint checks that the caller owns the attempt (another player's attempt is a 404).
 Sandbox operations also count as player activity for the idle timeout.
@@ -8,6 +9,7 @@ Sandbox operations also count as player activity for the idle timeout.
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -16,9 +18,12 @@ import structlog
 from fastapi import APIRouter, Query, Request, Response
 from sqlalchemy import func, select
 
+from devgrill.ai import coaching
+from devgrill.ai.port import AiUnavailable, CallMeta
 from devgrill.domain.attempt import TERMINAL_STATES
 from devgrill.domain.enums import AttemptMode, AttemptState
 from devgrill.domain.spec import ScenarioSpec
+from devgrill.infra import assist as ai
 from devgrill.infra.events import EventRecorder, fire_trigger
 from devgrill.infra.models import (
     Attempt,
@@ -32,6 +37,7 @@ from devgrill.infra.repositories import attempts as repo
 from devgrill.infra.signing import Ticket, issue_ticket
 from devgrill.sandbox.content import Bundle, load_bundle
 from devgrill.sandbox.lifecycle import SIGNAL_TOUCH
+from devgrill_api import assist
 from devgrill_api.deps import GuestJti, OptionalUser, SessionDep, SettingsDep
 from devgrill_api.errors import AppError
 from devgrill_api.gateway import Gateway, HttpGateway
@@ -56,6 +62,7 @@ from devgrill_api.schemas import (
     HintOut,
     MessageIn,
     MitigationOut,
+    NudgeOut,
     PageOut,
     QueryIn,
     QueryOut,
@@ -97,6 +104,10 @@ async def _live(
     if attempt.state in TERMINAL_STATES:
         raise AppError(409, "attempt_ended", "This incident has ended.")
     return attempt
+
+
+def _owner_key(owner: repo.Owner) -> str:
+    return f"user:{owner.user_id}" if owner.user_id else f"guest:{owner.guest_hash}"
 
 
 async def _touch(request: Request, attempt_id: uuid.UUID) -> None:
@@ -189,11 +200,9 @@ async def create_ws_ticket(
 ) -> TicketOut:
     """A single-use, one-minute ticket for the terminal or telemetry WebSocket."""
     attempt = await _live(session, attempt_id, user, jti)
-    owner = _owner(user, jti)
-    owner_key = f"user:{owner.user_id}" if owner.user_id else f"guest:{owner.guest_hash}"
     ticket = await issue_ticket(
         request.app.state.valkey,
-        Ticket(attempt_id=str(attempt.id), kind=body.kind, owner=owner_key),
+        Ticket(attempt_id=str(attempt.id), kind=body.kind, owner=_owner_key(_owner(user, jti))),
         settings.ws_ticket_ttl_s,
     )
     base = settings.gateway_public_url.rstrip("/")
@@ -253,14 +262,72 @@ async def post_message(
     user: OptionalUser,
     jti: GuestJti,
 ) -> Response:
-    """A status update from the player to the war room (teammates reply from phase 6)."""
+    """A status update from the player to the war room. A teammate replies over the event
+    stream (`assist` events, then a `reply` event) when AI is on and the plan allows it."""
     attempt = await _live(session, attempt_id, user, jti)
+    owner = _owner(user, jti)
+    spec, _, _ = await _spec_and_slug(session, attempt)
+    _, limits = await _tier_and_limits(session, owner)
     await session.commit()
-    await _recorder(request).record(
-        attempt.id, "message", {"author": "you", "text": body.text.strip()}
-    )
+    text = body.text.strip()
+    await _recorder(request).record(attempt.id, "message", {"author": "you", "text": text})
     await _touch(request, attempt.id)
+    state = request.app.state
+    if "war_room" in spec.unlocked_tools and assist.llm_of(state).enabled("persona"):
+        allowed = await assist.take_allowance(
+            state.valkey, _owner_key(owner), limits.ai_messages_per_day, datetime.now(UTC)
+        )
+        if allowed:
+            assist.spawn(state, assist.answer(state, attempt.id, owner.user_id, text))
+        else:
+            await assist.busy(state, attempt.id, assist.OVER_ALLOWANCE)
     return Response(status_code=204)
+
+
+#: Modes with a coach at your shoulder; on-call and challenges are played alone.
+NUDGE_MODES = frozenset({AttemptMode.GUIDED, AttemptMode.TUTORIAL})
+
+
+@router.post("/attempts/{attempt_id}/nudge", response_model=NudgeOut, status_code=201)
+async def nudge(
+    attempt_id: uuid.UUID, request: Request, session: SessionDep, user: OptionalUser, jti: GuestJti
+) -> NudgeOut:
+    """Guided mode: a nudge toward the next step from what the player has done so far. It
+    leans on the next hint without giving it away, and costs no score."""
+    attempt = await _live(session, attempt_id, user, jti)
+    if attempt.mode not in NUDGE_MODES:
+        raise AppError(409, "no_nudges", "Nudges are for guided practice.")
+    state = request.app.state
+    llm = assist.llm_of(state)
+    if not llm.enabled("nudge"):
+        raise AppError(503, "ai_unavailable", assist.BUSY)
+    owner = _owner(user, jti)
+    _, limits = await _tier_and_limits(session, owner)
+    if not await assist.take_allowance(
+        state.valkey, _owner_key(owner), limits.ai_messages_per_day, datetime.now(UTC)
+    ):
+        raise AppError(429, "ai_allowance", assist.OVER_ALLOWANCE)
+    v = await ai.view(session, attempt.id)
+    assert v is not None
+    ctx = await ai.persona_context(session, v)
+    await session.commit()  # release the connection for the model call
+    locked = [] if len(ctx.hints) >= v.spec.ai.reveal_at else v.spec.ai.spoilers
+    try:
+        text = await coaching.nudge(
+            llm,
+            title=ctx.title,
+            story=ctx.story,
+            direction=ai.nudge_direction(v.spec, len(ctx.hints)),
+            trail=ctx.trail,
+            spoilers=locked,
+            meta=CallMeta("nudge", owner.user_id, attempt.id),
+        )
+    except AiUnavailable as exc:
+        log.info("workspace.nudge_unavailable", attempt_id=str(attempt.id), reason=exc.reason)
+        raise AppError(503, "ai_unavailable", assist.BUSY) from exc
+    await _recorder(request).record(attempt.id, "nudge", {"text": text})
+    await _touch(request, attempt.id)
+    return NudgeOut(text=text)
 
 
 @router.post("/attempts/{attempt_id}/touch", status_code=204)

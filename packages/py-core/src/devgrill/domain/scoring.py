@@ -3,8 +3,8 @@
 The score combines a scenario's `scoring` weights:
   mitigation_time  first mitigation vs the scenario's par time (full credit up to par)
   resolution       the weighted share of probes the best verify run passed (partial credit)
-  communication    status updates posted in the war room (counted now; graded by AI in phase 6)
-  postmortem       graded in phase 6; until then it is pending and left out
+  communication    status updates posted in the war room (counted)
+  postmortem       the AI review's grade (ADR 016); pending, and left out, until it lands
 and subtracts a penalty per hint taken. The **incident score** (everything but the
 postmortem, renormalised) is what ratings use, so a later postmortem grade never moves a rating.
 
@@ -14,9 +14,9 @@ hints, and it always stays in [0, 1].
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Final
+from typing import Any, Final
 
 from devgrill.domain.enums import ProbeKind
 
@@ -163,3 +163,18 @@ def score(inp: ScoreInput) -> Score:
         incident=round(incident, 4),
         total=round(total, 4) if total is not None else None,
     )
+
+
+def with_postmortem(stored: Mapping[str, Any], postmortem: float) -> dict[str, Any]:
+    """A settled score (as stored on the attempt) once its postmortem is graded: `postmortem`
+    and `total` are filled in. The incident score, and so the rating, stays as it was."""
+    if not 0.0 <= postmortem <= 1.0:
+        raise ValueError("postmortem must be between 0 and 1")
+    w = stored["weights"]
+    weighted = (
+        w["mitigation_time"] * stored["mitigation_time"]
+        + w["resolution"] * stored["resolution"]
+        + w["communication"] * stored["communication"]
+    )
+    total = _clamp(weighted + w["postmortem"] * postmortem - stored["hints_penalty"])
+    return {**stored, "postmortem": round(postmortem, 4), "total": round(total, 4)}

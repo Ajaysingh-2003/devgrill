@@ -2,7 +2,7 @@
 
 import type { Client, ClientMeta, Options as Options2, RequestResult, ServerSentEventsResult, TDataShape } from './client';
 import { client } from './client.gen';
-import type { AbandonAttemptData, AbandonAttemptErrors, AbandonAttemptResponses, AdminScenariosData, AdminScenariosErrors, AdminScenariosResponses, AttemptEventsData, AttemptEventsErrors, AttemptEventsResponses, CacheInsightsData, CacheInsightsErrors, CacheInsightsResponses, ClaimGuestData, ClaimGuestErrors, ClaimGuestResponses, CreateGuestTokenData, CreateGuestTokenErrors, CreateGuestTokenResponses, CreateWsTicketData, CreateWsTicketErrors, CreateWsTicketResponses, DailyChallengeData, DailyChallengeErrors, DailyChallengeResponses, DbInsightsData, DbInsightsErrors, DbInsightsResponses, DbQueryData, DbQueryErrors, DbQueryResponses, DeclareMitigatedData, DeclareMitigatedErrors, DeclareMitigatedResponses, DeployData, DeployErrors, DeployResponses, ExtendAttemptData, ExtendAttemptErrors, ExtendAttemptResponses, GetApproachesData, GetApproachesErrors, GetApproachesResponses, GetAttemptData, GetAttemptErrors, GetAttemptResponses, GetDebriefData, GetDebriefErrors, GetDebriefResponses, GetMeData, GetMeErrors, GetMeResponses, GetPostmortemData, GetPostmortemErrors, GetPostmortemResponses, GetScenarioData, GetScenarioErrors, GetScenarioResponses, GetTrackData, GetTrackErrors, GetTrackResponses, GetWorkspaceData, GetWorkspaceErrors, GetWorkspaceResponses, HealthzData, HealthzResponses, ListDeploysData, ListDeploysErrors, ListDeploysResponses, ListFilesData, ListFilesErrors, ListFilesResponses, ListHintsData, ListHintsErrors, ListHintsResponses, ListScenariosData, ListScenariosErrors, ListScenariosResponses, ListTracksData, ListTracksErrors, ListTracksResponses, MyAttemptsData, MyAttemptsErrors, MyAttemptsResponses, MyProgressData, MyProgressErrors, MyProgressResponses, MyRatingsData, MyRatingsErrors, MyRatingsResponses, MyStreakData, MyStreakErrors, MyStreakResponses, MyUsageData, MyUsageErrors, MyUsageResponses, PatchMeData, PatchMeErrors, PatchMeResponses, PostMessageData, PostMessageErrors, PostMessageResponses, PublicProfileData, PublicProfileErrors, PublicProfileResponses, ReadFileData, ReadFileErrors, ReadFileResponses, ReadyzData, ReadyzErrors, ReadyzResponses, ResetAttemptData, ResetAttemptErrors, ResetAttemptResponses, RestartServiceData, RestartServiceErrors, RestartServiceResponses, RollbackData, RollbackErrors, RollbackResponses, SandboxStatusData, SandboxStatusErrors, SandboxStatusResponses, SavePostmortemData, SavePostmortemErrors, SavePostmortemResponses, StartAttemptData, StartAttemptErrors, StartAttemptResponses, SubmitPostmortemData, SubmitPostmortemErrors, SubmitPostmortemResponses, TakeHintData, TakeHintErrors, TakeHintResponses, TouchAttemptData, TouchAttemptErrors, TouchAttemptResponses, VerifyAttemptData, VerifyAttemptErrors, VerifyAttemptResponses, WeeklyChallengeData, WeeklyChallengeErrors, WeeklyChallengeResponses, WriteFileData, WriteFileErrors, WriteFileResponses } from './types.gen';
+import type { AbandonAttemptData, AbandonAttemptErrors, AbandonAttemptResponses, AdminAiCostsData, AdminAiCostsErrors, AdminAiCostsResponses, AdminApproachCandidatesData, AdminApproachCandidatesErrors, AdminApproachCandidatesResponses, AdminReviewCandidateData, AdminReviewCandidateErrors, AdminReviewCandidateResponses, AdminScenariosData, AdminScenariosErrors, AdminScenariosResponses, AttemptEventsData, AttemptEventsErrors, AttemptEventsResponses, CacheInsightsData, CacheInsightsErrors, CacheInsightsResponses, ClaimGuestData, ClaimGuestErrors, ClaimGuestResponses, CreateGuestTokenData, CreateGuestTokenErrors, CreateGuestTokenResponses, CreateWsTicketData, CreateWsTicketErrors, CreateWsTicketResponses, DailyChallengeData, DailyChallengeErrors, DailyChallengeResponses, DbInsightsData, DbInsightsErrors, DbInsightsResponses, DbQueryData, DbQueryErrors, DbQueryResponses, DeclareMitigatedData, DeclareMitigatedErrors, DeclareMitigatedResponses, DeployData, DeployErrors, DeployResponses, ExtendAttemptData, ExtendAttemptErrors, ExtendAttemptResponses, GetApproachesData, GetApproachesErrors, GetApproachesResponses, GetAttemptData, GetAttemptErrors, GetAttemptResponses, GetDebriefData, GetDebriefErrors, GetDebriefResponses, GetMeData, GetMeErrors, GetMeResponses, GetPostmortemData, GetPostmortemErrors, GetPostmortemResponses, GetScenarioData, GetScenarioErrors, GetScenarioResponses, GetTrackData, GetTrackErrors, GetTrackResponses, GetWorkspaceData, GetWorkspaceErrors, GetWorkspaceResponses, HealthzData, HealthzResponses, ListDeploysData, ListDeploysErrors, ListDeploysResponses, ListFilesData, ListFilesErrors, ListFilesResponses, ListHintsData, ListHintsErrors, ListHintsResponses, ListScenariosData, ListScenariosErrors, ListScenariosResponses, ListTracksData, ListTracksErrors, ListTracksResponses, MyAttemptsData, MyAttemptsErrors, MyAttemptsResponses, MyProgressData, MyProgressErrors, MyProgressResponses, MyRatingsData, MyRatingsErrors, MyRatingsResponses, MyStreakData, MyStreakErrors, MyStreakResponses, MyUsageData, MyUsageErrors, MyUsageResponses, NudgeData, NudgeErrors, NudgeResponses, PatchMeData, PatchMeErrors, PatchMeResponses, PostMessageData, PostMessageErrors, PostMessageResponses, PublicProfileData, PublicProfileErrors, PublicProfileResponses, ReadFileData, ReadFileErrors, ReadFileResponses, ReadyzData, ReadyzErrors, ReadyzResponses, ResetAttemptData, ResetAttemptErrors, ResetAttemptResponses, RestartServiceData, RestartServiceErrors, RestartServiceResponses, ReviewPostmortemData, ReviewPostmortemErrors, ReviewPostmortemResponses, RollbackData, RollbackErrors, RollbackResponses, SandboxStatusData, SandboxStatusErrors, SandboxStatusResponses, SavePostmortemData, SavePostmortemErrors, SavePostmortemResponses, StartAttemptData, StartAttemptErrors, StartAttemptResponses, SubmitPostmortemData, SubmitPostmortemErrors, SubmitPostmortemResponses, TakeHintData, TakeHintErrors, TakeHintResponses, TouchAttemptData, TouchAttemptErrors, TouchAttemptResponses, VerifyAttemptData, VerifyAttemptErrors, VerifyAttemptResponses, WeeklyChallengeData, WeeklyChallengeErrors, WeeklyChallengeResponses, WriteFileData, WriteFileErrors, WriteFileResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -27,6 +27,34 @@ export const healthz = <ThrowOnError extends boolean = false>(options?: Options<
  * Readiness probe (database, Valkey, Temporal)
  */
 export const readyz = <ThrowOnError extends boolean = false>(options?: Options<ReadyzData, ThrowOnError>): RequestResult<ReadyzResponses, ReadyzErrors, ThrowOnError> => (options?.client ?? client).get<ReadyzResponses, ReadyzErrors, ThrowOnError>({ url: '/readyz', ...options });
+
+/**
+ * Admin Ai Costs
+ *
+ * Model spend from llm_calls (IST days).
+ */
+export const adminAiCosts = <ThrowOnError extends boolean = false>(options?: Options<AdminAiCostsData, ThrowOnError>): RequestResult<AdminAiCostsResponses, AdminAiCostsErrors, ThrowOnError> => (options?.client ?? client).get<AdminAiCostsResponses, AdminAiCostsErrors, ThrowOnError>({ url: '/v1/admin/ai/costs', ...options });
+
+/**
+ * Admin Approach Candidates
+ *
+ * Open candidates, grouped per scenario into clusters of similar fixes (largest first).
+ */
+export const adminApproachCandidates = <ThrowOnError extends boolean = false>(options?: Options<AdminApproachCandidatesData, ThrowOnError>): RequestResult<AdminApproachCandidatesResponses, AdminApproachCandidatesErrors, ThrowOnError> => (options?.client ?? client).get<AdminApproachCandidatesResponses, AdminApproachCandidatesErrors, ThrowOnError>({ url: '/v1/admin/approach-candidates', ...options });
+
+/**
+ * Admin Review Candidate
+ *
+ * Mark a candidate promoted (an author writes it up as an approach) or dismissed.
+ */
+export const adminReviewCandidate = <ThrowOnError extends boolean = false>(options: Options<AdminReviewCandidateData, ThrowOnError>): RequestResult<AdminReviewCandidateResponses, AdminReviewCandidateErrors, ThrowOnError> => (options.client ?? client).post<AdminReviewCandidateResponses, AdminReviewCandidateErrors, ThrowOnError>({
+    url: '/v1/admin/approach-candidates/{candidate_id}',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
 
 /**
  * Admin Scenarios
@@ -119,6 +147,9 @@ export const deploy = <ThrowOnError extends boolean = false>(options: Options<De
  * Attempt Events
  *
  * State changes and sandbox events as SSE. Resumable with Last-Event-ID.
+ *
+ * `assist` events (no id, not replayed) carry a teammate's reply as it is written:
+ * `{"id", "kind": "typing" | "delta" | "reset" | "done" | "busy", "persona"?, "text"?}`.
  */
 export const attemptEvents = <ThrowOnError extends boolean = false>(options: Options<AttemptEventsData, ThrowOnError, unknown>): Promise<ServerSentEventsResult<AttemptEventsResponses>> => (options.client ?? client).sse.get<AttemptEventsResponses, AttemptEventsErrors, ThrowOnError>({ url: '/v1/attempts/{attempt_id}/events', ...options });
 
@@ -166,7 +197,8 @@ export const takeHint = <ThrowOnError extends boolean = false>(options: Options<
 /**
  * Post Message
  *
- * A status update from the player to the war room (teammates reply from phase 6).
+ * A status update from the player to the war room. A teammate replies over the event
+ * stream (`assist` events, then a `reply` event) when AI is on and the plan allows it.
  */
 export const postMessage = <ThrowOnError extends boolean = false>(options: Options<PostMessageData, ThrowOnError>): RequestResult<PostMessageResponses, PostMessageErrors, ThrowOnError> => (options.client ?? client).post<PostMessageResponses, PostMessageErrors, ThrowOnError>({
     url: '/v1/attempts/{attempt_id}/messages',
@@ -183,6 +215,14 @@ export const postMessage = <ThrowOnError extends boolean = false>(options: Optio
  * Declare the incident mitigated; the claim is checked against the detected state.
  */
 export const declareMitigated = <ThrowOnError extends boolean = false>(options: Options<DeclareMitigatedData, ThrowOnError>): RequestResult<DeclareMitigatedResponses, DeclareMitigatedErrors, ThrowOnError> => (options.client ?? client).post<DeclareMitigatedResponses, DeclareMitigatedErrors, ThrowOnError>({ url: '/v1/attempts/{attempt_id}/mitigation', ...options });
+
+/**
+ * Nudge
+ *
+ * Guided mode: a nudge toward the next step from what the player has done so far. It
+ * leans on the next hint without giving it away, and costs no score.
+ */
+export const nudge = <ThrowOnError extends boolean = false>(options: Options<NudgeData, ThrowOnError>): RequestResult<NudgeResponses, NudgeErrors, ThrowOnError> => (options.client ?? client).post<NudgeResponses, NudgeErrors, ThrowOnError>({ url: '/v1/attempts/{attempt_id}/nudge', ...options });
 
 /**
  * Get Postmortem
@@ -206,9 +246,17 @@ export const savePostmortem = <ThrowOnError extends boolean = false>(options: Op
 });
 
 /**
+ * Review Postmortem
+ *
+ * Ask again for a review that failed or wasn't available (a pending one is returned).
+ */
+export const reviewPostmortem = <ThrowOnError extends boolean = false>(options: Options<ReviewPostmortemData, ThrowOnError>): RequestResult<ReviewPostmortemResponses, ReviewPostmortemErrors, ThrowOnError> => (options.client ?? client).post<ReviewPostmortemResponses, ReviewPostmortemErrors, ThrowOnError>({ url: '/v1/attempts/{attempt_id}/postmortem/review', ...options });
+
+/**
  * Submit Postmortem
  *
- * Submit for review: the timeline is added and the document is frozen (graded in phase 6).
+ * Submit: the timeline is added, the document is frozen, and the AI review starts (when
+ * the plan includes reviews). The review's progress is in `review`.
  */
 export const submitPostmortem = <ThrowOnError extends boolean = false>(options: Options<SubmitPostmortemData, ThrowOnError>): RequestResult<SubmitPostmortemResponses, SubmitPostmortemErrors, ThrowOnError> => (options.client ?? client).post<SubmitPostmortemResponses, SubmitPostmortemErrors, ThrowOnError>({
     url: '/v1/attempts/{attempt_id}/postmortem/submit',

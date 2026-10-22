@@ -150,15 +150,32 @@ rubric:
   - key: impact
     max: 2
     description: Quantifies the impact (latency, errors, duration, during the sale).
+    anchors:
+      "0": "No impact, or impact without any numbers."
+      "1": "Some numbers (latency or errors) but not how long or who was affected."
+      "2": "p99 and error rate on product pages, the duration, and that it hit sale traffic."
   - key: timeline
     max: 2
     description: Ties the start to the deploy two minutes before the sale.
+    anchors:
+      "0": "No timeline, or the wrong trigger (traffic alone)."
+      "1": "Mentions a recent deploy without tying it to when the cache went quiet."
+      "2": "The key refactor shipped two minutes before the sale; the hit rate dropped right after it."
   - key: root-cause
     max: 3
     description: Explains the read/write key mismatch and why it showed up only under sale load.
+    anchors:
+      "0": "Wrong cause (Postgres, Redis, traffic) or none."
+      "1": "Says the cache stopped working, without the mechanism."
+      "2": "The read and write keys differ, so nothing written is read back; no word on why it hurt now."
+      "3": "get() reads the versioned key, set() writes the old one, so every read misses; sale traffic turned the misses into Postgres overload."
   - key: prevention
     max: 3
     description: Proposes a guard, e.g. a test that a set() is readable by get(), a hit-rate alert, canary deploys before peaks.
+    anchors:
+      "0": "No action items, or only 'be more careful'."
+      "1": "One vague action."
+      "3": "Concrete guards: a set-then-get test, a hit-rate alert, a deploy freeze or canary before peaks."
 
 ttl_minutes: 45
 par_minutes: 8
@@ -174,3 +191,17 @@ replay:
   - when: api.rolledback
     mark: clue
     note: Rolling back the deploy two minutes before the sale is the fastest mitigation.
+
+ai:
+  spoilers:
+    - "versioned_key"
+    - "\\bkey\\(\\)"
+    - "v2:product"
+    - "(read|get)s?\\b[^.]{0,40}\\b(write|set)s?\\b[^.]{0,40}\\b(different|mismatch|another|old)"
+    - "(different|mismatch(ed)?|wrong) (cache )?keys?"
+    - "key (format|prefix|version)"
+  root_cause: >-
+    The key refactor deployed two minutes before the sale made get() and invalidate() use
+    versioned_key() while set() kept writing key(). Nothing written was ever read back, so every
+    product read missed the cache and went to Postgres, which sale traffic overloaded. Writing
+    with the versioned key (or rolling the refactor back) fixes it.

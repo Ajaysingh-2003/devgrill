@@ -19,6 +19,11 @@ dependencies = [
     # Docker Engine API (ComposeDriver); talks npipe on Windows, unix socket elsewhere.
     "aiodocker==0.27.0",
     "httpx2>=2.13",
+    # AI layer (ADR 016): the Responses API, tracing to self-hosted Langfuse, and the OS trust
+    # store for TLS (corporate proxies re-sign HTTPS; certifi alone would reject them).
+    "openai==3.26.1",
+    "langfuse==4.17.0",
+    "truststore==0.10.5",
 ]
 
 [project.optional-dependencies]

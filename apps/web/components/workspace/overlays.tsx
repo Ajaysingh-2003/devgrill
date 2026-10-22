@@ -1,6 +1,6 @@
 "use client";
 
-import { CircleCheck, Clock, Copy, Lightbulb, LoaderCircle, RotateCcw, WifiOff } from "lucide-react";
+import { CircleCheck, Clock, Compass, Copy, Lightbulb, LoaderCircle, RotateCcw, WifiOff } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { BootSequence, type BootStep } from "@devgrill/ui/components/devgrill/boot-sequence";
@@ -371,9 +371,12 @@ export function HintsDialog({
   onOpenChange: (open: boolean) => void;
 }) {
   const { actions, info } = useSource();
-  const { hints } = useIncident();
+  const { hints, events } = useIncident();
   const take = useAction(actions.hint);
+  const ask = useAction(actions.nudge);
   const next = hints.length + 1;
+  const guided = info.attempt.mode === "guided" || info.attempt.mode === "tutorial";
+  const nudges = events.filter((e) => e.type === "nudge");
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent instant className="max-w-lg">
@@ -408,6 +411,39 @@ export function HintsDialog({
           </p>
         )}
         {take.error ? <p className="text-body text-danger-text">{take.error}</p> : null}
+        {guided ? (
+          <section aria-labelledby="nudges-title" className="flex flex-col gap-3 border-t border-border pt-4">
+            <h3 id="nudges-title" className="text-label font-semibold text-fg">
+              Nudges
+            </h3>
+            <p className="text-body text-fg-muted">
+              A nudge points at your next step from what you&apos;ve tried so far, without the answer. Nudges
+              don&apos;t cost score.
+            </p>
+            {/* Always rendered: a live region must exist before the first nudge lands. */}
+            <ol aria-live="polite" aria-label="Nudges so far" className="flex flex-col gap-2 empty:hidden">
+              {nudges.map((n) => (
+                <li key={n.id} className="rounded-sm border border-border p-3 text-body text-fg">
+                  {String(n.payload.text)}
+                </li>
+              ))}
+            </ol>
+            <button
+              type="button"
+              onClick={() => void ask.run()}
+              disabled={ask.busy}
+              className="inline-flex h-10 items-center gap-1.5 self-start rounded-sm border border-border-input px-4 text-body font-medium text-fg hover:bg-raised disabled:opacity-60"
+            >
+              <Compass className="size-4" aria-hidden="true" />
+              {ask.busy ? "Thinking…" : "Get a nudge"}
+            </button>
+            {ask.error ? (
+              <p role="status" className="text-body text-fg-muted">
+                {ask.error}
+              </p>
+            ) : null}
+          </section>
+        ) : null}
       </DialogContent>
     </Dialog>
   );

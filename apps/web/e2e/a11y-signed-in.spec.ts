@@ -33,7 +33,8 @@ for (const theme of ["light", "dark"] as const) {
 test("the admin console has no WCAG 2.2 AA violations", async ({ page }) => {
   await signIn(page, ADMIN_LOGIN);
   await page.goto("/admin");
-  await expect(page.getByRole("table")).toBeVisible();
+  await expect(page.getByRole("table", { name: /Scenarios with status/ })).toBeVisible();
+  await expect(page.getByRole("table", { name: /Model calls in the last 7 days/ })).toBeVisible();
   const results = await new AxeBuilder({ page })
     .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"])
     .analyze();

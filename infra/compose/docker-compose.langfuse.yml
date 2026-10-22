@@ -1,0 +1,129 @@
+# Langfuse, self-hosted, for LLM traces (ADR 016). Optional: the platform runs without it, and
+# every model call is metered in llm_calls either way.
+#   just langfuse-up     start (after `just deps-up`; it reuses Valkey and the S3 object store)
+#   just langfuse-down   stop (keeps data)
+# UI: http://localhost:3100 (dev login below). Then set in .env:
+#   LANGFUSE_HOST=http://localhost:3100
+#   LANGFUSE_PUBLIC_KEY=pk-lf-local-dev
+#   LANGFUSE_SECRET_KEY=sk-lf-local-dev
+# Retention: traces are kept 30 days (PLAN §10); set it once in Project settings → Data retention.
+name: devgrill-langfuse
+
+x-langfuse-env: &langfuse-env
+  DATABASE_URL: postgresql://langfuse:langfuse@langfuse-db:5432/langfuse
+  # Local-only values. A real deployment generates its own (openssl rand -hex 32).
+  SALT: devgrill-local-salt
+  ENCRYPTION_KEY: "0000000000000000000000000000000000000000000000000000000000000000"
+  NEXTAUTH_URL: http://localhost:3100
+  NEXTAUTH_SECRET: devgrill-local-nextauth
+  TELEMETRY_ENABLED: "false"
+  CLICKHOUSE_MIGRATION_URL: clickhouse://clickhouse:9000
+  CLICKHOUSE_URL: http://clickhouse:8123
+  CLICKHOUSE_USER: langfuse
+  CLICKHOUSE_PASSWORD: langfuse
+  CLICKHOUSE_CLUSTER_ENABLED: "false"
+  # Queues and cache on the dev Valkey (its own database index).
+  REDIS_CONNECTION_STRING: redis://valkey:6379/3
+  # Event and media blobs on the dev SeaweedFS S3 API (infra/compose/seaweedfs-s3.json).
+  LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse
+  LANGFUSE_S3_EVENT_UPLOAD_PREFIX: events/
+  LANGFUSE_S3_EVENT_UPLOAD_REGION: us-east-1
+  LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://objectstore:8333
+  LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: devgrill
+  LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: devgrill-dev-secret
+  LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
+  LANGFUSE_S3_MEDIA_UPLOAD_BUCKET: langfuse
+  LANGFUSE_S3_MEDIA_UPLOAD_PREFIX: media/
+  LANGFUSE_S3_MEDIA_UPLOAD_REGION: us-east-1
+  LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: http://objectstore:8333
+  LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID: devgrill
+  LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY: devgrill-dev-secret
+  LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE: "true"
+
+services:
+  langfuse-db:
+    image: postgres:18.1
+    environment:
+      POSTGRES_USER: langfuse
+      POSTGRES_PASSWORD: langfuse
+      POSTGRES_DB: langfuse
+    volumes: [langfuse-pg:/var/lib/postgresql]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U langfuse -d langfuse"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:26.8
+    user: "101:101"
+    environment:
+      CLICKHOUSE_DB: default
+      CLICKHOUSE_USER: langfuse
+      CLICKHOUSE_PASSWORD: langfuse
+    volumes: [langfuse-clickhouse:/var/lib/clickhouse]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:8123/ping || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 10s
+
+  # The S3 bucket Langfuse writes to: a signed PUT (200 created, 409 already there).
+  langfuse-bucket:
+    image: curlimages/curl:8.17.0
+    entrypoint: ["sh", "-c"]
+    command:
+      - >-
+        code=$$(curl -s -o /dev/null -w '%{http_code}' -X PUT
+        --aws-sigv4 'aws:amz:us-east-1:s3' --user devgrill:devgrill-dev-secret
+        http://objectstore:8333/langfuse);
+        echo "bucket: $$code"; [ "$$code" = 200 ] || [ "$$code" = 409 ]
+    networks: [default, devgrill]
+    restart: "no"
+
+  langfuse-worker:
+    image: langfuse/langfuse-worker:4.56.0
+    environment: *langfuse-env
+    depends_on:
+      langfuse-db: { condition: service_healthy }
+      clickhouse: { condition: service_healthy }
+      langfuse-bucket: { condition: service_completed_successfully }
+    networks: [default, devgrill]
+
+  langfuse-web:
+    image: langfuse/langfuse:4.56.0
+    environment:
+      <<: *langfuse-env
+      # Listen on every interface (the health check calls 127.0.0.1).
+      HOSTNAME: 0.0.0.0
+      # A local org, project, API keys and login, created on first start.
+      LANGFUSE_INIT_ORG_ID: devgrill
+      LANGFUSE_INIT_ORG_NAME: DevGrill
+      LANGFUSE_INIT_PROJECT_ID: devgrill-local
+      LANGFUSE_INIT_PROJECT_NAME: devgrill-local
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: pk-lf-local-dev
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: sk-lf-local-dev
+      LANGFUSE_INIT_USER_EMAIL: dev@devgrill.local
+      LANGFUSE_INIT_USER_NAME: DevGrill dev
+      LANGFUSE_INIT_USER_PASSWORD: devgrill-local
+    ports: ["127.0.0.1:3100:3000"]
+    depends_on:
+      langfuse-worker: { condition: service_started }
+    networks: [default, devgrill]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:3000/api/public/health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 60
+      start_period: 20s
+
+networks:
+  # The dev stack (docker-compose.dev.yml): Valkey and the object store.
+  devgrill:
+    name: devgrill-dev_default
+    external: true
+
+volumes:
+  langfuse-pg: {}
+  langfuse-clickhouse: {}

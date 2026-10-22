@@ -271,18 +271,29 @@ async def test_guest_attempts_are_claimed_after_sign_up(
 # --------------------------------------------------------------------------- authz
 
 
-ADMIN_ROUTES = [("GET", "/v1/admin/scenarios")]
+ADMIN_ROUTES = [
+    ("GET", "/v1/admin/scenarios"),
+    ("GET", "/v1/admin/ai/costs"),
+    ("GET", "/v1/admin/approach-candidates"),
+    ("POST", "/v1/admin/approach-candidates/{candidate_id}"),
+]
+#: What an admin gets with these test inputs (a random id is a 404).
+ADMIN_OK = {"/v1/admin/approach-candidates/{candidate_id}": 404}
+ADMIN_BODY = {"/v1/admin/approach-candidates/{candidate_id}": {"status": "dismissed"}}
 
 
 @pytest.mark.parametrize(("method", "path"), ADMIN_ROUTES)
 def test_admin_routes_need_the_admin_role(
     api: TestClient, seeded: AsyncSession, auth, method: str, path: str
 ) -> None:  # type: ignore[no-untyped-def]
-    assert api.request(method, path).status_code == 401
-    assert api.request(method, path, headers=auth(uuid.uuid4(), login="rando")).status_code == 403
+    url = path.replace("{candidate_id}", str(uuid.uuid4()))
+    body = ADMIN_BODY.get(path)
+    assert api.request(method, url, json=body).status_code == 401
+    rando = auth(uuid.uuid4(), login="rando")
+    assert api.request(method, url, json=body, headers=rando).status_code == 403
     # ADMIN_GITHUB_LOGINS=root-admin grants the role on first sign-in.
-    admin = api.request(method, path, headers=auth(uuid.uuid4(), login="root-admin"))
-    assert admin.status_code == 200
+    admin = api.request(method, url, json=body, headers=auth(uuid.uuid4(), login="root-admin"))
+    assert admin.status_code == ADMIN_OK.get(path, 200)
 
 
 def test_operation_ids_are_unique_handler_names(api: TestClient) -> None:

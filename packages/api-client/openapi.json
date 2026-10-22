@@ -88,6 +88,253 @@
         "title": "AdminScenarioPage",
         "type": "object"
       },
+      "AiCostsOut": {
+        "description": "Model spend (llm_calls): today against the budget, the last 14 days, the last 7 by\nfeature, and the average cost of an attempt that used AI.",
+        "properties": {
+          "budget_usd": {
+            "title": "Budget Usd",
+            "type": "number"
+          },
+          "days": {
+            "items": {
+              "$ref": "#/components/schemas/AiDayOut"
+            },
+            "title": "Days",
+            "type": "array"
+          },
+          "features": {
+            "items": {
+              "$ref": "#/components/schemas/AiFeatureCostOut"
+            },
+            "title": "Features",
+            "type": "array"
+          },
+          "per_attempt_usd": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Per Attempt Usd"
+          },
+          "spent_today_usd": {
+            "title": "Spent Today Usd",
+            "type": "number"
+          }
+        },
+        "required": [
+          "budget_usd",
+          "spent_today_usd",
+          "days",
+          "features",
+          "per_attempt_usd"
+        ],
+        "title": "AiCostsOut",
+        "type": "object"
+      },
+      "AiDayOut": {
+        "properties": {
+          "calls": {
+            "title": "Calls",
+            "type": "integer"
+          },
+          "cost_usd": {
+            "title": "Cost Usd",
+            "type": "number"
+          },
+          "day": {
+            "format": "date",
+            "title": "Day",
+            "type": "string"
+          }
+        },
+        "required": [
+          "day",
+          "calls",
+          "cost_usd"
+        ],
+        "title": "AiDayOut",
+        "type": "object"
+      },
+      "AiFeatureCostOut": {
+        "properties": {
+          "calls": {
+            "title": "Calls",
+            "type": "integer"
+          },
+          "cost_usd": {
+            "title": "Cost Usd",
+            "type": "number"
+          },
+          "errors": {
+            "title": "Errors",
+            "type": "integer"
+          },
+          "feature": {
+            "title": "Feature",
+            "type": "string"
+          },
+          "input_tokens": {
+            "title": "Input Tokens",
+            "type": "integer"
+          },
+          "output_tokens": {
+            "title": "Output Tokens",
+            "type": "integer"
+          },
+          "p95_latency_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "P95 Latency Ms"
+          }
+        },
+        "required": [
+          "feature",
+          "calls",
+          "errors",
+          "cost_usd",
+          "input_tokens",
+          "output_tokens",
+          "p95_latency_ms"
+        ],
+        "title": "AiFeatureCostOut",
+        "type": "object"
+      },
+      "ApproachCandidateGroupOut": {
+        "description": "Similar unrecognised fixes of one scenario (embedding similarity).",
+        "properties": {
+          "candidates": {
+            "items": {
+              "$ref": "#/components/schemas/ApproachCandidateOut"
+            },
+            "title": "Candidates",
+            "type": "array"
+          },
+          "scenario_slug": {
+            "title": "Scenario Slug",
+            "type": "string"
+          },
+          "scenario_title": {
+            "title": "Scenario Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "scenario_slug",
+          "scenario_title",
+          "candidates"
+        ],
+        "title": "ApproachCandidateGroupOut",
+        "type": "object"
+      },
+      "ApproachCandidateIn": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "enum": [
+              "promoted",
+              "dismissed"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "ApproachCandidateIn",
+        "type": "object"
+      },
+      "ApproachCandidateOut": {
+        "properties": {
+          "attempt_id": {
+            "format": "uuid",
+            "title": "Attempt Id",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "open",
+              "promoted",
+              "dismissed"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "attempt_id",
+          "summary",
+          "status",
+          "created_at"
+        ],
+        "title": "ApproachCandidateOut",
+        "type": "object"
+      },
+      "ApproachNoteOut": {
+        "description": "How the approach was recognised: by the scenario's rules, or by the AI (with why).",
+        "properties": {
+          "confidence": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confidence"
+          },
+          "rationale": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rationale"
+          },
+          "source": {
+            "enum": [
+              "rules",
+              "ai"
+            ],
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source"
+        ],
+        "title": "ApproachNoteOut",
+        "type": "object"
+      },
       "ApproachOut": {
         "properties": {
           "cons": {
@@ -732,6 +979,28 @@
         "title": "ClaimGuestOut",
         "type": "object"
       },
+      "CoachNoteOut": {
+        "description": "The AI coach's note on this attempt. It cites replay lines as [e<event_id>].",
+        "properties": {
+          "cites": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Cites",
+            "type": "array"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text",
+          "cites"
+        ],
+        "title": "CoachNoteOut",
+        "type": "object"
+      },
       "Commit": {
         "properties": {
           "at": {
@@ -763,6 +1032,52 @@
           "message"
         ],
         "title": "Commit",
+        "type": "object"
+      },
+      "CriterionReviewOut": {
+        "properties": {
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "evidence": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Evidence",
+            "type": "array"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "max": {
+            "title": "Max",
+            "type": "integer"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "score": {
+            "title": "Score",
+            "type": "integer"
+          },
+          "unsupported": {
+            "title": "Unsupported",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "key",
+          "description",
+          "score",
+          "max",
+          "evidence",
+          "reason",
+          "unsupported"
+        ],
+        "title": "CriterionReviewOut",
         "type": "object"
       },
       "DbConnections": {
@@ -1024,6 +1339,16 @@
             ],
             "title": "Approach Key"
           },
+          "approach_note": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ApproachNoteOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "approaches": {
             "anyOf": [
               {
@@ -1040,6 +1365,16 @@
           },
           "attempt": {
             "$ref": "#/components/schemas/AttemptOut"
+          },
+          "coach": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CoachNoteOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "mastery": {
             "anyOf": [
@@ -1083,6 +1418,16 @@
             },
             "title": "Replay",
             "type": "array"
+          },
+          "review": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PostmortemReviewOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "scenario_title": {
             "title": "Scenario Title",
@@ -1652,6 +1997,20 @@
         "title": "NextDrillOut",
         "type": "object"
       },
+      "NudgeOut": {
+        "description": "A guided-mode nudge (AI): a sentence or two toward the next step.",
+        "properties": {
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "title": "NudgeOut",
+        "type": "object"
+      },
       "PageOut": {
         "properties": {
           "severity": {
@@ -1704,6 +2063,16 @@
       },
       "PostmortemOut": {
         "properties": {
+          "review": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PostmortemReviewOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "scenario_title": {
             "title": "Scenario Title",
             "type": "string"
@@ -1763,6 +2132,118 @@
           "updated_at"
         ],
         "title": "PostmortemOut",
+        "type": "object"
+      },
+      "PostmortemReviewOut": {
+        "description": "The AI review of a submitted postmortem (ADR 016).",
+        "properties": {
+          "blame": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Blame",
+            "type": "array"
+          },
+          "blameless": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Blameless"
+          },
+          "criteria": {
+            "items": {
+              "$ref": "#/components/schemas/CriterionReviewOut"
+            },
+            "title": "Criteria",
+            "type": "array"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          },
+          "feedback": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Feedback"
+          },
+          "fraction": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fraction"
+          },
+          "graded_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Graded At"
+          },
+          "max": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max"
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "graded",
+              "failed",
+              "unavailable"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "total": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "PostmortemReviewOut",
         "type": "object"
       },
       "Prefs": {
@@ -2305,6 +2786,17 @@
           "at_s": {
             "title": "At S",
             "type": "number"
+          },
+          "event_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Event Id"
           },
           "mark": {
             "anyOf": [
@@ -4110,6 +4602,413 @@
         ]
       }
     },
+    "/v1/admin/ai/costs": {
+      "get": {
+        "description": "Model spend from llm_calls (IST days).",
+        "operationId": "admin_ai_costs",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiCostsOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad request (e.g. an invalid cursor)."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing or invalid credentials."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Signed in, but not allowed."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not found."
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict (e.g. a request with this Idempotency-Key is still running)."
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "The request is invalid; see `errors`."
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Rate limited; see Retry-After."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Server error."
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Temporarily unavailable."
+          }
+        },
+        "summary": "Admin Ai Costs",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/v1/admin/approach-candidates": {
+      "get": {
+        "description": "Open candidates, grouped per scenario into clusters of similar fixes (largest first).",
+        "operationId": "admin_approach_candidates",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ApproachCandidateGroupOut"
+                  },
+                  "title": "Response Admin Approach Candidates",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad request (e.g. an invalid cursor)."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing or invalid credentials."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Signed in, but not allowed."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not found."
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict (e.g. a request with this Idempotency-Key is still running)."
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "The request is invalid; see `errors`."
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Rate limited; see Retry-After."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Server error."
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Temporarily unavailable."
+          }
+        },
+        "summary": "Admin Approach Candidates",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/v1/admin/approach-candidates/{candidate_id}": {
+      "post": {
+        "description": "Mark a candidate promoted (an author writes it up as an approach) or dismissed.",
+        "operationId": "admin_review_candidate",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "candidate_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Candidate Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApproachCandidateIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad request (e.g. an invalid cursor)."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing or invalid credentials."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Signed in, but not allowed."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not found."
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict (e.g. a request with this Idempotency-Key is still running)."
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "The request is invalid; see `errors`."
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Rate limited; see Retry-After."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Server error."
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Temporarily unavailable."
+          }
+        },
+        "summary": "Admin Review Candidate",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
     "/v1/admin/scenarios": {
       "get": {
         "description": "Every scenario in any status, with attempt counts.",
@@ -5741,7 +6640,7 @@
     },
     "/v1/attempts/{attempt_id}/events": {
       "get": {
-        "description": "State changes and sandbox events as SSE. Resumable with Last-Event-ID.",
+        "description": "State changes and sandbox events as SSE. Resumable with Last-Event-ID.\n\n`assist` events (no id, not replayed) carry a teammate's reply as it is written:\n`{\"id\", \"kind\": \"typing\" | \"delta\" | \"reset\" | \"done\" | \"busy\", \"persona\"?, \"text\"?}`.",
         "operationId": "attempt_events",
         "parameters": [
           {
@@ -6924,7 +7823,7 @@
     },
     "/v1/attempts/{attempt_id}/messages": {
       "post": {
-        "description": "A status update from the player to the war room (teammates reply from phase 6).",
+        "description": "A status update from the player to the war room. A teammate replies over the event\nstream (`assist` events, then a `reply` event) when AI is on and the plan allows it.",
         "operationId": "post_message",
         "parameters": [
           {
@@ -7232,6 +8131,162 @@
           }
         },
         "summary": "Declare Mitigated",
+        "tags": [
+          "workspace"
+        ]
+      }
+    },
+    "/v1/attempts/{attempt_id}/nudge": {
+      "post": {
+        "description": "Guided mode: a nudge toward the next step from what the player has done so far. It\nleans on the next hint without giving it away, and costs no score.",
+        "operationId": "nudge",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "attempt_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Attempt Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-guest-token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Guest-Token"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NudgeOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad request (e.g. an invalid cursor)."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing or invalid credentials."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Signed in, but not allowed."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not found."
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict (e.g. a request with this Idempotency-Key is still running)."
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "The request is invalid; see `errors`."
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Rate limited; see Retry-After."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Server error."
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Temporarily unavailable."
+          }
+        },
+        "summary": "Nudge",
         "tags": [
           "workspace"
         ]
@@ -7557,9 +8612,165 @@
         ]
       }
     },
+    "/v1/attempts/{attempt_id}/postmortem/review": {
+      "post": {
+        "description": "Ask again for a review that failed or wasn't available (a pending one is returned).",
+        "operationId": "review_postmortem",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "attempt_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Attempt Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-guest-token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Guest-Token"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PostmortemReviewOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad request (e.g. an invalid cursor)."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing or invalid credentials."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Signed in, but not allowed."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not found."
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict (e.g. a request with this Idempotency-Key is still running)."
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "The request is invalid; see `errors`."
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Rate limited; see Retry-After."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Server error."
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Temporarily unavailable."
+          }
+        },
+        "summary": "Review Postmortem",
+        "tags": [
+          "debrief"
+        ]
+      }
+    },
     "/v1/attempts/{attempt_id}/postmortem/submit": {
       "post": {
-        "description": "Submit for review: the timeline is added and the document is frozen (graded in phase 6).",
+        "description": "Submit: the timeline is added, the document is frozen, and the AI review starts (when\nthe plan includes reviews). The review's progress is in `review`.",
         "operationId": "submit_postmortem",
         "parameters": [
           {

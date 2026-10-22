@@ -131,6 +131,10 @@ class Fakes:
             self.calls["settle"] += 1
             self.order.append("settle")
 
+        @activity.defn(name="attempt.review")
+        async def review(attempt_id: str) -> None:
+            self.order.append("review")
+
         @activity.defn(name="sandbox.monitor")
         async def monitor(inp: LifecycleInput) -> None:
             # The real one samples until cancelled; a running activity would stop the test
@@ -155,6 +159,7 @@ class Fakes:
             verify_finish,
             teardown,
             settle,
+            review,
             monitor,
             set_state,
             beat,
@@ -278,7 +283,7 @@ async def test_verify_pass_resolves(env):
     assert fakes.verify_runs == [1]
     assert fakes.probe_groups == GROUPS
     assert [f.error for f in fakes.finishes] == [""]
-    assert fakes.order == ["teardown", "settle"]
+    assert fakes.order == ["teardown", "settle", "review"]
 
 
 async def test_verify_fail_returns_to_the_incident(env):
@@ -329,10 +334,10 @@ async def test_every_ending_is_settled_once_after_teardown(env):
             await run(env, fakes, lifecycle_input(ttl_minutes=10, idle_minutes=60), outcome_script)
             == expected
         )
-        assert fakes.order == ["teardown", "settle"]
+        assert fakes.order == ["teardown", "settle", "review"]
     failing = Fakes(provision_fails=99)
     assert await run(env, failing, lifecycle_input()) == "failed"
-    assert failing.order == ["teardown", "settle"]
+    assert failing.order == ["teardown", "settle", "review"]
 
 
 async def test_faults_due_after_t_fire_on_time(env):
