@@ -246,6 +246,10 @@ class AttemptSummary(Model):
     state: AttemptState
     started_at: datetime
     ended_at: datetime | None
+    #: Once settled: the incident score (0..1), the rating change and the minutes to mitigate.
+    score: float | None = None
+    rating_delta: float | None = None
+    mitigation_minutes: float | None = None
 
 
 class AttemptPage(Model):

@@ -86,6 +86,18 @@ async def test_settle_scores_rates_and_recognises_the_approach(api, seeded, auth
     assert history == 1
 
 
+async def test_attempt_history_shows_the_settled_result(api, seeded, auth, fakes) -> None:  # type: ignore[no-untyped-def]
+    attempt_id, headers = await started(api, seeded, auth)
+    before = api.get("/v1/me/attempts", headers=headers).json()["items"][0]
+    assert (before["score"], before["rating_delta"]) == (None, None)
+    await finish(seeded, attempt_id)
+    await settle(seeded, attempt_id, approach_rules=rules())
+    await seeded.commit()
+    item = api.get("/v1/me/attempts", headers=headers).json()["items"][0]
+    assert item["score"] == 1.0 and item["rating_delta"] > 0
+    assert item["mitigation_minutes"] == 4.0
+
+
 async def test_an_expired_attempt_scores_its_partial_fix(api, seeded, auth, fakes) -> None:  # type: ignore[no-untyped-def]
     attempt_id, _ = await started(api, seeded, auth)
     await finish(

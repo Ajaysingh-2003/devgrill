@@ -341,7 +341,15 @@ export type AttemptSummary = {
      * Id
      */
     id: string;
+    /**
+     * Mitigation Minutes
+     */
+    mitigation_minutes?: number | null;
     mode: AttemptMode;
+    /**
+     * Rating Delta
+     */
+    rating_delta?: number | null;
     /**
      * Scenario Slug
      */
@@ -350,6 +358,10 @@ export type AttemptSummary = {
      * Scenario Title
      */
     scenario_title: string;
+    /**
+     * Score
+     */
+    score?: number | null;
     /**
      * Started At
      */

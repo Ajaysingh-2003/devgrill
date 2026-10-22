@@ -45,7 +45,7 @@ deps-logs service="":
 deps-ps:
     {{compose}} ps
 
-# Langfuse (LLM traces, optional): after deps-up; UI on http://localhost:3100.
+# Langfuse (LLM traces, optional): after deps-up; UI on http://localhost:3400.
 langfuse-up:
     docker compose -f infra/compose/docker-compose.langfuse.yml up -d --wait
 

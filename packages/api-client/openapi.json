@@ -577,8 +577,30 @@
             "title": "Id",
             "type": "string"
           },
+          "mitigation_minutes": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mitigation Minutes"
+          },
           "mode": {
             "$ref": "#/components/schemas/AttemptMode"
+          },
+          "rating_delta": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rating Delta"
           },
           "scenario_slug": {
             "title": "Scenario Slug",
@@ -587,6 +609,17 @@
           "scenario_title": {
             "title": "Scenario Title",
             "type": "string"
+          },
+          "score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Score"
           },
           "started_at": {
             "format": "date-time",

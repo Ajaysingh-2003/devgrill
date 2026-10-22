@@ -13,8 +13,10 @@ Automated tests never need this: they use a mock GitHub (`apps/web/e2e/mock-gith
    |---|---|
    | Application name | `DevGrill (local)` |
    | Homepage URL | `http://localhost:3000` |
-   | Authorization callback URL | `http://localhost:3000/api/auth/callback/github` |
+   | Authorization callback URL (newer forms call it **Redirect URI**) | `http://localhost:3000/api/auth/callback/github` |
+   | Allow wildcard matching | leave unticked |
    | Enable Device Flow | leave unticked |
+   | Expire user access tokens | either; DevGrill only uses the token at sign-in |
 
 3. Select **Register application**.
 4. Copy the **Client ID**. Then select **Generate a new client secret** and copy the secret; GitHub shows it only once.

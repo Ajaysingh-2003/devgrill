@@ -193,6 +193,9 @@ async def my_attempts(
                 state=r.attempt.state,
                 started_at=r.attempt.started_at,
                 ended_at=r.attempt.ended_at,
+                score=(r.attempt.score or {}).get("incident"),
+                rating_delta=(r.attempt.rating_delta or {}).get("delta"),
+                mitigation_minutes=(r.attempt.score or {}).get("mitigation_minutes"),
             )
             for r in page
         ],
