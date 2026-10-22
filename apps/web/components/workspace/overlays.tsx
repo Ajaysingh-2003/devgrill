@@ -323,7 +323,7 @@ export function VerifyDialog({
         : "Some checks failed. The sandbox is still yours: keep going and verify again.";
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl">
+      <DialogContent instant className="max-w-2xl">
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>{description}</DialogDescription>
@@ -376,7 +376,7 @@ export function HintsDialog({
   const next = hints.length + 1;
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg">
+      <DialogContent instant className="max-w-lg">
         <DialogHeader>
           <DialogTitle>Hints</DialogTitle>
           <DialogDescription>

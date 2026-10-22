@@ -45,10 +45,9 @@ At 390 px the workspace is replaced by "This incident needs a bigger screen", wh
 - Keyboard actions are instant: the palette, tools and presets.
 - The verify spinner stops under reduced motion (`motion-reduce:animate-none`).
 - The boot sequence shows real steps, not a fake progress bar.
-- **`/review-animations` is owed by the owner**; the skill can only be run by the user.
+- **`/review-animations`** (run 2026-10-22): **Block, now resolved.** The workspace's dialogs (hints on `h`, verify on ⌘⇧V, reset and leave from the palette) animated when opened from the keyboard; they now open instantly (`DialogContent instant`). Also fixed: `transition-all` on tabs, switch and button narrowed to named properties on the tokens; the sheet's built-in `ease-in-out` replaced by the enter and exit curves; popover, dropdown, select and tooltip moved from tw-animate keyframes to interruptible Base UI transitions; the unused progress bar no longer animates width; the celebration's count-up writes a motion value instead of rendering React per frame. Kept as is: reduced motion makes route fades instant too, as the in-app setting promises.
 
 ## 3. Owed
 
 - NVDA pass on Terminal (screen-reader mode), Logs, Timeline and War room.
-- `/review-animations` on `apps/web/components/workspace/**`.
 - 3 moderated usability sessions (`docs/qc/phase-4.md`).

@@ -47,7 +47,7 @@ Date: 2026-10-20 · Result: **PASS on everything automatable; three gate items a
 | 3 | Telemetry: sample-to-chart < 2.5 s; 1-hour stream with bounded memory | ✅ | Sample-to-browser 0.02 s max in the final run (0.23 s earlier; 1.25 s on a CI runner). Soak run 2: 63 minutes of streaming, heap +7.3% (+2.9% at 30 minutes), elements in the page flat at 668. Rings: 900 samples, 2,000 log lines (`appendCapped`) |
 | 4 | Route JS ≤ 450 KB gz initial; terminal, editor and charts lazy | ✅ | `node apps/web/scripts/route-budget.mjs` (a CI step after the production build): 253.8 KB gz; xterm, CodeMirror and uPlot are absent from the initial chunks |
 | 5 | Accessibility: keyboard path, splitters per WAI-ARIA, NVDA pass, live regions | ⚠️ partial | The axe and keyboard e2e (`/incident/demo`) pass in both themes. The `accessibility` review is in the design QC report, with fixes. **NVDA pass owed** (see "Owed") |
-| 6 | Motion QC with `review-animations` | ⚠️ partial | Self-review against the rules: nothing animates on streaming panels, the cursor doesn't blink, keyboard actions are instant, and both reduced-motion sources are respected. The `review-animations` skill can only be run by the owner |
+| 6 | Motion QC with `review-animations` | ✅ (2026-10-22) | Self-review against the rules: nothing animates on streaming panels, the cursor doesn't blink, keyboard actions are instant, and both reduced-motion sources are respected. The `review-animations` skill can only be run by the owner |
 | 7 | Security: reused or expired tickets and cross-user IDs refused; path traversal blocked; terminal can't reach the platform | ✅ | `test_tickets_are_single_use`, `test_tickets_expire`, `test_terminal_needs_a_valid_ticket_for_this_attempt`, `test_foreign_origins_are_refused`, `test_ws_tickets_are_bound_to_the_attempt` (a stranger gets 404), `test_file_api_refuses_paths_outside_the_repo`, `test_repo_paths_outside_or_odd` (12 cases), `test_internal_calls_need_a_matching_signature`. Platform reach: the shell is the same container as in Phase 3's isolation gate (`scripts/sandbox_gate.py isolation`); the control path is an exec stream opened from outside, with no network route (ADR 014) |
 | 8 | Usability: 3 moderated sessions, 2 of 3 mitigate within 20 minutes | ⏳ owed | Needs three engineers new to the scenario |
 | 9 | Design QC report | ✅ | `docs/design/qc/phase-4.md` |
@@ -81,7 +81,6 @@ Date: 2026-10-20 · Result: **PASS on everything automatable; three gate items a
 ## Owed by the owner
 
 - **NVDA pass** on Terminal (screen-reader mode), Logs, Timeline and War room.
-- **`/review-animations`** on `apps/web/components/workspace/**`.
 - **3 moderated usability sessions** (PLAN §14.4 script; big-sale-meltdown; at least 2 of 3 mitigate within 20 minutes).
 
 ## Deviations

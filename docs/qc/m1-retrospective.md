@@ -44,7 +44,7 @@ The loop runs in a real browser against the real stack in CI nightly (the `works
 - **CI time:** content tests take 15–25 minutes per scenario on a GitHub runner. At 20 scenarios that's about 20 parallel jobs nightly: fine for nightly, too slow for every push. Content PRs should run only the scenarios they touch.
 - **Owner-only gates are piling up:**
   - the "Not LeetCode" sign-off (phase 1);
-  - NVDA, `/review-animations` and 3 usability sessions (phase 4);
+  - NVDA and 3 usability sessions (phase 4; `/review-animations` is done);
   - the M1 demo review (this phase).
 
   They are cheap individually and should be cleared before phase 6 adds AI behaviour that also needs human judgement.

@@ -1696,7 +1696,7 @@ Wk:  1  2 | 3  4  5 | 6  7  8 | 9 10 11 12 | 13 14 15 16 17 | 18 19 20 | 21 22 2
 
 ---
 
-### Phase 4: Incident workspace (weeks 13–17) ✅ done 2026-10-20 (see docs/qc/phase-4.md and ADR 014; NVDA pass, `/review-animations` and 3 usability sessions owed by the owner)
+### Phase 4: Incident workspace (weeks 13–17) ✅ done 2026-10-20 (see docs/qc/phase-4.md and ADR 014; NVDA pass and 3 usability sessions owed by the owner; motion QC done 2026-10-22)
 
 **Goal:** a person can play `big-sale-meltdown` in the browser with real tools: terminal, logs, metrics, database and cache views, code, deploys and a scripted war room.
 

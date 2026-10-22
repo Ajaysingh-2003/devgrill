@@ -1,6 +1,6 @@
 "use client";
 
-import { animate, motion, useReducedMotionConfig } from "motion/react";
+import { animate, motion, useMotionValue, useReducedMotionConfig, useTransform } from "motion/react";
 import { useEffect, useState } from "react";
 import { easingPoints } from "@devgrill/tokens";
 import { cn } from "@devgrill/ui/lib/utils";
@@ -33,8 +33,10 @@ export function VerifyCelebration({
   const [skipped, setSkipped] = useState(false);
   const instant = reduce || skipped;
   // Server and first client render are identical (start state); reduced motion then jumps to
-  // the end with zero-duration animations, so hydration never mismatches.
-  const [shown, setShown] = useState(0);
+  // the end with zero-duration animations, so hydration never mismatches. The count is a
+  // motion value written straight to the DOM: no React render per frame.
+  const count = useMotionValue(0);
+  const shown = useTransform(count, (v) => `+${Math.round(v)}`);
 
   // Any key skips the sequence (it never blocks reading the debrief).
   useEffect(() => {
@@ -45,14 +47,13 @@ export function VerifyCelebration({
   }, [instant]);
 
   useEffect(() => {
-    const controls = animate(0, delta, {
+    const controls = animate(count, delta, {
       duration: instant ? 0 : 0.6,
       delay: instant ? 0 : 0.25,
       ease: easingPoints.enter,
-      onUpdate: (v) => setShown(Math.round(v)),
     });
     return () => controls.stop();
-  }, [delta, instant]);
+  }, [count, delta, instant]);
 
   const t = (delay: number, duration: number) =>
     instant ? { duration: 0 } : { delay, duration, ease: easingPoints.enter };
@@ -90,7 +91,7 @@ export function VerifyCelebration({
           <span className="text-label text-fg-muted">{track} rating</span>
           <span className="rounded-sm bg-volt px-2 py-0.5 font-mono text-mono font-semibold text-on-volt tabular-nums">
             <span className="sr-only">{`Up ${delta}, now ${rating}`}</span>
-            <span aria-hidden="true">+{shown}</span>
+            <motion.span aria-hidden="true">{shown}</motion.span>
           </span>
         </div>
         <div className="font-mono text-stat font-semibold text-fg tabular-nums">{rating}</div>

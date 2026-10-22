@@ -446,7 +446,7 @@ function Shell({ briefingHref }: { briefingHref: string }) {
         error={verify.error}
       />
       <Dialog open={confirm !== null} onOpenChange={(open) => !open && setConfirm(null)}>
-        <DialogContent className="max-w-md">
+        <DialogContent instant className="max-w-md">
           <DialogHeader>
             <DialogTitle>{confirm === "reset" ? "Reset the sandbox?" : "Leave this incident?"}</DialogTitle>
             <DialogDescription>
