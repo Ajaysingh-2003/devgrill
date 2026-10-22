@@ -72,11 +72,14 @@ services:
   # The S3 bucket Langfuse writes to: a signed PUT (200 created, 409 already there).
   langfuse-bucket:
     image: curlimages/curl:8.17.0
+    # The dev object store's identity (infra/compose/seaweedfs-s3.json).
+    environment:
+      S3_IDENTITY: devgrill:devgrill-dev-secret
     entrypoint: ["sh", "-c"]
     command:
       - >-
         code=$$(curl -s -o /dev/null -w '%{http_code}' -X PUT
-        --aws-sigv4 'aws:amz:us-east-1:s3' --user devgrill:devgrill-dev-secret
+        --aws-sigv4 'aws:amz:us-east-1:s3' --user "$$S3_IDENTITY"
         http://objectstore:8333/langfuse);
         echo "bucket: $$code"; [ "$$code" = 200 ] || [ "$$code" = 409 ]
     networks: [default, devgrill]

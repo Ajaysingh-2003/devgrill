@@ -64,10 +64,24 @@ def _kill_tree(proc: subprocess.Popen[bytes]) -> None:
             check=False,
         )
     else:
-        os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+        group = os.getpgid(proc.pid)
+        os.killpg(group, signal.SIGTERM)
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            print(f"dev: pid {proc.pid} ignored SIGTERM for 10 s; killing it")
+            os.killpg(group, signal.SIGKILL)
+
+
+def _interrupt(signum: int, frame: object) -> None:
+    raise KeyboardInterrupt
 
 
 def main() -> int:
+    if not IS_WINDOWS:
+        # SIGTERM (CI's cleanup, `kill`) stops the stack like Ctrl+C: each service is in its
+        # own session, so without this they would outlive us.
+        signal.signal(signal.SIGTERM, _interrupt)
     only = set(sys.argv[1:]) or None
     env = {**os.environ, "PYTHONUNBUFFERED": "1"}
     if "NO_COLOR" not in env:
