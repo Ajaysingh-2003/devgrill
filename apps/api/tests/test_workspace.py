@@ -139,6 +139,12 @@ async def test_sandbox_operations_go_through_the_gateway(api, seeded, auth, fake
     ] == [[1]]
     assert api.get(f"{base}/cache", headers=headers).json()["asked"][0]["exists"] is False
     assert api.get(f"{base}/deploys", headers=headers).json()["live"] == "abc"
+    changes = api.get(f"{base}/deploys/abc1234", headers=headers).json()
+    assert (changes["files"], changes["message"]) == (
+        ["config/app.env"],
+        "config: use the new HA database endpoint",
+    )
+    assert api.get(f"{base}/deploys/HEAD~1", headers=headers).status_code in (404, 422)
     assert ("PUT", "file", {"path": "app/main.py"}, {"content": "x = 2\n"}) in gateway.calls
     assert (str(attempt_id), "touch") in orchestrator.signals  # player activity resets idle
 

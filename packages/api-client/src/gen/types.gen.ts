@@ -858,6 +858,46 @@ export type DebriefOut = {
 };
 
 /**
+ * DeployChangesOut
+ *
+ * What one deploy changed: the commit, its files and its diff.
+ */
+export type DeployChangesOut = {
+    /**
+     * At
+     */
+    at: number;
+    /**
+     * Author
+     */
+    author: string;
+    /**
+     * Diff
+     */
+    diff: string;
+    /**
+     * Files
+     */
+    files: Array<string>;
+    /**
+     * Message
+     */
+    message: string;
+    /**
+     * Service
+     */
+    service: string;
+    /**
+     * Sha
+     */
+    sha: string;
+    /**
+     * Short
+     */
+    short: string;
+};
+
+/**
  * DeployHistoryOut
  */
 export type DeployHistoryOut = {
@@ -1213,6 +1253,38 @@ export type PageOut = {
      * Title
      */
     title: string;
+};
+
+/**
+ * PlayCheckOut
+ *
+ * Can the caller start this scenario now? The same rules as starting it (ADR 013).
+ */
+export type PlayCheckOut = {
+    /**
+     * Allowed
+     */
+    allowed: boolean;
+    /**
+     * Live Attempt Id
+     */
+    live_attempt_id?: string | null;
+    /**
+     * Message
+     */
+    message?: string;
+    /**
+     * Reason
+     */
+    reason?: string | null;
+    /**
+     * Resets At
+     */
+    resets_at?: string | null;
+    /**
+     * Tier
+     */
+    tier: 'guest' | 'free' | 'pro' | 'team';
 };
 
 /**
@@ -3226,6 +3298,87 @@ export type DeployResponses = {
 };
 
 export type DeployResponse = DeployResponses[keyof DeployResponses];
+
+export type DeployChangesData = {
+    body?: never;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+        /**
+         * X-Guest-Token
+         */
+        'x-guest-token'?: string | null;
+    };
+    path: {
+        /**
+         * Attempt Id
+         */
+        attempt_id: string;
+        /**
+         * Sha
+         */
+        sha: string;
+    };
+    query?: {
+        /**
+         * Service
+         */
+        service?: string | null;
+    };
+    url: '/v1/attempts/{attempt_id}/deploys/{sha}';
+};
+
+export type DeployChangesErrors = {
+    /**
+     * Bad request (e.g. an invalid cursor).
+     */
+    400: Problem;
+    /**
+     * Missing or invalid credentials.
+     */
+    401: Problem;
+    /**
+     * Signed in, but not allowed.
+     */
+    403: Problem;
+    /**
+     * Not found.
+     */
+    404: Problem;
+    /**
+     * Conflict (e.g. a request with this Idempotency-Key is still running).
+     */
+    409: Problem;
+    /**
+     * The request is invalid; see `errors`.
+     */
+    422: Problem;
+    /**
+     * Rate limited; see Retry-After.
+     */
+    429: Problem;
+    /**
+     * Server error.
+     */
+    500: Problem;
+    /**
+     * Temporarily unavailable.
+     */
+    503: Problem;
+};
+
+export type DeployChangesError = DeployChangesErrors[keyof DeployChangesErrors];
+
+export type DeployChangesResponses = {
+    /**
+     * Successful Response
+     */
+    200: DeployChangesOut;
+};
+
+export type DeployChangesResponse = DeployChangesResponses[keyof DeployChangesResponses];
 
 export type AttemptEventsData = {
     body?: never;
@@ -5755,6 +5908,78 @@ export type GetApproachesResponses = {
 };
 
 export type GetApproachesResponse = GetApproachesResponses[keyof GetApproachesResponses];
+
+export type CanPlayData = {
+    body?: never;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+        /**
+         * X-Guest-Token
+         */
+        'x-guest-token'?: string | null;
+    };
+    path: {
+        /**
+         * Slug
+         */
+        slug: string;
+    };
+    query?: never;
+    url: '/v1/scenarios/{slug}/play';
+};
+
+export type CanPlayErrors = {
+    /**
+     * Bad request (e.g. an invalid cursor).
+     */
+    400: Problem;
+    /**
+     * Missing or invalid credentials.
+     */
+    401: Problem;
+    /**
+     * Signed in, but not allowed.
+     */
+    403: Problem;
+    /**
+     * Not found.
+     */
+    404: Problem;
+    /**
+     * Conflict (e.g. a request with this Idempotency-Key is still running).
+     */
+    409: Problem;
+    /**
+     * The request is invalid; see `errors`.
+     */
+    422: Problem;
+    /**
+     * Rate limited; see Retry-After.
+     */
+    429: Problem;
+    /**
+     * Server error.
+     */
+    500: Problem;
+    /**
+     * Temporarily unavailable.
+     */
+    503: Problem;
+};
+
+export type CanPlayError = CanPlayErrors[keyof CanPlayErrors];
+
+export type CanPlayResponses = {
+    /**
+     * Successful Response
+     */
+    200: PlayCheckOut;
+};
+
+export type CanPlayResponse = CanPlayResponses[keyof CanPlayResponses];
 
 export type ListTracksData = {
     body?: never;

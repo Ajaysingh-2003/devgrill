@@ -16,7 +16,7 @@ from redis.asyncio import Redis
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from devgrill.domain.enums import AuthorKind
+from devgrill.domain.enums import AttemptState, AuthorKind
 from devgrill.domain.events import beats_for_trigger
 from devgrill.domain.spec import Beat, ScenarioSpec
 from devgrill.infra.models import Attempt, AttemptEvent, ScenarioVersion, WarRoomMessage
@@ -107,8 +107,15 @@ class EventRecorder:
         await self.announce(attempt_id)
 
     async def beat(self, attempt_id: uuid.UUID, index: int) -> bool:
-        """Fire beat `index` (a timed beat) unless it already fired. True if it was added."""
+        """Fire beat `index` (a timed beat) unless it already fired. True if it was added.
+
+        Timed beats are pressure from an incident still in progress: once the player has
+        mitigated it (or it ended), they stay quiet. Event beats (`when:`) still fire.
+        """
         async with self.session_factory() as session, session.begin():
+            state = await session.scalar(select(Attempt.state).where(Attempt.id == attempt_id))
+            if state is not AttemptState.ACTIVE:
+                return False
             spec = await scenario_spec(session, attempt_id)
             if spec is None or index >= len(spec.beats):
                 return False

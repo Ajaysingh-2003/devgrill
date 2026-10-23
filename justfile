@@ -184,6 +184,10 @@ e2e: build
 colors-check:
     pnpm colors:check
 
+# Fail on internal words (sandbox, probe, SLO...) in player-facing text (docs/design/voice.md).
+copy-check:
+    pnpm copy:check
+
 # Format TypeScript, CSS, JSON and Markdown with Prettier.
 fmt-web:
     pnpm format
@@ -197,4 +201,4 @@ shots out +paths:
     node scripts/screenshots.mjs {{out}} {{paths}}
 
 # Everything CI runs locally (except the e2e and the service smoke).
-check: lint types test test-web eol-check gen-check colors-check fmt-web-check
+check: lint types test test-web eol-check gen-check colors-check copy-check fmt-web-check

@@ -10,7 +10,7 @@ import { PageSkeleton } from "@/components/page-skeleton";
 import { api, sevNumber } from "@/lib/api";
 import { formatCount, timeLeft } from "@/lib/format";
 
-export const metadata: Metadata = { title: "Daily incident" };
+export const metadata: Metadata = { title: "Daily drill" };
 
 async function Daily() {
   const { data: daily } = await dailyChallenge({ client: await api() });
@@ -18,14 +18,14 @@ async function Daily() {
     return (
       <EmptyState
         icon={CalendarClock}
-        title="No daily incident yet"
+        title="No daily drill yet"
         action={
           <Link href="/drills" className="text-body font-medium text-brand-text hover:underline">
             Browse the drills
           </Link>
         }
       >
-        The first one appears as soon as scenarios are published.
+        The first one appears as soon as drills are published.
       </EmptyState>
     );
   }
@@ -53,10 +53,10 @@ export default function DailyPage() {
   return (
     <div className="flex max-w-3xl flex-col gap-8">
       <PageHeader
-        title="Daily incident"
-        description="One incident a day, the same for everyone. It resets at midnight India time."
+        title="Daily drill"
+        description="One drill a day, the same for everyone. It resets at midnight India time."
       />
-      <Suspense fallback={<PageSkeleton label="Loading today’s incident" />}>
+      <Suspense fallback={<PageSkeleton label="Loading today’s drill" />}>
         <Daily />
       </Suspense>
     </div>

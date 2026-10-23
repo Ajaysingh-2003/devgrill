@@ -65,6 +65,9 @@ beats:
   - persona: arjun
     when: "state:mitigated"
     say: "Postgres is back to its usual load. Nice. Make sure whatever changed can't sneak back in, then verify."
+  - persona: priya
+    when: "state:resolved"
+    say: "Verify passed and Postgres has its headroom back for the sale. Great work. I'll let the DB team know; a quick postmortem would help them too."
 
 unlocked_tools: [overview, logs, terminal, cache, code, deploys]
 

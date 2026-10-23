@@ -78,12 +78,12 @@ export function OverviewPanel() {
             status={known.length === 0 ? "unknown" : breaching ? "firing" : "healthy"}
             label={
               known.length === 0
-                ? "SLO: no data yet"
+                ? "Targets: no data yet"
                 : breaching
-                  ? `${breaching} of ${slos.length} SLOs breaching`
+                  ? `${breaching} of ${slos.length} over target`
                   : slos.length === 1
-                    ? "SLO holds"
-                    : "Every SLO holds"
+                    ? "On target"
+                    : "Every target met"
             }
           />
         ) : null
@@ -91,7 +91,7 @@ export function OverviewPanel() {
     >
       {samples.length === 0 ? (
         <EmptyState icon={Activity} title="Collecting the first samples" compact>
-          Charts fill in every 2 seconds once the sandbox is serving traffic.
+          Charts fill in every 2 seconds once the system is serving traffic.
         </EmptyState>
       ) : (
         <div className="grid gap-x-6 gap-y-5 p-4 xl:grid-cols-2">
@@ -104,7 +104,7 @@ export function OverviewPanel() {
             const summary =
               last == null
                 ? `${chart.title}: no data yet.`
-                : `${chart.title} is ${chart.format(last)}${threshold != null ? `; the SLO is ${target?.lt != null ? "under" : "over"} ${chart.format(threshold)}` : ""}.`;
+                : `${chart.title} is ${chart.format(last)}${threshold != null ? `; the target is ${target?.lt != null ? "under" : "over"} ${chart.format(threshold)}` : ""}.`;
             return (
               <MetricChart
                 key={metric}
@@ -115,7 +115,7 @@ export function OverviewPanel() {
                 format={chart.format}
                 threshold={
                   threshold != null
-                    ? { value: threshold, label: `SLO ${chart.format(threshold)}` }
+                    ? { value: threshold, label: `Target ${chart.format(threshold)}` }
                     : undefined
                 }
                 markers={markers}

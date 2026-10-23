@@ -76,7 +76,7 @@ export const DEMO_DEBRIEF: DebriefOut = {
       {
         key: "honest-metrics",
         title: "Metrics tell the truth",
-        how: "During the replay, the API's own request and error counts match what the verifier measured.",
+        how: "During the replay, the API's own request and error counts match what the check measured.",
         kind: "load",
         passed: true,
         measured: { request_count_drift: 0.0005, error_rate_drift: 0 },
@@ -94,7 +94,7 @@ export const DEMO_DEBRIEF: DebriefOut = {
       {
         key: "cold-cache",
         title: "Cold cache mid-sale",
-        how: "Flushes the cache during sale traffic; the SLO recovers within 30 seconds.",
+        how: "Flushes the cache during sale traffic; the service is back on target within 30 seconds.",
         kind: "chaos",
         passed: true,
         measured: { recovery_s: 6 },
@@ -141,7 +141,7 @@ export const DEMO_DEBRIEF: DebriefOut = {
       outcome: "full",
       idea_md:
         "The cache went quiet two minutes before the sale, right after the key refactor. Deploy the commit before it.",
-      pros: ["The fastest mitigation during a sale"],
+      pros: ["The fastest way to get it working during a sale"],
       cons: ["The refactor (and its bug) still has to be fixed before it ships again"],
       patch: null,
       yours: false,
@@ -176,14 +176,14 @@ export const DEMO_DEBRIEF: DebriefOut = {
       note: "The same product query, thousands of times, points at the cache.",
     },
     { at_s: 330, text: "Deployed api 7c1e2f0: app/cache.py" },
-    { at_s: 384, text: "Recovered: the SLO held again" },
+    { at_s: 384, text: "Working again: the service met its target" },
     {
       at_s: 410,
       text: "Posted an update: Cache writes used the wrong key since the refactor; fixed forward.",
     },
-    { at_s: 560, text: "Ran verify: failed (6 of 7 checks)" },
-    { at_s: 930, text: "Ran verify: passed (7 of 7 checks)" },
-    { at_s: 930, text: "Resolved: verify passed" },
+    { at_s: 560, text: "Checked the fix: not fixed yet (6 of 7 checks)" },
+    { at_s: 930, text: "Checked the fix: passed (7 of 7 checks)" },
+    { at_s: 930, text: "Fixed: every check passed" },
   ],
   next: [
     {

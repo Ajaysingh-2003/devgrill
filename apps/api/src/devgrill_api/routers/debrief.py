@@ -78,7 +78,7 @@ async def _ended(
 ) -> Attempt:
     attempt = await _owned(session, attempt_id, _owner(user, jti))
     if attempt.state not in TERMINAL_STATES:
-        raise AppError(409, "still_live", "The debrief opens when the incident ends.")
+        raise AppError(409, "still_live", "Your results open when the drill ends.")
     return attempt
 
 
@@ -410,12 +410,12 @@ async def _request_review(request: Request, session: Any, attempt: Attempt) -> N
         await session.commit()
 
     if attempt.user_id is None:
-        return await note("unavailable", "Sign in to get your postmortems reviewed.")
+        return await note("unavailable", "Sign in to get your write-ups reviewed.")
     if not llm_of(request.app.state).enabled("grade"):
         return await note("unavailable", "Reviews are off right now. Try again later.")
     _, limits = await _tier_and_limits(session, repo.Owner(user_id=attempt.user_id))
     if limits.postmortem_reviews == 0:
-        return await note("unavailable", "Postmortem reviews aren't part of your plan.")
+        return await note("unavailable", "Write-up reviews aren't part of your plan.")
     since = policy.period_start(datetime.now(UTC), limits.postmortem_reviews_period)
     if await _reviews_used(session, attempt.user_id, since) >= limits.postmortem_reviews:
         period = {"day": "today", "week": "this week"}.get(limits.postmortem_reviews_period, "")
@@ -473,7 +473,7 @@ async def save_postmortem(
         select(Postmortem).where(Postmortem.attempt_id == attempt.id).with_for_update()
     )
     if doc is not None and doc.submitted_at is not None:
-        raise AppError(409, "already_submitted", "This postmortem has been submitted.")
+        raise AppError(409, "already_submitted", "This write-up has been submitted.")
     body_md = pm.to_markdown({str(k): v for k, v in body.sections.items()})
     if doc is None:
         doc = Postmortem(attempt_id=attempt.id, body_md=body_md)
@@ -504,7 +504,7 @@ async def submit_postmortem(
         select(Postmortem).where(Postmortem.attempt_id == attempt.id).with_for_update()
     )
     if doc is not None and doc.submitted_at is not None:
-        raise AppError(409, "already_submitted", "This postmortem has been submitted.")
+        raise AppError(409, "already_submitted", "This write-up has been submitted.")
     timeline = await _timeline(session, attempt, spec)
     body_md = pm.to_markdown({str(k): v for k, v in body.sections.items()}, timeline)
     if doc is None:
@@ -533,9 +533,9 @@ async def review_postmortem(
     doc = await session.scalar(select(Postmortem).where(Postmortem.attempt_id == attempt.id))
     current = await _review(session, doc, spec)
     if current is None:
-        raise AppError(409, "not_submitted", "Submit the postmortem first.")
+        raise AppError(409, "not_submitted", "Submit the write-up first.")
     if current.status == "graded":
-        raise AppError(409, "already_reviewed", "This postmortem has been reviewed.")
+        raise AppError(409, "already_reviewed", "This write-up has been reviewed.")
     if current.status == "pending":
         return current
     await _request_review(request, session, attempt)

@@ -12,6 +12,8 @@ export type TerminalStatus = "connecting" | "open" | "reconnecting" | "waiting" 
 
 const BACKOFF_MS = [500, 1000, 2000, 5000, 10_000];
 const PING_EVERY_MS = 25_000;
+/** The shell redraws its screen on every resize: tell it once the size has settled. */
+const RESIZE_SETTLE_MS = 150;
 
 const cssVar = (name: string) =>
   getComputedStyle(document.documentElement).getPropertyValue(`--${name}`).trim();
@@ -73,9 +75,14 @@ export default function TerminalView({
     let retry: ReturnType<typeof setTimeout> | undefined;
 
     const dataSub = term.onData((data) => link?.send(encoder.encode(data)));
-    const resizeSub = term.onResize(({ cols, rows }) =>
-      link?.send(JSON.stringify({ type: "resize", cols, rows })),
-    );
+    let resizeTimer: ReturnType<typeof setTimeout> | undefined;
+    const resizeSub = term.onResize(({ cols, rows }) => {
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(
+        () => link?.send(JSON.stringify({ type: "resize", cols, rows })),
+        RESIZE_SETTLE_MS,
+      );
+    });
 
     function schedule(delay?: number) {
       clearTimeout(retry);
@@ -136,12 +143,18 @@ export default function TerminalView({
       () => link?.send(JSON.stringify({ type: "ping", t: Date.now() })),
       PING_EVERY_MS,
     );
+    // Refit at most once a frame, and only when the grid really changes size. Refitting on
+    // every observation let a scrollbar appearing and disappearing feed back into the size,
+    // which made the screen and the scrollbars flicker while the layout settled.
+    let frame = 0;
     const observer = new ResizeObserver(() => {
-      try {
-        fit.fit();
-      } catch {
-        // hidden (collapsed panel): nothing to fit
-      }
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        const dims = fit.proposeDimensions();
+        // Hidden (a collapsed panel) proposes nothing, or a degenerate grid: keep the old one.
+        if (!dims || !Number.isFinite(dims.cols) || dims.cols < 2 || dims.rows < 2) return;
+        if (dims.cols !== term.cols || dims.rows !== term.rows) term.resize(dims.cols, dims.rows);
+      });
     });
     observer.observe(el);
     const themeObserver = new MutationObserver(() => {
@@ -166,6 +179,8 @@ export default function TerminalView({
       disposed = true;
       unsubscribe();
       clearTimeout(retry);
+      clearTimeout(resizeTimer);
+      cancelAnimationFrame(frame);
       clearInterval(ping);
       observer.disconnect();
       themeObserver.disconnect();
@@ -182,5 +197,5 @@ export default function TerminalView({
     if (term) term.options.screenReaderMode = screenReader;
   }, [screenReader]);
 
-  return <div ref={host} className="h-full min-h-0 w-full p-2" data-hotkeys="off" />;
+  return <div ref={host} className="h-full min-h-0 w-full overflow-hidden p-2" data-hotkeys="off" />;
 }

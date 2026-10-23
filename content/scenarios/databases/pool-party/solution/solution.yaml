@@ -1,7 +1,7 @@
 schema: devgrill/solution@1
 summary: >-
   The config deploy pointed DATABASE_URL at the cross-region postgres-dr endpoint. Each query
-  paid ~150 ms of round trip, so each request held its pooled connection far longer; at the same
+  paid ~300 ms of round trip, so each request held its pooled connection far longer; at the same
   traffic the pool ran out and requests queued, then failed, while Postgres stayed idle. Point
   the API back at the primary and deploy.
 steps:

@@ -47,18 +47,18 @@ const EXPERIENCE: Record<ExperienceLevel, string> = {
 
 const MODES: Record<string, string> = {
   tutorial: "Tutorial",
-  guided: "Guided",
-  oncall: "Real on-call",
+  guided: "With hints",
+  oncall: "No hints",
   daily: "Daily",
   weekly: "Weekly",
 };
 
-/** How an attempt ended, as a status pill (icon + label + colour). */
+/** How a run ended, as a status pill (icon + label + colour). */
 const OUTCOMES: Record<string, { status: Status; label: string }> = {
-  resolved: { status: "resolved", label: "Resolved" },
+  resolved: { status: "resolved", label: "Solved" },
   expired: { status: "unknown", label: "Time ran out" },
   abandoned: { status: "unknown", label: "Left early" },
-  failed: { status: "degraded", label: "Sandbox failed" },
+  failed: { status: "degraded", label: "Didn't start" },
 };
 
 const PERIOD: Record<string, string> = { day: "today", week: "this week", ever: "in total" };
@@ -109,7 +109,7 @@ function ActivityGrid({ streak }: { streak: StreakOut }) {
         ))}
       </div>
       <p className="text-label text-fg-muted">
-        {active.size === 1 ? "1 day" : `${active.size} days`} with a finished incident. Longest streak{" "}
+        {active.size === 1 ? "1 day" : `${active.size} days`} with a finished drill. Longest streak{" "}
         {streak.longest === 1 ? "1 day" : `${streak.longest} days`}
         {streak.freezes
           ? `, ${streak.freezes} streak ${streak.freezes === 1 ? "freeze" : "freezes"} saved`
@@ -125,7 +125,7 @@ function Stats({ profile, streak, usage }: { profile: PublicProfile; streak?: St
   const best = [...profile.ratings].sort((a, b) => b.rating - a.rating)[0];
   const games = profile.ratings.reduce((n, r) => n + r.games, 0);
   const cells: [string, string, string][] = [
-    ["Incidents resolved", String(profile.resolved), games ? `${games} rated` : "none rated yet"],
+    ["Drills solved", String(profile.resolved), games ? `${games} rated` : "none rated yet"],
     best
       ? ["Best rating", String(Math.round(best.rating)), best.track_title]
       : ["Best rating", "–", "resolve one to get rated"],
@@ -140,7 +140,7 @@ function Stats({ profile, streak, usage }: { profile: PublicProfile; streak?: St
   if (usage) {
     const q = usage.live_starts;
     cells.push([
-      "Live incidents",
+      "Plays used",
       `${Math.round(q.used)} of ${q.limit}`,
       `${usage.tier} plan, ${PERIOD[q.period] ?? ""}`.trim(),
     ]);
@@ -168,17 +168,17 @@ function IncidentLog({ attempts }: { attempts: AttemptSummary[] }) {
   return (
     <section aria-labelledby="log-title" className="flex flex-col gap-3">
       <h2 id="log-title" className="text-heading-md font-semibold text-fg">
-        Recent incidents
+        Recent drills
       </h2>
       {attempts.length ? (
         <div className="overflow-x-auto rounded-md border border-border bg-surface">
           <table className="w-full min-w-[40rem] text-left text-body">
             <caption className="sr-only">
-              Your recent incidents with severity, outcome, score, rating change and date
+              Your recent drills with severity, outcome, score, rating change and date
             </caption>
             <thead className="border-b border-border text-caption text-fg-subtle">
               <tr>
-                {["Incident", "Outcome", "Mitigated in", "Score", "Rating", "Played"].map((h) => (
+                {["Drill", "Outcome", "Working again in", "Score", "Rating", "Played"].map((h) => (
                   <th key={h} scope="col" className="px-3 py-2 font-medium">
                     {h}
                   </th>
@@ -306,7 +306,7 @@ function Ratings({ profile, isMe }: { profile: PublicProfile; isMe: boolean }) {
                   {Math.round(r.rating)}
                 </span>
                 <span className="text-caption text-fg-subtle">
-                  {r.games === 1 ? "1 rated incident" : `${r.games} rated incidents`}
+                  {r.games === 1 ? "1 rated drill" : `${r.games} rated drills`}
                   {/* A high deviation means few games: the number will still move a lot. */}
                   {r.rd > 150 ? ", still settling" : ""}
                 </span>
@@ -316,7 +316,7 @@ function Ratings({ profile, isMe }: { profile: PublicProfile; isMe: boolean }) {
                   values={r.history.map((p) => p.rating)}
                   width={96}
                   height={36}
-                  label={`${r.track_title} rating over the last ${r.history.length} incidents`}
+                  label={`${r.track_title} rating over the last ${r.history.length} drills`}
                   className="h-9 w-24"
                 />
               ) : null}
@@ -325,7 +325,7 @@ function Ratings({ profile, isMe }: { profile: PublicProfile; isMe: boolean }) {
         </ul>
       ) : (
         <p className="text-body text-fg-muted">
-          {isMe ? "Resolve your first incident to get a rating in that track." : "No rated incidents yet."}
+          {isMe ? "Solve your first drill to get a rating in that track." : "No rated drills yet."}
         </p>
       )}
     </section>
@@ -401,8 +401,8 @@ async function Profile({ params }: { params: PageProps<"/u/[handle]">["params"] 
       </div>
       {isMe ? (
         <p className="text-label text-fg-subtle">
-          Others see your name, ratings and incidents resolved. Your incident log, mastery, streak and plan
-          are only shown to you.
+          Others see your name, ratings and drills solved. Your recent drills, mastery, streak and plan are
+          only shown to you.
         </p>
       ) : null}
     </div>

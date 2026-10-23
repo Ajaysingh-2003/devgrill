@@ -25,7 +25,7 @@ async function DailyCard() {
     >
       <div className="flex flex-col gap-2">
         <h2 id="daily-title" className="text-label font-medium text-fg-muted">
-          Today’s incident, same for everyone, closes in {timeLeft(daily.ends_at)}
+          Today’s drill, the same for everyone, closes in {timeLeft(daily.ends_at)}
         </h2>
         <p className="flex flex-wrap items-center gap-3">
           <SevBadge sev={sevNumber(s.difficulty)} />
@@ -43,7 +43,7 @@ async function DailyCard() {
         transitionTypes={["nav-forward"]}
         className="inline-flex h-9 items-center justify-center rounded-sm bg-brand px-4 text-label font-semibold text-on-brand hover:bg-brand-hover"
       >
-        Take today’s incident
+        Play today’s drill
       </Link>
     </section>
   );
@@ -143,7 +143,7 @@ async function ContinueList() {
             >
               <SevBadge sev={sevNumber(a.difficulty)} />
               <span className="flex-1 text-body font-medium text-fg">{a.scenario_title}</span>
-              <span className="text-label text-fg-muted">Attempted</span>
+              <span className="text-label text-fg-muted">Not solved yet</span>
             </Link>
           </li>
         ))}

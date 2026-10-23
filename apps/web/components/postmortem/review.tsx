@@ -58,7 +58,7 @@ export function PostmortemReview({
       {review.status === "pending" ? (
         <p role="status" className="inline-flex items-center gap-2 text-body text-fg-muted">
           <LoaderCircle className="size-4" aria-hidden="true" />
-          Reviewing against the scenario’s rubric. This usually takes under a minute.
+          Reviewing it against this drill’s rubric. This usually takes under a minute.
         </p>
       ) : null}
       {review.status === "failed" || review.status === "unavailable" ? (
@@ -134,7 +134,7 @@ function Graded({ review }: { review: PostmortemReviewOut }) {
                   <li key={q} className="flex items-start gap-2 text-label text-fg-muted">
                     <Quote className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
                     <span>
-                      <span className="sr-only">From your postmortem: </span>
+                      <span className="sr-only">From your write-up: </span>
                       {q}
                     </span>
                   </li>
@@ -144,7 +144,7 @@ function Graded({ review }: { review: PostmortemReviewOut }) {
             {c.unsupported ? (
               <p className="inline-flex items-start gap-2 text-label text-warning-text">
                 <CircleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-                No sentence in your postmortem backed this up, so the credit was halved.
+                No sentence in your write-up backed this up, so the credit was halved.
               </p>
             ) : null}
           </li>

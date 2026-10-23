@@ -13,7 +13,11 @@ const SECTIONS: { id: Section; title: string; hint: string }[] = [
   { id: "summary", title: "Summary", hint: "Two or three sentences a director could read." },
   { id: "impact", title: "Impact", hint: "Who was affected, for how long, how badly." },
   { id: "cause", title: "Root cause", hint: "The change, the mechanism, and why it hurt now." },
-  { id: "actions", title: "Action items", hint: "What prevents this class of incident, with owners." },
+  {
+    id: "actions",
+    title: "Action items",
+    hint: "What stops this kind of problem happening again, with owners.",
+  },
 ];
 const SAVE_AFTER_MS = 1500;
 const MAX_CHARS = 4000;
@@ -81,7 +85,7 @@ export function PostmortemEditor({ attemptId, initial }: { attemptId: string; in
   return (
     <form onSubmit={submit} className="flex max-w-[44rem] flex-col gap-8">
       <header className="flex flex-col gap-2">
-        <h1 className="font-serif text-display-lg text-fg">Postmortem: {initial.scenario_title}</h1>
+        <h1 className="font-serif text-display-lg text-fg">Write-up: {initial.scenario_title}</h1>
         <p className="text-body-lg text-fg-muted">
           Blameless and specific. Describe what changed, not who changed it.
         </p>
@@ -121,7 +125,7 @@ export function PostmortemEditor({ attemptId, initial }: { attemptId: string; in
               href={`/incident/${attemptId}/debrief`}
               className="text-body font-medium text-brand-text hover:underline"
             >
-              Back to the debrief
+              Back to your results
             </Link>
           </>
         ) : (

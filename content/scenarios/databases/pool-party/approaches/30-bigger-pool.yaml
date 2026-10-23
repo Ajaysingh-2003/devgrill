@@ -4,7 +4,7 @@ name: Raise DB_POOL_MAX to 50
 outcome: fails
 idea: >-
   More connections per process so requests stop waiting for one. The queue shrinks, but every
-  query still pays the ~150 ms cross-region round trip, so p99 stays over the SLO.
+  query still pays the ~300 ms cross-region round trip, so p99 stays over the SLO.
 steps:
   - patch: bigger-pool.diff
     service: api

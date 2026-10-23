@@ -60,7 +60,7 @@ export function ProbeTable({ probes, caption }: { probes: Probe[]; caption: stri
               Result
             </th>
             <th scope="col" className="px-4 py-2 font-medium">
-              Probe
+              Check
             </th>
             <th scope="col" className="px-4 py-2 font-medium">
               Observed

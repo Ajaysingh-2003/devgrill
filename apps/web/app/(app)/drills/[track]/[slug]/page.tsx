@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Fragment, Suspense, cache } from "react";
+import { CircleCheck, CircleDot } from "lucide-react";
 import { getScenario, type SystemNode as Node } from "@devgrill/api-client";
 import { SevBadge } from "@devgrill/ui/components/devgrill/sev-badge";
 import { ServiceIcon } from "@devgrill/ui/icons";
@@ -67,6 +68,17 @@ async function BriefingContent({ params }: { params: PageProps<"/drills/[track]/
         <header className="flex flex-col gap-4">
           <p className="flex flex-wrap items-center gap-2 text-label text-fg-muted">
             <SevBadge sev={sevNumber(s.difficulty)} showName />
+            {s.progress === "solved" ? (
+              <span className="inline-flex items-center gap-1 rounded-xs bg-success-subtle px-1.5 py-0.5 font-medium text-success-text">
+                <CircleCheck className="size-3.5" aria-hidden="true" />
+                Solved
+              </span>
+            ) : s.progress === "attempted" ? (
+              <span className="inline-flex items-center gap-1 rounded-xs bg-warning-subtle px-1.5 py-0.5 font-medium text-warning-text">
+                <CircleDot className="size-3.5" aria-hidden="true" />
+                Not solved yet
+              </span>
+            ) : null}
             <span>About {s.est_minutes} minutes</span>
             {solveRate !== null && solveRate !== undefined ? (
               <>
@@ -105,7 +117,7 @@ async function BriefingContent({ params }: { params: PageProps<"/drills/[track]/
               </p>
             ) : null}
             <p className="text-label text-fg-subtle">
-              A real stack runs in your private sandbox for this session. Nothing you do here affects anyone
+              A real copy of this system runs just for you while you play. Nothing you do here affects anyone
               else.
             </p>
           </section>
@@ -134,14 +146,14 @@ async function BriefingContent({ params }: { params: PageProps<"/drills/[track]/
           <h2 className="text-body-lg font-semibold text-fg">There is no single right answer</h2>
           <p className="mt-1 text-body text-fg-muted">
             You are graded on what the system does, not on matching our code. Any fix that keeps the service
-            inside its targets during the replay passes. The debrief compares your fix with every other
-            approach.
+            on target while we replay the traffic passes. Afterwards you can compare your fix with the other
+            ways to fix it.
           </p>
         </aside>
       </article>
 
       <aside className="flex flex-col gap-4 lg:sticky lg:top-20 lg:self-start">
-        <ModePicker scenarioSlug={s.slug} />
+        <ModePicker scenarioSlug={s.slug} solved={s.progress === "solved"} />
         {s.warmup ? (
           <div className="rounded-md border border-border bg-surface p-4">
             <h2 className="text-body font-semibold text-fg">Not ready yet?</h2>

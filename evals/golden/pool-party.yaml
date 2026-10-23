@@ -8,7 +8,7 @@ items:
     postmortem: |
       ## Summary
 
-      A config deploy pointed product-api at a cross-region database endpoint. Each query paid about 150 ms extra, connections were held longer, and the pool ran dry while Postgres sat idle.
+      A config deploy pointed product-api at a cross-region database endpoint. Each query paid about 300 ms extra, connections were held longer, and the pool ran dry while Postgres sat idle.
 
       ## Impact
 
@@ -16,14 +16,14 @@ items:
 
       ## Root cause
 
-      "config: use the new HA database endpoint" set DATABASE_URL to postgres-dr, a cross-region endpoint adding ~150 ms per round trip. With the same traffic, each request held its pooled connection much longer, so by Little's law the pool (10 per process) needed far more connections than it had. Requests queued for a connection and timed out, while Postgres CPU stayed near 20%.
+      "config: use the new HA database endpoint" set DATABASE_URL to postgres-dr, a cross-region endpoint adding ~300 ms per round trip. With the same traffic, each request held its pooled connection much longer, so by Little's law the pool (10 per process) needed far more connections than it had. Requests queued for a connection and timed out, while Postgres CPU stayed near 20%.
 
       ## Action items
 
       - Alert on client-side query latency (p95 per query from the API), not just database CPU.
       - Validate DATABASE_URL in CI against the allowed in-region endpoints; endpoint changes need DB team review.
 
-      Why not the suggested fixes: scaling Postgres buys nothing, it was idle. A bigger pool still pays the 150 ms on every query and just moves the queue into the database.
+      Why not the suggested fixes: scaling Postgres buys nothing, it was idle. A bigger pool still pays the 300 ms on every query and just moves the queue into the database.
     human:
       scores: { impact: 2, root-cause: 4, rejected-fixes: 2, prevention: 2 }
       blameless: true
@@ -41,7 +41,7 @@ items:
 
       ## Root cause
 
-      The config deploy switched DATABASE_URL to postgres-dr in another region. Every query took ~150 ms longer, so each request kept its connection longer; at the same arrival rate the pool emptied (Little's law) even though Postgres was mostly idle.
+      The config deploy switched DATABASE_URL to postgres-dr in another region. Every query took ~300 ms longer, so each request kept its connection longer; at the same arrival rate the pool emptied (Little's law) even though Postgres was mostly idle.
 
       ## Action items
 
@@ -65,7 +65,7 @@ items:
 
       ## Root cause
 
-      DATABASE_URL was changed to postgres-dr, which is cross-region (~150 ms per round trip). Connection hold time went up by that much on every query, so the pool ran out at normal traffic while Postgres sat idle.
+      DATABASE_URL was changed to postgres-dr, which is cross-region (~300 ms per round trip). Connection hold time went up by that much on every query, so the pool ran out at normal traffic while Postgres sat idle.
 
       ## Action items
 
@@ -90,7 +90,7 @@ items:
 
       ## Root cause
 
-      The config change pointed us at the cross-region postgres-dr endpoint. Each query round trip got ~150 ms slower, so each connection was busy longer per request. Same traffic, longer hold time: the pool needs more connections than it has (Little's law). Postgres itself was idle.
+      The config change pointed us at the cross-region postgres-dr endpoint. Each query round trip got ~300 ms slower, so each connection was busy longer per request. Same traffic, longer hold time: the pool needs more connections than it has (Little's law). Postgres itself was idle.
 
       ## Action items
 
@@ -164,7 +164,7 @@ items:
 
       ## Root cause
 
-      DATABASE_URL pointed at postgres-dr after the config deploy. ~150 ms extra per query meant connections were held longer, so the pool ran out at normal load (Little's law). Postgres was idle.
+      DATABASE_URL pointed at postgres-dr after the config deploy. ~300 ms extra per query meant connections were held longer, so the pool ran out at normal load (Little's law). Postgres was idle.
 
       ## Action items
 
@@ -356,7 +356,7 @@ items:
 
       ## Root cause
 
-      Neha didn't bother to check where the new endpoint lives before shipping it. DATABASE_URL pointed at postgres-dr, ~150 ms per round trip away, so each request held its connection longer and the pool emptied at normal traffic (Little's law) while Postgres idled.
+      Neha didn't bother to check where the new endpoint lives before shipping it. DATABASE_URL pointed at postgres-dr, ~300 ms per round trip away, so each request held its connection longer and the pool emptied at normal traffic (Little's law) while Postgres idled.
 
       ## Action items
 
@@ -402,7 +402,7 @@ items:
 
       ## Root cause
 
-      DATABASE_URL was switched to the cross-region postgres-dr. With ~150 ms added to each query, connections were held longer and the pool was exhausted, though Postgres CPU stayed at 20%.
+      DATABASE_URL was switched to the cross-region postgres-dr. With ~300 ms added to each query, connections were held longer and the pool was exhausted, though Postgres CPU stayed at 20%.
 
       ## Action items
 
@@ -427,7 +427,7 @@ items:
 
       ## Root cause
 
-      DATABASE_URL was changed to postgres-dr which is cross region, every query paid ~150ms more, conections were held longer so the pool got exausted at same traffic (littles law). Postgres was idle actually.
+      DATABASE_URL was changed to postgres-dr which is cross region, every query paid ~300 ms more, conections were held longer so the pool got exausted at same traffic (littles law). Postgres was idle actually.
 
       ## Action items
 

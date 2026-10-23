@@ -200,6 +200,32 @@ export function createDemoSource(): WorkspaceSource {
         },
       ],
     }),
+    changes: async (sha) => ({
+      service: "api",
+      sha,
+      short: sha.slice(0, 7),
+      author: sha === "a91f3c2" ? "rahul" : "meera",
+      at: activeAt / 1000 - 120,
+      message: sha === "a91f3c2" ? "refactor: add version prefix to cache keys" : "update product images",
+      files: sha === "a91f3c2" ? ["app/cache.py"] : ["app/static/products.json"],
+      diff:
+        sha === "a91f3c2"
+          ? [
+              "diff --git a/app/cache.py b/app/cache.py",
+              "--- a/app/cache.py",
+              "+++ b/app/cache.py",
+              "@@ -28,7 +28,11 @@ def key(product_id: int) -> str:",
+              '     return f"product:{product_id}"',
+              " ",
+              "+def versioned_key(product_id: int) -> str:",
+              '+    return f"v2:{key(product_id)}"',
+              "+",
+              " def get(product_id: int):",
+              "-    raw = client.get(key(product_id))",
+              "+    raw = client.get(versioned_key(product_id))",
+            ].join("\n")
+          : "diff --git a/app/static/products.json b/app/static/products.json\n(binary images updated)",
+    }),
     deploy: async () => ({ ok: true, sha: "a91f3c2", message: "api a91f3c2 is live (demo)", log: "" }),
     rollback: async (ref) => ({ ok: true, sha: ref, message: `api ${ref} is live (demo)`, log: "" }),
     restart: async (service) => `${service} restarted (demo)`,

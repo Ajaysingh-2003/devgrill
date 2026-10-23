@@ -60,7 +60,7 @@ Type scale utilities: `text-display-{2xl,xl,lg}`, `text-heading-{lg,md}`, `text-
 
 ## Motion rules
 
-1. **Keyboard-initiated changes are instant**: the palette, layout presets, focus mode and tool switching.
+1. **Keyboard-initiated changes are instant**: the palette, focus mode and tool switching.
 2. **Streaming surfaces never animate**: logs, terminal output, charts (data snaps) and the incident timeline.
 3. **One celebration**: `VerifyCelebration` on the debrief (~950 ms). It can be skipped with any key or click, jumps to the end under reduced motion, and is never reused on frequent surfaces.
 4. **Route transitions** (drills → track → briefing) use React `<ViewTransition>` through `apps/web/components/page-transition.tsx`. Links opt in with `transitionTypes={["nav-forward"]}` or `["nav-back"]`. The effect is a 12 px shift plus a fade on token durations.

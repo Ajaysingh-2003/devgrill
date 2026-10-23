@@ -36,13 +36,16 @@ MIN_ENDED_FOR_SOLVE_RATE = 10
 #: Modes a briefing offers until scenarios declare their own (phase 3).
 DEFAULT_MODES = [AttemptMode.GUIDED, AttemptMode.ONCALL]
 DEFAULT_GOALS = [
-    Goal(title="Mitigate", detail="Get customers back to working pages as fast as you safely can."),
+    Goal(
+        title="Get it working",
+        detail="Get customers back to working pages as fast as you safely can.",
+    ),
     Goal(title="Find the root cause", detail="Not just what is slow, but why it started now."),
     Goal(
         title="Fix it properly",
-        detail="Your fix has to survive verify, which replays the traffic and attacks weak spots.",
+        detail="When you check your fix, we replay the traffic and test the weak spots.",
     ),
-    Goal(title="Write the postmortem", detail="Your teammates in the war room want to know."),
+    Goal(title="Write it up", detail="Your teammates want to know what happened and why."),
 ]
 
 # Anonymous catalog responses can be cached by browsers and CDNs; personalised ones can't.
@@ -259,7 +262,7 @@ async def get_approaches(
         raise AppError(404, "scenario_not_found", f"No scenario called {slug!r}.")
     row, _, _ = found
     if not await catalog.has_resolved(session, user.id, row.scenario.id):
-        raise AppError(403, "not_resolved", "Resolve this incident to compare approaches.")
+        raise AppError(403, "not_resolved", "Fix this drill to see the other ways to fix it.")
     return [
         ApproachOut.model_validate(a) for a in await catalog.approaches(session, row.scenario.id)
     ]

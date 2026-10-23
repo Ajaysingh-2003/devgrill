@@ -133,6 +133,12 @@ def internal_router() -> APIRouter:
     ) -> dict[str, Any]:
         return await _ops(request).deploys(attempt_id, service)
 
+    @router.get("/deploys/{sha}")
+    async def deploy_changes(
+        attempt_id: uuid.UUID, sha: str, request: Request, service: str | None = None
+    ) -> dict[str, Any]:
+        return await _ops(request).deploy_changes(attempt_id, service, sha)
+
     @router.post("/deploys")
     async def deploy(attempt_id: uuid.UUID, body: DeployIn, request: Request) -> dict[str, Any]:
         return await _ops(request).deploy(attempt_id, body.service, "ui")

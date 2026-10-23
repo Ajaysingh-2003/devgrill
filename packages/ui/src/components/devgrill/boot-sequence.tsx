@@ -46,7 +46,7 @@ export function BootSequence({ steps, title }: { steps: BootStep[]; title: strin
         ))}
       </ol>
       <p aria-live="polite" className="sr-only">
-        {active ? `${active.label}${active.state === "failed" ? " failed" : ""}` : "Sandbox ready"}
+        {active ? `${active.label}${active.state === "failed" ? " failed" : ""}` : "Ready"}
       </p>
     </section>
   );

@@ -18,7 +18,7 @@ export default function NotFound() {
           </Link>
         }
       >
-        The link may be old, or the scenario was retired. Everything current is in the drills.
+        The link may be old, or the drill was retired. Everything current is in the drills.
       </EmptyState>
     </main>
   );

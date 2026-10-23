@@ -62,7 +62,7 @@ class HttpGateway:
             raise AppError(
                 503,
                 "gateway_unavailable",
-                "The sandbox gateway is unreachable.",
+                "We couldn't reach your practice system. Try again in a minute.",
                 headers={"Retry-After": "5"},
             ) from exc
         data: dict[str, Any] = res.json() if res.content else {}

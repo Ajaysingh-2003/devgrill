@@ -12,6 +12,7 @@ Triggers name what just happened, for beats with `when:` (scenario spec v1):
   hint:<tier>            the player took a hint
 Plus, for the debrief's replay rules (ScenarioSpec.replay), which beats don't use:
   db.query               a query in the Database console
+  deploy.viewed          the player looked at what a deploy changed
   message                a status update in the war room
   mitigation.declared    the player declared the incident mitigated
   verify.passed / verify.failed
@@ -44,6 +45,12 @@ TIMELINE_TYPES: Final = frozenset(
         "mitigation",
         "state",
     }
+)
+
+
+#: Why a working service went back to the incident (the current text and the one before it).
+REGRESSED_REASONS: Final = frozenset(
+    {"the service went over its target again", "the SLO broke again"}
 )
 
 
@@ -84,6 +91,8 @@ def event_triggers(event_type: str, payload: dict[str, Any]) -> list[str]:
             return [f"hint:{payload.get('tier')}"]
         case "trail" if payload.get("verb") == "sql":
             return ["db.query"]
+        case "trail" if payload.get("verb") == "diff":
+            return ["deploy.viewed"]
         case "message":
             return ["message"]
         case "mitigation":
@@ -111,25 +120,33 @@ def event_text(event_type: str, payload: dict[str, Any]) -> str | None:
             return f"Rolled {payload.get('service')} back to {ref[:7]}{outcome}"
         case "trail" if payload.get("verb") == "sql":
             return f"Queried the database: {payload.get('query')}"
+        case "trail" if payload.get("verb") == "diff":
+            return f"Looked at what deploy {payload.get('sha')} changed on {payload.get('service')}"
         case "hint":
             return f"Took hint {payload.get('tier')}"
         case "message":
             return f"Posted an update: {payload.get('text')}"
         case "mitigation":
-            agreed = "the metrics agreed" if payload.get("correct") else "the SLO still breached"
-            return f"Declared it mitigated ({agreed})"
+            agreed = "the graphs agreed" if payload.get("correct") else "it was still over target"
+            return f"Said it's working again ({agreed})"
         case "state":
-            return {
-                "mitigated": "Recovered: the SLO held again",
-                "active": f"Back to the incident: {payload['reason']}"
-                if payload.get("reason")
-                else None,
-                "resolved": "Resolved: verify passed",
-            }.get(str(payload.get("to")))
+            match payload.get("to"):
+                case "mitigated":
+                    return "Working again: the service met its target"
+                case "active" if payload.get("reason") in REGRESSED_REASONS:
+                    return "Over target again"
+                case "active" if payload.get("reason") == "reset":
+                    return "Started again from the broken system"
+                case "active" if payload.get("reason"):
+                    return f"Back to it: {payload['reason']}"
+                case "resolved":
+                    return "Fixed: every check passed"
+                case _:
+                    return None
         case "verify":
             probes: list[dict[str, Any]] = list(payload.get("probes") or [])
             passed = sum(1 for p in probes if p.get("passed"))
-            verdict = "passed" if payload.get("passed") else "failed"
-            return f"Ran verify: {verdict} ({passed} of {len(probes)} checks)"
+            verdict = "passed" if payload.get("passed") else "not fixed yet"
+            return f"Checked the fix: {verdict} ({passed} of {len(probes)} checks)"
         case _:
             return None

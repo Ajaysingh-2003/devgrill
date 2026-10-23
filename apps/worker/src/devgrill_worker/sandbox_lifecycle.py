@@ -254,9 +254,11 @@ class SandboxLifecycle:
             while self._health:
                 healthy = self._health.pop(0)
                 if healthy and self._state == "active":
-                    await self._set_state(inp, "mitigated", "the SLO holds again")
+                    await self._set_state(
+                        inp, "mitigated", "the service is meeting its target again"
+                    )
                 elif not healthy and self._state == "mitigated":
-                    await self._set_state(inp, "active", "the SLO broke again")
+                    await self._set_state(inp, "active", "the service went over its target again")
             while self._extend_requests > 0:
                 self._extend_requests -= 1
                 granted = self._extends_used < inp.max_extends and inp.extend_minutes > 0

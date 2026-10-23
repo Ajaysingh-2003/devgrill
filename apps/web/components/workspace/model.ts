@@ -1,6 +1,7 @@
 import type {
   CacheOut,
   DbInsightsOut,
+  DeployChangesOut,
   DeployHistoryOut,
   DeployOut,
   FilesOut,
@@ -130,6 +131,8 @@ export interface WorkspaceActions {
   readFile(path: string, service?: string): Promise<string>;
   writeFile(path: string, content: string, service?: string): Promise<void>;
   deploys(service?: string): Promise<DeployHistoryOut>;
+  /** What one deploy in the history changed (its files and diff). */
+  changes(sha: string, service?: string): Promise<DeployChangesOut>;
   deploy(service?: string): Promise<DeployOut>;
   rollback(ref: string, service?: string): Promise<DeployOut>;
   restart(service: string): Promise<string>;

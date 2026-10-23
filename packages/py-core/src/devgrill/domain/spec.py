@@ -199,6 +199,8 @@ class Beat(_Strict):
 
     persona: Slug
     say: str = Field(max_length=400)
+    #: When, after T. Timed beats only fire while the incident is still active: once it is
+    #: mitigated (or ended) they stay quiet, so nobody asks about a problem that's gone.
     at: str | None = Field(default=None, pattern=_OFFSET.pattern)
     #: An event name, e.g. "state:mitigated". (Not `on`: YAML 1.1 reads that key as true.)
     when: str | None = Field(default=None, pattern=r"^[a-z0-9_.\-]+(:[a-z0-9_]+)?$", max_length=60)

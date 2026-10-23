@@ -541,7 +541,9 @@ class SandboxActivities:
             ],
         }
         if inp.error:
-            payload["error"] = "Verify couldn't finish on our side; this run doesn't count."
+            payload["error"] = (
+                "The check couldn't finish on our side, so it doesn't count. Try again."
+            )
         await self.recorder.record(uuid.UUID(inp.attempt_id), "verify", payload)
         # A failed verify returns to where the player was (still mitigated, or not yet).
         previous = AttemptState(inp.previous_state)

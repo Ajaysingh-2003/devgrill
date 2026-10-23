@@ -213,6 +213,8 @@ class Decision:
     retry_after_s: int | None = None
     ttl_minutes: int = 0
     idle_minutes: int = 0
+    #: When a refusal lifts on its own (a plan period or the free daily budget resets).
+    resets_at: datetime | None = None
 
     @property
     def status(self) -> int:
@@ -227,8 +229,13 @@ class Decision:
         }[self.refusal]
 
 
-def _deny(refusal: Refusal, detail: str, retry_after_s: int | None = None) -> Decision:
-    return Decision(False, refusal, detail, retry_after_s)
+def _deny(
+    refusal: Refusal,
+    detail: str,
+    retry_after_s: int | None = None,
+    resets_at: datetime | None = None,
+) -> Decision:
+    return Decision(False, refusal, detail, retry_after_s, resets_at=resets_at)
 
 
 def _in_plan(req: StartRequest) -> bool:
@@ -246,52 +253,54 @@ def decide(req: StartRequest) -> Decision:
     # 1. access
     if not _in_plan(req):
         if req.tier == "guest":
-            return _deny("sign_up_required", "Sign in with GitHub to play this incident.")
+            return _deny("sign_up_required", "Sign in to play this one. It's free.")
         return _deny(
             "upgrade_required",
-            "This incident is part of Pro. Free plans include the tutorial, free incidents"
-            " and the Daily.",
+            "This one is part of Pro. On the free plan you can play the free drills and the Daily.",
         )
 
     # 2. per user
     if usage.live_now >= limits.concurrent_sandboxes:
         return _deny(
             "active_attempt_exists",
-            "You already have an incident running. Finish or abandon it first.",
+            "You're already in the middle of one. Finish it or leave it first.",
         )
     if usage.starts_in_period >= limits.live_starts:
-        retry = seconds_until(now, next_rollover(now, limits.live_starts_period))
+        reset = next_rollover(now, limits.live_starts_period)
         return _deny(
             "quota_exceeded",
-            _quota_text("live incidents", limits.live_starts, limits.live_starts_period),
-            retry,
+            _plays_text(req.tier, limits.live_starts, limits.live_starts_period),
+            seconds_until(now, reset),
+            reset,
         )
     remaining = limits.sandbox_minutes - usage.minutes_in_period
     if remaining < MIN_SESSION_MINUTES:
-        retry = seconds_until(now, next_rollover(now, limits.sandbox_minutes_period))
+        reset = next_rollover(now, limits.sandbox_minutes_period)
         return _deny(
             "quota_exceeded",
-            _quota_text("sandbox minutes", limits.sandbox_minutes, limits.sandbox_minutes_period),
-            retry,
+            _time_text(limits.sandbox_minutes, limits.sandbox_minutes_period),
+            seconds_until(now, reset),
+            reset,
         )
 
     # 3. fleet
     if fleet.live_total >= fleet.max_live:
-        return _deny("capacity", "Every sandbox is busy right now. Try again in a minute.", 60)
+        return _deny("capacity", "Everyone's practising right now. Try again in a minute.", 60)
 
     # 4. money (budgeted tiers only)
     if limits.budgeted:
-        tomorrow = seconds_until(now, next_rollover(now, "day"))
+        tomorrow = next_rollover(now, "day")
         if not fleet.free_starts_enabled:
             return _deny(
                 "budget_paused",
-                "Free sandboxes are paused right now. Case files and cards are open.",
+                "Free play is paused for a while. Quick Fire is still open.",
                 3600,
             )
         if fleet.budgeted_minutes_today >= fleet.daily_budget_minutes:
             return _deny(
                 "budget_paused",
-                "Free sandboxes are full for today. Case files and cards are open.",
+                "Free play is full for today. Quick Fire is still open.",
+                seconds_until(now, tomorrow),
                 tomorrow,
             )
 
@@ -301,6 +310,16 @@ def decide(req: StartRequest) -> Decision:
     return Decision(True, ttl_minutes=ttl, idle_minutes=min(limits.idle_minutes, ttl))
 
 
-def _quota_text(what: str, amount: int, period: Period) -> str:
-    per = {"day": "a day", "week": "a week", "ever": "in total"}[period]
-    return f"You've used your {amount} {what} {per}."
+_PER = {"day": "today", "week": "this week", "ever": "on your plan"}
+
+
+def _plays_text(tier: Tier, amount: int, period: Period) -> str:
+    kind = "free " if tier in ("guest", "free") else ""
+    plays = "play" if amount == 1 else "plays"
+    return f"You've used your {amount} {kind}{plays} {_PER[period]}."
+
+
+def _time_text(minutes: int, period: Period) -> str:
+    hours = minutes / 60
+    amount = f"{hours:g} hours" if hours >= 2 else f"{minutes} minutes"
+    return f"You've used your {amount} of practice time {_PER[period]}."

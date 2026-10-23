@@ -309,3 +309,33 @@ async def test_scenario_access_is_stored(seeded) -> None:  # type: ignore[no-unt
     assert rows["ttl-zero"] == "free" and rows["pool-party"] == "free"
     assert rows["big-sale-meltdown"] == "pro" and rows["ghost-reads"] == "pro"
     assert Scenario.access is not None
+
+
+def play_check(api: TestClient, headers: dict[str, str], slug: str = "ttl-zero") -> dict:  # type: ignore[type-arg]
+    res = api.get(f"/v1/scenarios/{slug}/play", headers=headers)
+    assert res.status_code == 200, res.text
+    return res.json()
+
+
+async def test_play_check_says_what_stands_in_the_way(api, seeded, auth, fake) -> None:  # type: ignore[no-untyped-def]
+    # Not signed in: the tutorial is open, the rest needs an account, placeholders aren't ready.
+    assert play_check(api, {})["allowed"] is True
+    assert play_check(api, {}, "pool-party")["reason"] == "sign_up_required"
+    assert play_check(api, {}, "ghost-reads")["reason"] == "not_playable"
+    # Signed in on the free plan: free scenarios yes, Pro ones no.
+    _, headers = user_headers(auth)
+    api.get("/v1/me", headers=headers)
+    assert play_check(api, headers, "pool-party")["allowed"] is True
+    assert play_check(api, headers, "big-sale-meltdown")["reason"] == "upgrade_required"
+    # Mid-run: everything else points back at it.
+    running = start(api, headers).json()["id"]
+    busy = play_check(api, headers, "pool-party")
+    assert (busy["reason"], busy["live_attempt_id"]) == ("active_attempt_exists", running)
+    # The week's plays used up: when it lifts, and the same answer starting would give.
+    other, other_headers = user_headers(auth, "used")
+    api.get("/v1/me", headers=other_headers)
+    await past_attempts(seeded, other, 3)
+    used = play_check(api, other_headers, "pool-party")
+    assert used["reason"] == "quota_exceeded" and used["resets_at"] is not None
+    assert used["message"] == "You've used your 3 free plays this week."
+    assert start(api, other_headers, "pool-party").json()["code"] == "quota_exceeded"

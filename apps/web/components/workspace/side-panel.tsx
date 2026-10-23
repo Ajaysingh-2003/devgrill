@@ -24,13 +24,18 @@ type Message = {
   id: number;
   who: string;
   role: string;
+  /** Wall-clock time, like any chat (and the charts' axes); `ts` is the ISO timestamp. */
   at: string;
+  ts: string;
   text: string;
   kind: "alert" | "you" | "teammate";
 };
 
-function toMessage(e: IncidentEvent, activeAt: number | null): Message | null {
-  const at = sinceStart(new Date(e.ts).getTime(), activeAt);
+const CLOCK = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
+
+function toMessage(e: IncidentEvent): Message | null {
+  const at = CLOCK.format(new Date(e.ts));
+  const ts = e.ts;
   switch (e.type) {
     case "alert":
       return {
@@ -38,16 +43,17 @@ function toMessage(e: IncidentEvent, activeAt: number | null): Message | null {
         who: "PagerBot",
         role: "alert",
         at,
+        ts,
         kind: "alert",
         text: `${String(e.payload.severity)}: ${String(e.payload.title)}. Assigned to you.`,
       };
     case "beat": {
       const p = persona(e.payload.persona);
-      return { id: e.id, who: p.name, role: p.role, at, kind: "teammate", text: String(e.payload.say) };
+      return { id: e.id, who: p.name, role: p.role, at, ts, kind: "teammate", text: String(e.payload.say) };
     }
     case "reply": {
       const p = persona(e.payload.persona);
-      return { id: e.id, who: p.name, role: p.role, at, kind: "teammate", text: String(e.payload.text) };
+      return { id: e.id, who: p.name, role: p.role, at, ts, kind: "teammate", text: String(e.payload.text) };
     }
     case "message":
       return {
@@ -55,6 +61,7 @@ function toMessage(e: IncidentEvent, activeAt: number | null): Message | null {
         who: "You",
         role: "Incident commander",
         at,
+        ts,
         kind: "you",
         text: String(e.payload.text),
       };
@@ -63,8 +70,12 @@ function toMessage(e: IncidentEvent, activeAt: number | null): Message | null {
   }
 }
 
+/** The worker's reason for "over target again" (older runs used the first wording). */
+const REGRESSED = new Set(["the SLO broke again", "the service went over its target again"]); // copy-ok
+
 function toTimeline(e: IncidentEvent, activeAt: number | null): TimelineEvent | null {
-  const at = sinceStart(new Date(e.ts).getTime(), activeAt);
+  // Time since the page, marked as elapsed (+mm:ss) so it doesn't read as a time of day.
+  const at = `+${sinceStart(new Date(e.ts).getTime(), activeAt)}`;
   const p = e.payload;
   const id = String(e.id);
   switch (e.type) {
@@ -115,8 +126,8 @@ function toTimeline(e: IncidentEvent, activeAt: number | null): TimelineEvent | 
         kind: "action",
         actor: "You",
         text: p.error
-          ? "Verify couldn't finish (it doesn't count)"
-          : `Ran verify: ${p.passed ? "passed" : "not fixed yet"} (${passed} of ${probes.length} checks)`,
+          ? "The check couldn't finish (it doesn't count)"
+          : `Checked the fix: ${p.passed ? "it works" : "not fixed yet"} (${passed} of ${probes.length} checks passed)`,
       };
     }
     case "mitigation":
@@ -126,15 +137,15 @@ function toTimeline(e: IncidentEvent, activeAt: number | null): TimelineEvent | 
         kind: "action",
         actor: "You",
         text: p.correct
-          ? "Declared mitigated: confirmed by the metrics"
-          : "Declared mitigated, but the SLO still breaches",
+          ? "Marked as working again: the graphs agree"
+          : "Marked as working again, but it's still over target",
       };
     case "state":
-      if (p.to === "mitigated")
-        return { id, at, kind: "alert", text: "Recovered: the SLO holds again (mitigated)" };
-      if (p.to === "active" && p.reason === "the SLO broke again")
-        return { id, at, kind: "alert", text: "The SLO broke again" };
-      if (p.to === "verifying") return { id, at, kind: "action", actor: "Verifier", text: "Verify started" };
+      if (p.to === "mitigated") return { id, at, kind: "alert", text: "Working again: back under target" };
+      if (p.to === "active" && REGRESSED.has(String(p.reason)))
+        return { id, at, kind: "alert", text: "Over target again" };
+      if (p.to === "verifying")
+        return { id, at, kind: "action", actor: "DevGrill", text: "Started checking the fix" };
       return null;
     default:
       return null;
@@ -147,8 +158,8 @@ export function SidePanel() {
   const { events, activeAt } = useIncident();
   const warRoom = info.unlocked_tools.includes("war_room");
   const messages = useMemo(
-    () => events.map((e) => toMessage(e, activeAt)).filter((m): m is Message => m !== null),
-    [events, activeAt],
+    () => events.map((e) => toMessage(e)).filter((m): m is Message => m !== null),
+    [events],
   );
   const timeline = useMemo(
     () => events.map((e) => toTimeline(e, activeAt)).filter((t): t is TimelineEvent => t !== null),
@@ -157,12 +168,12 @@ export function SidePanel() {
 
   return (
     <section
-      aria-label={warRoom ? "War room and timeline" : "Timeline"}
+      aria-label={warRoom ? "Team chat and timeline" : "Timeline"}
       className="flex h-full min-h-0 flex-col bg-surface"
     >
       <Tabs defaultValue={warRoom ? "war-room" : "timeline"} className="flex h-full min-h-0 flex-col gap-0">
         <TabsList className="h-10 w-full justify-start rounded-none border-b border-border bg-transparent px-2">
-          {warRoom ? <TabsTrigger value="war-room">War room</TabsTrigger> : null}
+          {warRoom ? <TabsTrigger value="war-room">Team chat</TabsTrigger> : null}
           <TabsTrigger value="timeline">Timeline</TabsTrigger>
         </TabsList>
         {warRoom ? (
@@ -197,7 +208,7 @@ function WarRoom({ messages }: { messages: Message[] }) {
     <>
       <ol
         ref={list}
-        aria-label="War room messages"
+        aria-label="Team chat messages"
         aria-live="polite"
         className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-3"
       >
@@ -219,7 +230,10 @@ function WarRoom({ messages }: { messages: Message[] }) {
             <div className="flex min-w-0 flex-col gap-0.5">
               <p className="text-caption text-fg-subtle">
                 <span className="font-semibold text-fg">{m.who}</span>
-                {m.kind === "alert" ? "" : `, ${m.role}`} <time className="font-mono">{m.at}</time>
+                {m.kind === "alert" ? "" : `, ${m.role}`}{" "}
+                <time dateTime={m.ts} className="font-mono">
+                  {m.at}
+                </time>
               </p>
               <p className="text-body text-fg">{m.text}</p>
             </div>
@@ -257,7 +271,7 @@ function WarRoom({ messages }: { messages: Message[] }) {
         }}
       >
         <label htmlFor="status-update" className="sr-only">
-          Post a status update to the war room
+          Post an update to the team chat
         </label>
         <textarea
           id="status-update"

@@ -257,6 +257,21 @@ class AttemptPage(Model):
     next_cursor: str | None
 
 
+class PlayCheckOut(Model):
+    """Can the caller start this scenario now? The same rules as starting it (ADR 013)."""
+
+    allowed: bool
+    #: Why not: not_playable, sign_up_required, upgrade_required, active_attempt_exists,
+    #: quota_exceeded, capacity or budget_paused.
+    reason: str | None = None
+    message: str = ""
+    #: When the limit lifts on its own (a plan period or the free daily budget resets).
+    resets_at: datetime | None = None
+    #: The caller's run in progress, when that is what's in the way.
+    live_attempt_id: uuid.UUID | None = None
+    tier: Literal["guest", "free", "pro", "team"]
+
+
 class AttemptIn(Input):
     scenario_slug: str = Field(pattern=r"^[a-z0-9]+(-[a-z0-9]+)*$", max_length=64)
     mode: AttemptMode = AttemptMode.GUIDED
@@ -390,6 +405,19 @@ class DeployHistoryOut(Model):
     commits: list[Commit]
     live: str | None
     live_dirty: bool
+
+
+class DeployChangesOut(Model):
+    """What one deploy changed: the commit, its files and its diff."""
+
+    service: str
+    sha: str
+    short: str
+    author: str
+    at: int
+    message: str
+    files: list[str]
+    diff: str
 
 
 class DeployIn(Input):

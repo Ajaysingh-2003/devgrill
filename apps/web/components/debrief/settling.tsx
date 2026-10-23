@@ -27,7 +27,7 @@ export function Settling() {
       {tries < TRIES ? (
         <>
           <LoaderCircle className="size-4 animate-spin motion-reduce:animate-none" aria-hidden="true" />
-          Scoring your incident…
+          Scoring your run…
         </>
       ) : (
         "Your score is taking longer than usual. Reload the page in a minute."

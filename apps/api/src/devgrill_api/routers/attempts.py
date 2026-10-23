@@ -39,7 +39,7 @@ from devgrill_api.auth import guest
 from devgrill_api.deps import GuestJti, OptionalUser, SessionDep, SettingsDep
 from devgrill_api.errors import AppError
 from devgrill_api.orchestrator import Orchestrator, OrchestratorError, TemporalOrchestrator
-from devgrill_api.schemas import AttemptIn, AttemptOut, Quota, UsageOut
+from devgrill_api.schemas import AttemptIn, AttemptOut, PlayCheckOut, Quota, UsageOut
 
 log = structlog.get_logger(__name__)
 router = APIRouter(tags=["attempts"])
@@ -64,7 +64,9 @@ def _owner(user: OptionalUser, jti: str | None) -> repo.Owner:
         return repo.Owner(user_id=user.id)
     if jti is not None:
         return repo.Owner(guest_hash=guest.guest_hash(jti))
-    raise AppError(401, "unauthenticated", "Sign in, or start a guest session on /try.")
+    raise AppError(
+        401, "unauthenticated", "Sign in, or try the tutorial at /try without an account."
+    )
 
 
 async def _tier_and_limits(
@@ -143,9 +145,86 @@ async def _owned(session: Any, attempt_id: uuid.UUID, owner: repo.Owner) -> Atte
         )
     )
     if not mine:
-        raise AppError(404, "not_found", "No such attempt.")
+        raise AppError(404, "not_found", "We couldn't find that run.")
     assert attempt is not None
     return attempt
+
+
+NOT_PLAYABLE = "This one isn't ready to play yet. It's coming soon."
+
+
+async def _decide(
+    session: Any,
+    settings: Any,
+    owner: repo.Owner | None,
+    scenario: Scenario,
+    version: ScenarioVersion,
+    spec: ScenarioSpec,
+    now: datetime,
+) -> tuple[policy.Tier, policy.PlanLimits, policy.Decision]:
+    """Whether `owner` may start this scenario now (no owner: someone not signed in yet)."""
+    if owner is None:
+        tier: policy.Tier = "guest"
+        limits = policy.limits_for("guest")
+        usage = policy.Usage(live_now=0, starts_in_period=0, minutes_in_period=0.0)
+    else:
+        tier, limits = await _tier_and_limits(session, owner)
+        usage = await _usage(session, owner, limits, now)
+    daily = await challenges.current(session, ChallengeKind.DAILY, now=now)
+    decision = policy.decide(
+        policy.StartRequest(
+            tier=tier,
+            limits=limits,
+            scenario_access=Access(scenario.access),
+            is_daily=tier != "guest"
+            and daily is not None
+            and daily[0].scenario_version_id == version.id,
+            is_tutorial=scenario.slug in settings.guest_scenarios,
+            scenario_ttl_minutes=spec.ttl_minutes,
+            usage=usage,
+            fleet=await _fleet(session, settings, now),
+            now=now,
+        )
+    )
+    return tier, limits, decision
+
+
+@router.get("/scenarios/{slug}/play", response_model=PlayCheckOut, tags=["catalog"])
+async def can_play(
+    slug: str,
+    session: SessionDep,
+    settings: SettingsDep,
+    user: OptionalUser,
+    jti: GuestJti,
+    response: Response,
+) -> PlayCheckOut:
+    """Whether the caller can start this scenario now and, if not, why and until when. The
+    briefing asks before showing the start button; starting checks again (this is advice)."""
+    response.headers["Cache-Control"] = "no-store"
+    found = await catalog.scenario_by_slug(session, slug)
+    if found is None:
+        raise AppError(404, "not_found", "No such scenario.")
+    row, _, version = found
+    spec = ScenarioSpec.model_validate(version.spec)
+    owner = _owner(user, jti) if user is not None or jti is not None else None
+    if not spec.playable:
+        tier = "guest" if owner is None else (await _tier_and_limits(session, owner))[0]
+        return PlayCheckOut(allowed=False, reason="not_playable", message=NOT_PLAYABLE, tier=tier)
+    tier, _, decision = await _decide(
+        session, settings, owner, row.scenario, version, spec, datetime.now(UTC)
+    )
+    live = None
+    if decision.refusal == "active_attempt_exists" and owner is not None:
+        running = await repo.live_for(session, owner)
+        live = running.id if running is not None else None
+    return PlayCheckOut(
+        allowed=decision.allowed,
+        reason=decision.refusal,
+        message=decision.detail,
+        resets_at=decision.resets_at,
+        live_attempt_id=live,
+        tier=tier,
+    )
 
 
 @router.post("/attempts", status_code=202, response_model=AttemptOut)
@@ -166,27 +245,13 @@ async def start_attempt(
     row, _, version = found
     spec = ScenarioSpec.model_validate(version.spec)
     if not spec.playable:
-        raise AppError(409, "not_playable", "This incident can't be played live yet.")
+        raise AppError(409, "not_playable", NOT_PLAYABLE)
 
     # One decision at a time: the fleet and budget counts must not race.
     await session.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": _START_LOCK})
     now = datetime.now(UTC)
-    tier, limits = await _tier_and_limits(session, owner)
-    daily = await challenges.current(session, ChallengeKind.DAILY, now=now)
-    decision = policy.decide(
-        policy.StartRequest(
-            tier=tier,
-            limits=limits,
-            scenario_access=Access(row.scenario.access),
-            is_daily=tier != "guest"
-            and daily is not None
-            and daily[0].scenario_version_id == version.id,
-            is_tutorial=row.scenario.slug in settings.guest_scenarios,
-            scenario_ttl_minutes=spec.ttl_minutes,
-            usage=await _usage(session, owner, limits, now),
-            fleet=await _fleet(session, settings, now),
-            now=now,
-        )
+    tier, limits, decision = await _decide(
+        session, settings, owner, row.scenario, version, spec, now
     )
     if not decision.allowed:
         headers = {"Retry-After": str(decision.retry_after_s)} if decision.retry_after_s else None
@@ -210,7 +275,9 @@ async def start_attempt(
         )
     except repo.AttemptLiveError:
         raise AppError(
-            409, "active_attempt_exists", "You already have an incident running."
+            409,
+            "active_attempt_exists",
+            "You're already in the middle of one. Finish it or leave it first.",
         ) from None
     # Commit before starting the workflow: its first activity reads this row.
     await session.commit()
@@ -228,13 +295,13 @@ async def start_attempt(
     except OrchestratorError as exc:
         log.error("attempt.start_failed", attempt_id=str(attempt.id), error=str(exc))
         await repo.move(
-            session, attempt.id, AttemptState.FAILED, reason="could not start the sandbox"
+            session, attempt.id, AttemptState.FAILED, reason="couldn't start the practice system"
         )
         await session.commit()
         raise AppError(
             503,
             "capacity",
-            "Sandboxes are unavailable right now. Try again shortly.",
+            "We couldn't start your practice system. Try again in a minute.",
             headers={"Retry-After": "30"},
         ) from exc
     log.info("attempt.started", attempt_id=str(attempt.id), tier=tier, ttl=decision.ttl_minutes)
@@ -255,7 +322,7 @@ async def _steer(
 ) -> AttemptOut:
     attempt = await _owned(session, attempt_id, owner)
     if attempt.state in TERMINAL_STATES:
-        raise AppError(409, "attempt_ended", "This incident has already ended.")
+        raise AppError(409, "attempt_ended", "This drill has already ended.")
     try:
         await _orchestrator(request).signal(str(attempt.id), signal)
         if signal != SIGNAL_ABANDON:
@@ -264,7 +331,7 @@ async def _steer(
         raise AppError(
             503,
             "unavailable",
-            "Could not reach the sandbox controller.",
+            "We couldn't reach your practice system. Try again in a minute.",
             headers={"Retry-After": "10"},
         ) from exc
     return await _attempt_out(session, attempt)
@@ -306,7 +373,7 @@ async def verify_attempt(
     if attempt.state is AttemptState.VERIFYING:
         return await _attempt_out(session, attempt)
     if attempt.state is AttemptState.PROVISIONING:
-        raise AppError(409, "not_ready", "The sandbox is still starting.")
+        raise AppError(409, "not_ready", "Your practice system is still starting.")
     return await _steer(request, session, attempt_id, _owner(user, jti), SIGNAL_VERIFY)
 
 

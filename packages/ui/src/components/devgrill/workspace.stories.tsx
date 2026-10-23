@@ -78,12 +78,18 @@ export const Layout: Story = {
   ),
   play: async ({ canvas }) => {
     // Window splitter pattern: separators are focusable and resize with the keyboard.
-    const separators = canvas.getAllByRole("separator");
-    await expect(separators).toHaveLength(2);
-    const before = Number(separators[0]!.getAttribute("aria-valuenow"));
-    separators[0]!.focus();
-    await userEvent.keyboard("{ArrowRight}{ArrowRight}");
-    await waitFor(() => expect(Number(separators[0]!.getAttribute("aria-valuenow"))).toBeGreaterThan(before));
+    await expect(canvas.getAllByRole("separator")).toHaveLength(2);
+    // The team chat's splitter moves left and right; the terminal's moves up and down.
+    for (const [name, key] of [
+      [/work area and the team chat/, "{ArrowRight}{ArrowRight}"],
+      [/tool panel and the terminal/, "{ArrowDown}{ArrowDown}"],
+    ] as const) {
+      const separator = canvas.getByRole("separator", { name });
+      const before = Number(separator.getAttribute("aria-valuenow"));
+      separator.focus();
+      await userEvent.keyboard(key);
+      await waitFor(() => expect(Number(separator.getAttribute("aria-valuenow"))).toBeGreaterThan(before));
+    }
   },
 };
 
@@ -91,7 +97,7 @@ export const Celebration: Story = {
   render: () => (
     <div className="max-w-4xl p-6">
       <VerifyCelebration
-        title="Your fix survived the replay"
+        title="Your fix works"
         delta={52}
         rating={1392}
         track="Caching"
@@ -101,7 +107,7 @@ export const Celebration: Story = {
     </div>
   ),
   play: async ({ canvas }) => {
-    await expect(canvas.getByRole("heading", { name: "Your fix survived the replay" })).toBeVisible();
+    await expect(canvas.getByRole("heading", { name: "Your fix works" })).toBeVisible();
     await expect(canvas.getByText("Up 52, now 1392")).toBeInTheDocument();
   },
 };

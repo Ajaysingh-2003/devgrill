@@ -42,8 +42,8 @@ try {
   log(`signed in as ${LOGIN} (pro)`);
 
   await page.goto(`${BASE}/drills/caching/big-sale-meltdown`);
-  await page.getByRole("radio", { name: /Real on-call/ }).click();
-  await page.getByRole("button", { name: "Start the incident" }).click();
+  await page.getByRole("radio", { name: /No hints/ }).click();
+  await page.getByRole("button", { name: "Start the drill" }).click();
   await page.waitForURL(/\/incident\/[0-9a-f-]{36}$/, { timeout: 60_000 });
   await page.getByText("oncall@shopkart: Connected").waitFor({ timeout: 180_000 });
   log(`active: ${page.url()}`);

@@ -275,7 +275,7 @@ export const CHARTS = {
 };
 
 export const BOOT_STEPS: BootStep[] = [
-  { id: "alloc", label: "Allocating your sandbox", state: "done" },
+  { id: "alloc", label: "Setting up your practice system", state: "done" },
   { id: "pull", label: "Starting ShopKart", detail: "api, worker, postgres and redis", state: "done" },
   { id: "seed", label: "Seeding 18,402 products", state: "done" },
   { id: "fault", label: "Shipping the 19:58 deploy", state: "active" },
@@ -540,7 +540,7 @@ export const APPROACHES: (Approach & {
     dbAtExpiry: "3,900/s",
     staleness: "2 s",
     pro: "Spreads mass expiry. One line.",
-    con: "Does nothing for a single hot key. Fails the hot-key probe.",
+    con: "Does nothing for a single hot key. Fails the hot-key check.",
   },
   {
     id: "scale",
@@ -583,7 +583,7 @@ export const REPLAY = [
   { at: "05:40", text: "Compared stored keys with missed keys", mark: "clue" },
   { at: "06:55", text: "Found deploy a91f3c2 in git log", mark: "clue" },
   { at: "08:12", text: "Rolled back; service recovered", mark: null },
-  { at: "17:40", text: "Shipped coalescing; all six probes passed", mark: null },
+  { at: "17:40", text: "Shipped coalescing; all six checks passed", mark: null },
 ] as const;
 
 /* ------------------------------------------------------------------ profile, admin, quick fire */
@@ -638,7 +638,7 @@ export const ADMIN_ROWS = [
     validation: "fail",
     solveRate: 0,
     median: "—",
-    flag: "Fix does not pass the hot-key probe",
+    flag: "Fix does not pass the hot-key check",
   },
   {
     slug: "pool-party",

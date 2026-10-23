@@ -7,7 +7,7 @@ import { LiveDebrief } from "@/components/debrief/live-debrief";
 import { DEMO_ID } from "@/components/workspace/ids";
 import { api, unwrap } from "@/lib/api";
 
-export const metadata: Metadata = { title: "Debrief" };
+export const metadata: Metadata = { title: "Results" };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -28,7 +28,7 @@ async function Debrief({ params }: { params: PageProps<"/incident/[attemptId]/de
 /** T6 Debrief: Field Manual layer plus the one celebration moment. */
 export default function DebriefPage({ params }: PageProps<"/incident/[attemptId]/debrief">) {
   return (
-    <Suspense fallback={<p className="p-6 text-body text-fg-muted">Loading your debrief…</p>}>
+    <Suspense fallback={<p className="p-6 text-body text-fg-muted">Loading your results…</p>}>
       <Debrief params={params} />
     </Suspense>
   );

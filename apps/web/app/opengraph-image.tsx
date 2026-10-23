@@ -46,7 +46,7 @@ export default function OpengraphImage() {
             fontWeight: 700,
           }}
         >
-          Live incidents
+          Live outages
         </div>
         <div
           style={{

@@ -16,6 +16,7 @@ from typing import Any
 
 import structlog
 from fastapi import APIRouter, Query, Request, Response
+from fastapi import Path as PathParam
 from sqlalchemy import func, select
 
 from devgrill.ai import coaching
@@ -52,6 +53,7 @@ from devgrill_api.routers.attempts import (
 from devgrill_api.schemas import (
     CacheOut,
     DbInsightsOut,
+    DeployChangesOut,
     DeployHistoryOut,
     DeployIn,
     DeployOut,
@@ -102,7 +104,7 @@ async def _live(
 ) -> Attempt:
     attempt = await _owned(session, attempt_id, _owner(user, jti))
     if attempt.state in TERMINAL_STATES:
-        raise AppError(409, "attempt_ended", "This incident has ended.")
+        raise AppError(409, "attempt_ended", "This drill has ended.")
     return attempt
 
 
@@ -232,9 +234,9 @@ async def take_hint(
     attempt = await _live(session, attempt_id, user, jti)
     spec, _, _ = await _spec_and_slug(session, attempt)
     if spec.hints is None:
-        raise AppError(404, "no_hints", "This incident has no hints.")
+        raise AppError(404, "no_hints", "This drill has no hints.")
     if attempt.mode is AttemptMode.ONCALL:
-        raise AppError(409, "no_hints_on_call", "Real on-call mode has no hints.")
+        raise AppError(409, "no_hints_on_call", "You're playing without hints this time.")
     taken = await session.scalar(
         select(func.count())
         .select_from(AttemptEvent)
@@ -242,7 +244,7 @@ async def take_hint(
     )
     tier = int(taken or 0) + 1
     if tier > 3:
-        raise AppError(409, "no_more_hints", "You've seen every hint for this incident.")
+        raise AppError(409, "no_more_hints", "You've seen every hint for this drill.")
     text = {1: spec.hints.tier1, 2: spec.hints.tier2, 3: spec.hints.tier3}[tier]
     attempt.hints_used = tier
     await repo.add_event(session, attempt.id, "hint", {"tier": tier, "text": text})
@@ -296,7 +298,7 @@ async def nudge(
     leans on the next hint without giving it away, and costs no score."""
     attempt = await _live(session, attempt_id, user, jti)
     if attempt.mode not in NUDGE_MODES:
-        raise AppError(409, "no_nudges", "Nudges are for guided practice.")
+        raise AppError(409, "no_nudges", "Nudges are for runs with hints.")
     state = request.app.state
     llm = assist.llm_of(state)
     if not llm.enabled("nudge"):
@@ -459,6 +461,22 @@ async def list_deploys(
     query = {"service": service} if service else None
     data = await _op(request, session, attempt_id, user, jti, "GET", "deploys", query=query)
     return DeployHistoryOut.model_validate(data)
+
+
+@router.get("/attempts/{attempt_id}/deploys/{sha}", response_model=DeployChangesOut)
+async def deploy_changes(
+    attempt_id: uuid.UUID,
+    request: Request,
+    session: SessionDep,
+    user: OptionalUser,
+    jti: GuestJti,
+    sha: str = PathParam(pattern=r"^[0-9a-f]{4,40}$"),
+    service: str | None = Query(default=None, max_length=40),
+) -> DeployChangesOut:
+    """What one deploy in the history changed (files and diff), as `git show` would print."""
+    query = {"service": service} if service else None
+    data = await _op(request, session, attempt_id, user, jti, "GET", f"deploys/{sha}", query=query)
+    return DeployChangesOut.model_validate(data)
 
 
 @router.post("/attempts/{attempt_id}/deploys", response_model=DeployOut)

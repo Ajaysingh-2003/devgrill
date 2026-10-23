@@ -37,7 +37,7 @@ const KIND: Record<TimelineKind, { icon: LucideIcon; label: string; tone: string
 export function IncidentTimeline({
   events,
   className,
-  label = "Incident timeline",
+  label = "Timeline",
 }: {
   events: TimelineEvent[];
   className?: string;

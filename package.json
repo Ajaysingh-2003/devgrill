@@ -16,6 +16,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "colors:check": "node scripts/check-raw-colors.mjs",
+    "copy:check": "node scripts/check-copy.mjs",
     "storybook": "pnpm --filter @devgrill/ui storybook",
     "e2e": "pnpm --filter @devgrill/web e2e"
   },

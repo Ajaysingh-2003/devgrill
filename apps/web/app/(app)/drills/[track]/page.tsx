@@ -19,7 +19,7 @@ export async function generateMetadata({ params }: PageProps<"/drills/[track]">)
 
 const STATUS = {
   solved: { label: "Solved", icon: CircleCheck, tone: "text-success-text" },
-  attempted: { label: "Attempted", icon: CircleDot, tone: "text-warning-text" },
+  attempted: { label: "Not solved yet", icon: CircleDot, tone: "text-warning-text" },
   new: { label: "Not started", icon: CircleDashed, tone: "text-fg-subtle" },
 } as const;
 

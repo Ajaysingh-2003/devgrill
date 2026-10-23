@@ -82,15 +82,15 @@ class Operations:
                 )
             ).first()
         if row is None:
-            raise OperationError(404, "not_found", "No such attempt.")
+            raise OperationError(404, "not_found", "We couldn't find that run.")
         attempt, slug = row
         if attempt.state in TERMINAL_STATES:
-            raise OperationError(409, "attempt_ended", "This incident has ended.")
+            raise OperationError(409, "attempt_ended", "This drill has ended.")
         if playable and attempt.state not in _PLAYABLE:
             detail = (
-                "The sandbox is still starting."
+                "Your practice system is still starting."
                 if attempt.state is AttemptState.PROVISIONING
-                else "The verifier is running; try again when it finishes."
+                else "Your fix is being checked; try again when that finishes."
             )
             raise OperationError(409, "sandbox_busy", detail)
         if slug not in self._bundles:
@@ -172,6 +172,23 @@ class Operations:
         sb = await self.sandbox(attempt_id)
         name = self._service(sb, service, patchable=True)
         return await self.driver.deploy_history(sb.handle, sb.bundle, name)
+
+    async def deploy_changes(
+        self, attempt_id: uuid.UUID, service: str | None, sha: str
+    ) -> dict[str, Any]:
+        """What one deploy in the history changed (the same as `git show` in the terminal)."""
+        sb = await self.sandbox(attempt_id)
+        name = self._service(sb, service, patchable=True)
+        if not _SHA.match(sha):
+            raise OperationError(400, "bad_ref", "Ask for a commit sha from the deploy history.")
+        try:
+            result = await self.driver.commit_changes(sb.handle, sb.bundle, name, sha)
+        except FileNotFoundError as exc:
+            raise OperationError(404, "not_found", f"No commit {sha} on {name}.") from exc
+        await self.recorder.record(
+            sb.attempt_id, "trail", {"verb": "diff", "service": name, "sha": result["short"]}
+        )
+        return result
 
     async def db(self, attempt_id: uuid.UUID) -> dict[str, Any]:
         sb = await self.sandbox(attempt_id)

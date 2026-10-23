@@ -1156,6 +1156,37 @@ class ComposeDriver:
             "live_dirty": dirty.stdout.strip() == "true",
         }
 
+    async def commit_changes(
+        self, handle: SandboxHandle, bundle: Bundle, service: str, sha: str
+    ) -> dict[str, Any]:
+        """What one commit on the service's repo changed: its message, files and diff."""
+        shell = await self._container(handle, bundle.base_app.shell_service)
+        repo = self._patchable_repo(bundle, service)
+        head = await self._run(
+            shell,
+            ["git", "show", "-s", "--format=%H%x1f%h%x1f%an%x1f%at%x1f%s", sha, "--"],
+            workdir=repo,
+        )
+        if not head.ok or head.stdout.count("\x1f") != 4:
+            raise FileNotFoundError(sha)
+        full, short, author, at, subject = head.stdout.strip().split("\x1f")
+        names = await self._must(
+            shell, ["git", "show", "--format=", "--name-only", full, "--"], "changes", workdir=repo
+        )
+        diff = await self._must(
+            shell, ["git", "show", "--format=", "--patch", full, "--"], "changes", workdir=repo
+        )
+        return {
+            "service": service,
+            "sha": full,
+            "short": short,
+            "author": author,
+            "at": int(at),
+            "message": subject,
+            "files": [n for n in names.stdout.splitlines() if n],
+            "diff": diff.stdout[:200_000],
+        }
+
     def _patchable_repo(self, bundle: Bundle, service: str) -> str:
         svc = bundle.base_app.services.get(service)
         if svc is None or svc.source is None:

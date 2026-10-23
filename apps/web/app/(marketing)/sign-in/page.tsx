@@ -34,7 +34,7 @@ export default function SignInPage(props: PageProps<"/sign-in">) {
         <h1 className="text-heading-lg font-semibold tracking-tight text-fg">
           Sign in to save your progress
         </h1>
-        <p className="text-body text-fg-muted">Ratings, streaks and postmortems are kept on your account.</p>
+        <p className="text-body text-fg-muted">Ratings, streaks and write-ups are kept on your account.</p>
       </div>
       <Suspense fallback={<div className="h-11 rounded-sm bg-raised" />}>
         <SignInForm searchParams={props.searchParams} />

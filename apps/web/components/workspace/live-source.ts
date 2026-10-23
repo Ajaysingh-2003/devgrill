@@ -6,6 +6,7 @@ import {
   dbQuery,
   declareMitigated,
   deploy,
+  deployChanges,
   extendAttempt,
   listDeploys,
   listFiles,
@@ -187,6 +188,8 @@ export function createLiveSource(info: WorkspaceOut): WorkspaceSource {
       await call(writeFile({ client: client(), path, query: { path: p, service }, body: { content } }));
     },
     deploys: (service) => call(listDeploys({ client: client(), path, query: { service } })),
+    changes: (sha, service) =>
+      call(deployChanges({ client: client(), path: { ...path, sha }, query: { service } })),
     deploy: (service) => call(deploy({ client: client(), path, body: { service } })),
     rollback: (ref, service) => call(rollback({ client: client(), path, body: { ref, service } })),
     restart: async (service) =>

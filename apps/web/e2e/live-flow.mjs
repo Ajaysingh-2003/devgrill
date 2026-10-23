@@ -55,13 +55,13 @@ await page.addInitScript(() => {
 
 try {
   await page.goto(`${BASE}/drills/caching/ttl-zero`);
-  await page.getByRole("button", { name: "Start the incident" }).click();
+  await page.getByRole("button", { name: "Start the drill" }).click();
   await page.waitForURL(/\/incident\/[0-9a-f-]{36}$/, { timeout: 60_000 });
   const started = Date.now();
   step(`started ${page.url()}`);
 
-  await page.getByText("Getting your incident ready").waitFor({ timeout: 30_000 });
-  await page.getByText("Getting your incident ready").waitFor({ state: "detached", timeout: 180_000 });
+  await page.getByText("Getting your drill ready").waitFor({ timeout: 30_000 });
+  await page.getByText("Getting your drill ready").waitFor({ state: "detached", timeout: 180_000 });
   results.time_to_active_ui_s = (Date.now() - started) / 1000;
   step("active");
 
@@ -118,7 +118,7 @@ try {
   step("rolled back");
 
   await page.getByRole("tab", { name: "Timeline" }).click();
-  await page.getByText("Recovered: the SLO holds again (mitigated)").waitFor({ timeout: 180_000 });
+  await page.getByText("Working again: back under target").waitFor({ timeout: 180_000 });
   results.mitigated_after_rollback = true;
   step("mitigated");
 
@@ -141,27 +141,27 @@ try {
 
   // Verify (phase 5): progress probe by probe, then the verdict.
   const verifyStarted = Date.now();
-  await page.getByRole("button", { name: "Verify", exact: true }).click();
+  await page.getByRole("button", { name: "Check my fix", exact: true }).click();
   const dialog = page.getByRole("dialog");
   await dialog
     .getByText(/Checking|checks done/)
     .first()
     .waitFor({ timeout: 60_000 });
-  await dialog.getByRole("heading", { name: "Verify passed" }).waitFor({ timeout: 300_000 });
+  await dialog.getByRole("heading", { name: "Your fix works" }).waitFor({ timeout: 300_000 });
   results.verify_s = Math.round((Date.now() - verifyStarted) / 1000);
   step(`verify passed in ${results.verify_s}s`);
 
-  await dialog.getByRole("link", { name: "Open the debrief" }).click();
+  await dialog.getByRole("link", { name: "See your results" }).click();
   await page.waitForURL(/\/debrief$/, { timeout: 60_000 });
-  await page.getByRole("heading", { level: 1, name: "Your fix survived the replay" }).waitFor();
-  await page.getByText("Scoring your incident…").waitFor({ state: "detached", timeout: 90_000 });
-  await page.getByRole("table", { name: "Verify probes and results" }).waitFor();
+  await page.getByRole("heading", { level: 1, name: "Your fix held up" }).waitFor();
+  await page.getByText("Scoring your run…").waitFor({ state: "detached", timeout: 90_000 });
+  await page.getByRole("table", { name: "The checks your fix faced, and how it did" }).waitFor();
   await page.getByRole("radio", { name: /Restore a positive TTL/ }).waitFor(); // approaches open
   results.debrief = true;
   step("debrief");
   await page.screenshot({ path: "test-results/debrief.png", fullPage: true });
 
-  await page.getByRole("link", { name: "Write the postmortem" }).click();
+  await page.getByRole("link", { name: "Write it up" }).click();
   await page.waitForURL(/\/postmortem$/, { timeout: 60_000 });
   await page
     .getByLabel("Summary")

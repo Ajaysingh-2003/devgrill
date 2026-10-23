@@ -79,6 +79,9 @@ beats:
   - persona: arjun
     when: "state:mitigated"
     say: "That's holding. Before we call it: will this survive the cache being flushed mid-sale, and are price updates still showing up?"
+  - persona: priya
+    when: "state:resolved"
+    say: "Verified against a full sale replay: product pages are fast again and checkout is healthy. Thank you. Let's capture what happened in the postmortem while it's fresh."
 
 constraints:
   no_scale_up: [postgres-db]

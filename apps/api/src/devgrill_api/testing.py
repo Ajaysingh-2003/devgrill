@@ -186,6 +186,16 @@ class FakeGateway:
                 "asked": [{"key": "v2:product:1", "count": 9, "exists": False}],
                 "window_s": 1.5,
             },
+            ("GET", "deploys/abc1234"): {
+                "service": "api",
+                "sha": "abc1234" + "0" * 33,
+                "short": "abc1234",
+                "author": "ops-bot",
+                "at": 1,
+                "message": "config: use the new HA database endpoint",
+                "files": ["config/app.env"],
+                "diff": "-DATABASE_URL=a\n+DATABASE_URL=b\n",
+            },
             ("GET", "deploys"): {
                 "service": "api",
                 "live": "abc",

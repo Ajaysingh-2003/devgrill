@@ -65,6 +65,7 @@ jobs:
       - run: pnpm --filter @devgrill/tokens build
       - run: pnpm format:check
       - run: pnpm colors:check
+      - run: pnpm copy:check
       - run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm build

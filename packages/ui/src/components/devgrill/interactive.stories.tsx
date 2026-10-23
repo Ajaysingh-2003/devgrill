@@ -61,7 +61,12 @@ function ApproachDemo() {
   const [value, setValue] = useState("coalesce");
   return (
     <div className="max-w-sm">
-      <ApproachList approaches={APPROACHES} value={value} onValueChange={setValue} label="Approaches" />
+      <ApproachList
+        approaches={APPROACHES}
+        value={value}
+        onValueChange={setValue}
+        label="Other ways to fix it"
+      />
     </div>
   );
 }
@@ -69,7 +74,7 @@ function ApproachDemo() {
 export const ApproachesKeyboard: Story = {
   render: () => <ApproachDemo />,
   play: async ({ canvas }) => {
-    const group = canvas.getByRole("radiogroup", { name: "Approaches" });
+    const group = canvas.getByRole("radiogroup", { name: "Other ways to fix it" });
     const first = within(group).getAllByRole("radio")[0]!;
     first.focus();
     await userEvent.keyboard("{ArrowDown}");
@@ -103,10 +108,10 @@ function PaletteDemo() {
           { id: "db", group: "Panels", label: "Open Database", icon: Database, shortcut: "3", onSelect },
           {
             id: "verify",
-            group: "Incident",
-            label: "Run verify",
+            group: "This drill",
+            label: "Check my fix",
             shortcut: "mod+shift+v",
-            keywords: ["test", "probe"],
+            keywords: ["test", "verify"],
             onSelect,
           },
         ]}
@@ -122,8 +127,8 @@ export const CommandPaletteKeyboard: Story = {
     const body = within(canvasElement.ownerDocument.body);
     const input = await body.findByRole("combobox");
     await expect(input).toHaveFocus();
-    await userEvent.type(input, "probe");
-    await expect(body.getByRole("option", { name: /Run verify/ })).toBeVisible();
+    await userEvent.type(input, "verify");
+    await expect(body.getByRole("option", { name: /Check my fix/ })).toBeVisible();
     await userEvent.keyboard("{Enter}");
     await expect(onSelect).toHaveBeenCalledOnce();
     await waitFor(() => expect(body.queryByRole("combobox")).toBeNull());

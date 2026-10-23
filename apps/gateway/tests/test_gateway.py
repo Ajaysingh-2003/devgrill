@@ -407,3 +407,17 @@ async def test_cli_dispatch(gateway, seeded) -> None:  # type: ignore[no-untyped
 def test_healthz(gateway) -> None:  # type: ignore[no-untyped-def]
     client, _, _ = gateway
     assert client.get("/healthz").json()["status"] == "ok"
+
+
+async def test_timed_beats_stay_quiet_once_mitigated(seeded) -> None:  # type: ignore[no-untyped-def]
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from devgrill.infra.events import EventRecorder
+
+    recorder = EventRecorder(async_sessionmaker(seeded.bind, expire_on_commit=False), None)
+    # ttl-zero's first beat is timed (Priya at T+15s): it fires during the incident...
+    active = await make_attempt(seeded)
+    assert await recorder.beat(active, 0) is True
+    # ...but nobody asks about a problem that's already mitigated.
+    for state in (AttemptState.MITIGATED, AttemptState.RESOLVED):
+        assert await recorder.beat(await make_attempt(seeded, state), 0) is False

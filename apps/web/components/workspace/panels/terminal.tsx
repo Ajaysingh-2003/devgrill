@@ -1,8 +1,7 @@
 "use client";
 
-import { Accessibility } from "lucide-react";
 import dynamic from "next/dynamic";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { PanelFrame } from "@devgrill/ui/components/devgrill/panel-frame";
 import { cn } from "@devgrill/ui/lib/utils";
 import type { TerminalStatus } from "./terminal-view";
@@ -17,13 +16,21 @@ const STATUS: Record<TerminalStatus, { text: string; tone: string }> = {
   connecting: { text: "Connecting", tone: "text-fg-muted" },
   open: { text: "Connected", tone: "text-success-text" },
   reconnecting: { text: "Reconnecting, your session is kept", tone: "text-warning-text" },
-  waiting: { text: "Waiting for the sandbox", tone: "text-fg-muted" },
-  ended: { text: "The incident has ended", tone: "text-fg-subtle" },
+  waiting: { text: "Waiting for your practice system", tone: "text-fg-muted" },
+  ended: { text: "This drill has ended", tone: "text-fg-subtle" },
 };
+
+/** The command palette's "screen reader mode" command (only screen readers notice it). */
+export const SCREEN_READER_EVENT = "devgrill:terminal-screen-reader";
 
 export function TerminalPanel() {
   const [status, setStatus] = useState<TerminalStatus>("connecting");
   const [screenReader, setScreenReader] = useState(false);
+  useEffect(() => {
+    const toggle = () => setScreenReader((v) => !v);
+    window.addEventListener(SCREEN_READER_EVENT, toggle);
+    return () => window.removeEventListener(SCREEN_READER_EVENT, toggle);
+  }, []);
   return (
     <PanelFrame
       id="terminal"
@@ -31,21 +38,11 @@ export function TerminalPanel() {
       meta={
         <span role="status" className={cn("font-mono", STATUS[status].tone)}>
           oncall@shopkart: {STATUS[status].text}
+          {screenReader ? <span className="sr-only">, screen reader mode on</span> : null}
         </span>
       }
-      actions={
-        <button
-          type="button"
-          aria-pressed={screenReader}
-          onClick={() => setScreenReader((v) => !v)}
-          title="Screen reader mode: output is readable line by line"
-          className="inline-flex h-7 items-center gap-1.5 rounded-sm px-2 text-label font-medium whitespace-nowrap text-fg-muted hover:bg-raised hover:text-fg"
-        >
-          <Accessibility className="size-3.5" aria-hidden="true" />
-          Screen reader
-        </button>
-      }
-      bodyClassName="bg-sunken"
+      // xterm scrolls its own buffer: the panel body never shows scrollbars of its own.
+      bodyClassName="bg-sunken overflow-hidden"
     >
       <TerminalView screenReader={screenReader} onStatus={(s) => setStatus(s)} />
     </PanelFrame>

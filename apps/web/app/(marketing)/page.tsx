@@ -9,10 +9,10 @@ import { CHARTS, PROBES, TRACKS } from "@/lib/mock";
 const LOOP = [
   { name: "Get paged", text: "A pager alert, a worried product manager and a clock." },
   { name: "Investigate", text: "A real stack: logs, metrics, a terminal, the database and the cache." },
-  { name: "Mitigate", text: "Stop the bleeding first. Roll back, flip a flag, shed load." },
-  { name: "Fix the cause", text: "Change the actual code and deploy it to your sandbox." },
-  { name: "Survive verify", text: "We replay the traffic and attack the weak spots of your fix." },
-  { name: "Write it up", text: "A blameless postmortem, reviewed against a rubric." },
+  { name: "Get it working", text: "Stop the bleeding first. Roll back, flip a flag, shed load." },
+  { name: "Fix the cause", text: "Change the actual code and deploy it to your practice system." },
+  { name: "Check your fix", text: "We replay the traffic and attack the weak spots of your fix." },
+  { name: "Write it up", text: "A blameless write-up of what happened, reviewed against a rubric." },
 ];
 
 export default function LandingPage() {
@@ -32,7 +32,7 @@ export default function LandingPage() {
               href="/drills"
               className="inline-flex h-11 items-center rounded-sm bg-brand px-5 text-body font-semibold text-on-brand hover:bg-brand-hover"
             >
-              Take a 5-minute incident
+              Try a 5-minute drill
             </Link>
             <Link
               href="/drills"
@@ -127,7 +127,10 @@ export default function LandingPage() {
             outage.
           </p>
         </div>
-        <ProbeTable probes={PROBES.slice(0, 4)} caption="Verify probes for The Big Sale Meltdown" />
+        <ProbeTable
+          probes={PROBES.slice(0, 4)}
+          caption="The checks a fix for The Big Sale Meltdown has to pass"
+        />
       </section>
 
       <section aria-labelledby="tracks-title" className="mx-auto max-w-[75rem] px-4 pb-20 sm:px-6">

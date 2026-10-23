@@ -6,7 +6,7 @@ import { DEMO_ID } from "@/components/workspace/ids";
 import { DemoWorkspace, LiveWorkspace } from "@/components/workspace/entry";
 import { api, unwrap } from "@/lib/api";
 
-export const metadata: Metadata = { title: "Incident" };
+export const metadata: Metadata = { title: "Drill" };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -24,7 +24,7 @@ async function WorkspaceRoute({ params }: { params: PageProps<"/incident/[attemp
 /** T5 incident workspace (full-bleed; no app top bar). */
 export default function IncidentPage({ params }: PageProps<"/incident/[attemptId]">) {
   return (
-    <Suspense fallback={<p className="p-6 text-body text-fg-muted">Opening the incident…</p>}>
+    <Suspense fallback={<p className="p-6 text-body text-fg-muted">Opening the drill…</p>}>
       <WorkspaceRoute params={params} />
     </Suspense>
   );

@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Accessibility,
   Code2,
   Database,
   DoorOpen,
@@ -10,7 +11,6 @@ import {
   Gauge,
   GitBranch,
   Laptop,
-  LayoutPanelLeft,
   Lightbulb,
   RotateCcw,
   ScrollText,
@@ -26,11 +26,7 @@ import { EmptyState } from "@devgrill/ui/components/devgrill/empty-state";
 import { PanelFrame } from "@devgrill/ui/components/devgrill/panel-frame";
 import { SevBadge } from "@devgrill/ui/components/devgrill/sev-badge";
 import { ToolRail, type Tool } from "@devgrill/ui/components/devgrill/tool-rail";
-import {
-  WORKSPACE_PRESETS,
-  WorkspaceLayout,
-  requestPreset,
-} from "@devgrill/ui/components/devgrill/workspace-layout";
+import { WorkspaceLayout } from "@devgrill/ui/components/devgrill/workspace-layout";
 import {
   Dialog,
   DialogContent,
@@ -61,7 +57,7 @@ import { DatabasePanel } from "./panels/database";
 import { DeploysPanel } from "./panels/deploys";
 import { LogsPanel } from "./panels/logs";
 import { OverviewPanel } from "./panels/overview";
-import { TerminalPanel } from "./panels/terminal";
+import { SCREEN_READER_EVENT, TerminalPanel } from "./panels/terminal";
 import { SidePanel } from "./side-panel";
 
 const TOOLS: (Tool & { key: string })[] = [
@@ -82,7 +78,7 @@ const PANELS: Record<string, () => React.ReactNode> = {
   deploys: DeploysPanel,
 };
 
-const PHASES = ["Triage", "Investigate", "Mitigate", "Fix", "Verify", "Postmortem"];
+const PHASES = ["Look", "Find the cause", "Get it working", "Fix it properly", "Check", "Write up"];
 
 export function Workspace({ source, briefingHref }: { source: WorkspaceSource; briefingHref: string }) {
   return (
@@ -99,7 +95,6 @@ function Shell({ briefingHref }: { briefingHref: string }) {
   const unlocked = new Set<string>(info.unlocked_tools);
   const tools = TOOLS.map((t) => ({ ...t, disabled: !unlocked.has(t.key) }));
   const [tool, setTool] = useState(tools.find((t) => !t.disabled)?.id ?? "overview");
-  const [preset, setPreset] = useState(WORKSPACE_PRESETS[0]!.id);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [hintsOpen, setHintsOpen] = useState(false);
   const [verifyOpen, setVerifyOpen] = useState(false);
@@ -137,8 +132,8 @@ function Shell({ briefingHref }: { briefingHref: string }) {
     if (out) {
       setClaim(
         out.correct
-          ? "Declared mitigated, and the metrics agree."
-          : "Declared mitigated, but the SLO still breaches. Keep going: the claim is on your timeline.",
+          ? "Marked as working again, and the graphs agree."
+          : "Marked as working again, but it's still over target. Keep going: this is noted on your timeline.",
       );
     }
   };
@@ -167,31 +162,31 @@ function Shell({ briefingHref }: { briefingHref: string }) {
   const incidentCommands: PaletteCommand[] = [
     {
       id: "hint",
-      group: "Incident",
-      label: "Request a hint",
+      group: "This drill",
+      label: "Get a hint",
       icon: Lightbulb,
       shortcut: "h",
       onSelect: () => setHintsOpen(true),
     },
     {
       id: "mitigated",
-      group: "Incident",
-      label: "Declare mitigated",
+      group: "This drill",
+      label: "It's working again",
       icon: ShieldCheck,
       shortcut: "m",
       onSelect: () => void declareMitigated(),
     },
     {
       id: "verify",
-      group: "Incident",
-      label: "Run verify",
+      group: "This drill",
+      label: "Check my fix",
       icon: ShieldCheck,
       shortcut: "mod+shift+v",
       onSelect: () => openVerify(),
     },
     {
       id: "filter-logs",
-      group: "Incident",
+      group: "This drill",
       label: "Filter logs by…",
       icon: Filter,
       onSelect: () => {
@@ -201,7 +196,7 @@ function Shell({ briefingHref }: { briefingHref: string }) {
     },
     {
       id: "rollback",
-      group: "Incident",
+      group: "This drill",
       label: "Roll back…",
       icon: RotateCcw,
       onSelect: () => setTool("deploys"),
@@ -210,7 +205,7 @@ function Shell({ briefingHref }: { briefingHref: string }) {
       ? [
           {
             id: "extend",
-            group: "Incident",
+            group: "This drill",
             label: `Extend by ${info.extend_minutes} minutes`,
             icon: Timer,
             onSelect: () => void actions.extend(),
@@ -219,15 +214,15 @@ function Shell({ briefingHref }: { briefingHref: string }) {
       : []),
     {
       id: "reset",
-      group: "Incident",
-      label: "Reset the sandbox",
+      group: "This drill",
+      label: "Start over",
       icon: RotateCcw,
       onSelect: () => setConfirm("reset"),
     },
     {
       id: "leave",
-      group: "Incident",
-      label: "Leave the incident",
+      group: "This drill",
+      label: "Leave the drill",
       icon: DoorOpen,
       onSelect: () => setConfirm("leave"),
     },
@@ -254,14 +249,18 @@ function Shell({ briefingHref }: { briefingHref: string }) {
         shortcut: String(tools.indexOf(t) + 1),
         onSelect: () => setTool(t.id),
       })),
-    ...WORKSPACE_PRESETS.map((p, i) => ({
-      id: `preset-${p.id}`,
-      group: "Layout",
-      label: `${p.label} layout`,
-      icon: LayoutPanelLeft,
-      shortcut: `mod+${i + 1}`,
-      onSelect: () => requestPreset(p.id),
-    })),
+    ...(unlocked.has("terminal")
+      ? [
+          {
+            id: "terminal-screen-reader",
+            group: "Terminal",
+            // xterm then exposes its output to screen readers line by line (nothing changes on screen).
+            label: "Toggle screen reader mode for the terminal",
+            icon: Accessibility,
+            onSelect: () => window.dispatchEvent(new Event(SCREEN_READER_EVENT)),
+          },
+        ]
+      : []),
     ...(ended ? [] : incidentCommands),
   ];
 
@@ -273,7 +272,7 @@ function Shell({ briefingHref }: { briefingHref: string }) {
       {/* Below 1024 px the workspace is not shrunk: offer the right alternatives instead. */}
       <div className="flex min-h-dvh flex-col items-center justify-center gap-4 px-6 text-center lg:hidden">
         <Laptop className="size-8 text-fg-muted" aria-hidden="true" />
-        <h1 className="text-heading-lg font-semibold text-fg">This incident needs a bigger screen</h1>
+        <h1 className="text-heading-lg font-semibold text-fg">This drill needs a bigger screen</h1>
         <p className="max-w-sm text-body text-fg-muted">
           The workspace has a terminal, logs and live charts side by side. Open it on a laptop, or keep
           practising here with Quick Fire.
@@ -298,7 +297,7 @@ function Shell({ briefingHref }: { briefingHref: string }) {
         <header className="flex h-12 shrink-0 items-center gap-3 border-b border-border bg-surface px-3">
           <Link
             href="/drills"
-            aria-label="Back to drills (the incident keeps running)"
+            aria-label="Back to drills (your run keeps going)"
             className="rounded-sm p-1 text-fg"
           >
             <DevGrillMark className="size-5" />
@@ -329,7 +328,7 @@ function Shell({ briefingHref }: { briefingHref: string }) {
             <span className="font-semibold text-brand-text">{PHASES[phase]}</span>
           </p>
 
-          <ol aria-label="Incident phases" className="ml-auto hidden items-center gap-1 2xl:flex">
+          <ol aria-label="Steps" className="ml-auto hidden items-center gap-1 2xl:flex">
             {PHASES.map((p, i) => (
               <li
                 key={p}
@@ -347,26 +346,8 @@ function Shell({ briefingHref }: { briefingHref: string }) {
             ))}
           </ol>
 
-          <div
-            role="group"
-            aria-label="Layout"
-            className="ml-auto flex rounded-sm border border-border p-0.5 2xl:ml-3"
-          >
-            {WORKSPACE_PRESETS.map((p) => (
-              <button
-                key={p.id}
-                type="button"
-                aria-pressed={preset === p.id}
-                onClick={() => requestPreset(p.id)}
-                className={cn(
-                  "rounded-xs px-2 py-1 text-caption font-medium",
-                  preset === p.id ? "bg-raised text-fg" : "text-fg-subtle hover:text-fg",
-                )}
-              >
-                {p.label}
-              </button>
-            ))}
-          </div>
+          {/* Pushes the actions to the right (the phase list does it from 2xl). */}
+          <span aria-hidden="true" className="ml-auto 2xl:ml-3" />
           {info.hints_total > 0 ? (
             <button
               type="button"
@@ -392,7 +373,7 @@ function Shell({ briefingHref }: { briefingHref: string }) {
             className="inline-flex h-8 items-center gap-1.5 rounded-sm border border-border-input px-2.5 text-label font-medium text-fg hover:bg-raised disabled:opacity-50"
           >
             <ShieldCheck className="size-3.5" aria-hidden="true" />
-            Mitigated
+            It&apos;s working again
           </button>
           <button
             type="button"
@@ -401,7 +382,7 @@ function Shell({ briefingHref }: { briefingHref: string }) {
             aria-keyshortcuts="Control+Shift+V Meta+Shift+V"
             className="inline-flex h-8 items-center rounded-sm bg-brand px-3 text-label font-semibold text-on-brand hover:bg-brand-hover disabled:opacity-60"
           >
-            {incident.state === "verifying" ? "Verifying…" : "Verify"}
+            {incident.state === "verifying" ? "Checking…" : "Check my fix"}
           </button>
         </header>
         <NetworkBanner />
@@ -415,7 +396,7 @@ function Shell({ briefingHref }: { briefingHref: string }) {
           {/* A tablist, not navigation: it switches the panel in place. */}
           <aside
             inert={covered}
-            aria-label="Incident tools"
+            aria-label="Tools"
             className="w-44 shrink-0 border-r border-border bg-surface"
           >
             <ToolRail tools={tools} value={tool} onValueChange={setTool} panelId="tool-panel" />
@@ -425,7 +406,6 @@ function Shell({ briefingHref }: { briefingHref: string }) {
               primary={<Active />}
               secondary={unlocked.has("terminal") ? <TerminalPanel /> : <LockedTerminal />}
               side={<SidePanel />}
-              onPresetChange={(p) => setPreset(p.id)}
             />
           </main>
           <BootOverlay />
@@ -448,11 +428,11 @@ function Shell({ briefingHref }: { briefingHref: string }) {
       <Dialog open={confirm !== null} onOpenChange={(open) => !open && setConfirm(null)}>
         <DialogContent instant className="max-w-md">
           <DialogHeader>
-            <DialogTitle>{confirm === "reset" ? "Reset the sandbox?" : "Leave this incident?"}</DialogTitle>
+            <DialogTitle>{confirm === "reset" ? "Start over?" : "Leave this drill?"}</DialogTitle>
             <DialogDescription>
               {confirm === "reset"
-                ? "The system goes back to its initial broken state: your deploys and data changes are lost. The clock keeps running."
-                : "The sandbox is torn down and the attempt ends. You can start the incident again from its briefing."}
+                ? "Everything goes back to how it was when you were paged: your deploys and data changes are lost. The clock keeps running."
+                : "Your practice system shuts down and this run ends. You can start the drill again from its briefing."}
             </DialogDescription>
           </DialogHeader>
           {reset.error || leave.error ? (
@@ -481,7 +461,7 @@ function Shell({ briefingHref }: { briefingHref: string }) {
               }}
               className="h-10 rounded-sm bg-danger-solid px-4 text-body font-semibold text-on-danger disabled:opacity-60"
             >
-              {confirm === "reset" ? "Reset" : "Leave"}
+              {confirm === "reset" ? "Start over" : "Leave"}
             </button>
           </DialogFooter>
         </DialogContent>

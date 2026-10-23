@@ -31,7 +31,7 @@ import type { Viewer } from "@/lib/viewer";
 
 const NAV = [
   { href: "/drills", label: "Drills", icon: Compass },
-  { href: "/daily", label: "Daily incident", icon: CalendarClock },
+  { href: "/daily", label: "Daily drill", icon: CalendarClock },
   { href: "/quickfire", label: "Quick Fire", icon: Zap },
 ] as const;
 

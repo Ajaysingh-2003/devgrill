@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 
 from devgrill.domain import postmortem as pm
 from devgrill.domain.debrief import TrailEvent, match_approach, replay
+from devgrill.domain.events import event_text, event_triggers
 from devgrill.domain.spec import ApproachMatch, ReplayRule
 
 PAGED = datetime(2026, 10, 21, 20, 0, tzinfo=UTC)
@@ -13,6 +14,12 @@ PAGED = datetime(2026, 10, 21, 20, 0, tzinfo=UTC)
 
 def at(seconds: int) -> datetime:
     return PAGED + timedelta(seconds=seconds)
+
+
+def test_looking_at_a_deploy_is_part_of_the_trail() -> None:
+    payload = {"verb": "diff", "service": "api", "sha": "4f2a1c9"}
+    assert event_text("trail", payload) == "Looked at what deploy 4f2a1c9 changed on api"
+    assert event_triggers("trail", payload) == ["deploy.viewed"]
 
 
 def test_replay_marks_what_the_scenario_cares_about() -> None:

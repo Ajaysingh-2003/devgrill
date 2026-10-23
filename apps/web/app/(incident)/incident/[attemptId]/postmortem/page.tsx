@@ -11,7 +11,7 @@ import { TIMELINE } from "@/lib/mock";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-export const metadata: Metadata = { title: "Postmortem" };
+export const metadata: Metadata = { title: "Write-up" };
 
 export function generateStaticParams() {
   return [{ attemptId: "demo" }];
@@ -34,7 +34,7 @@ const SECTIONS = [
   {
     id: "actions",
     title: "Action items",
-    hint: "What prevents this class of incident, with owners.",
+    hint: "What stops this kind of problem happening again, with owners.",
     value: "",
   },
 ];
@@ -42,14 +42,14 @@ const SECTIONS = [
 async function Live({ attemptId }: { attemptId: string }) {
   if (!UUID.test(attemptId)) notFound();
   const result = await getPostmortem({ client: await api(), path: { attempt_id: attemptId } });
-  // The postmortem opens when the incident ends.
+  // The write-up opens when the drill ends.
   if (result.response?.status === 409) redirect(`/incident/${attemptId}`);
   const doc = await unwrap(Promise.resolve(result));
   return (
     <>
       <IncidentPageHeader
-        context={`Postmortem, ${doc.scenario_title}`}
-        back={{ href: `/incident/${attemptId}/debrief`, label: "Back to the debrief" }}
+        context={`Write-up, ${doc.scenario_title}`}
+        back={{ href: `/incident/${attemptId}/debrief`, label: "Back to your results" }}
       />
       <main
         id="main"
@@ -60,7 +60,7 @@ async function Live({ attemptId }: { attemptId: string }) {
           <h2 id="pm-timeline" className="text-body font-semibold text-fg">
             Timeline, from your session
           </h2>
-          <p className="text-caption text-fg-muted">Added to the postmortem when you submit it.</p>
+          <p className="text-caption text-fg-muted">Added to your write-up when you submit it.</p>
           <ol className="flex flex-col rounded-md border border-border bg-surface">
             {doc.timeline.map((line, i) => {
               const [at, ...text] = line.split(" ");
@@ -87,8 +87,8 @@ async function Editor({ params }: { params: PageProps<"/incident/[attemptId]/pos
   return (
     <>
       <IncidentPageHeader
-        context="Postmortem, The Big Sale Meltdown"
-        back={{ href: `/incident/${attemptId}/debrief`, label: "Back to the debrief" }}
+        context="Write-up, The Big Sale Meltdown"
+        back={{ href: `/incident/${attemptId}/debrief`, label: "Back to your results" }}
       />
       <main
         id="main"
@@ -97,7 +97,7 @@ async function Editor({ params }: { params: PageProps<"/incident/[attemptId]/pos
         <form className="flex max-w-[44rem] flex-col gap-8">
           <header className="flex flex-col gap-2">
             <h1 className="font-serif text-display-lg text-fg">
-              Postmortem: product pages failed at sale start
+              Write-up: product pages failed at sale start
             </h1>
             <p className="text-body-lg text-fg-muted">
               Blameless and specific. Describe what changed, not who changed it.
@@ -136,7 +136,7 @@ async function Editor({ params }: { params: PageProps<"/incident/[attemptId]/pos
             Timeline, from your session
           </h2>
           <div className="rounded-md border border-border bg-surface">
-            <IncidentTimeline events={TIMELINE} label="Incident timeline (read only)" />
+            <IncidentTimeline events={TIMELINE} label="Timeline (read only)" />
           </div>
         </aside>
       </main>

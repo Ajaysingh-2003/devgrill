@@ -43,7 +43,7 @@ page:
 faults:
   - use: db/pool-exhaustion
     at: T-10m
-    params: { latency_ms: 150 }
+    params: { latency_ms: 300 }
 
 load:
   script: shop.js
@@ -69,6 +69,9 @@ beats:
   - persona: arjun
     when: "state:mitigated"
     say: "Latency's back. So the database was never the problem? Write down why, before someone 'fixes' it again."
+  - persona: priya
+    when: "state:resolved"
+    say: "Verified: p99 is back under the SLO and the 503s are gone, without buying a bigger database. Thank you. I'll tell support we're clear; a short postmortem would help the next on-call."
 
 constraints:
   no_scale_up: [postgres-db]
@@ -113,7 +116,7 @@ probes:
 hints:
   tier1: "Postgres is idle and requests are waiting. Waiting for what? Check what the API logs say and how long each query takes from the API's side."
   tier2: "Connections needed = requests per second × time each one holds a connection. Something made every query slower without making Postgres busier. What changed in the config?"
-  tier3: "The last deploy pointed DATABASE_URL at postgres-dr, a cross-region endpoint that adds ~150 ms per round trip. Point it back at the primary (postgres:5432) and deploy."
+  tier3: "The last deploy pointed DATABASE_URL at postgres-dr, a cross-region endpoint that adds ~300 ms per round trip. Point it back at the primary (postgres:5432) and deploy."
 
 rubric:
   - key: impact
@@ -129,7 +132,7 @@ rubric:
     anchors:
       "0": "Blames Postgres capacity or traffic."
       "2": "Names the endpoint change but not how it exhausted the pool."
-      "4": "The cross-region endpoint added ~150 ms per query, so each request held its connection longer; at the same traffic the pool ran out (Little's law) while Postgres sat idle."
+      "4": "The cross-region endpoint added ~300 ms per query, so each request held its connection longer; at the same traffic the pool ran out (Little's law) while Postgres sat idle."
   - key: rejected-fixes
     max: 2
     description: Explains why scaling the database or enlarging the pool would not help (or would hurt).
@@ -166,7 +169,7 @@ ai:
     - "cross[- ]?region"
     - "DATABASE_URL"
     - "round[- ]?trips?"
-    - "\\b150 ?ms\\b"
+    - "\\b300 ?ms\\b"
     - "little'?s law"
     - "(database|db) endpoint"
     - "\\bDR\\b"
@@ -174,7 +177,7 @@ ai:
     - "\\b(replica|standby)\\b"
   root_cause: >-
     A config deploy pointed DATABASE_URL at postgres-dr, a cross-region endpoint that adds about
-    150 ms per round trip. Each request held its pooled connection much longer, so at the same
+    300 ms per round trip. Each request held its pooled connection much longer, so at the same
     traffic the pool ran out and requests queued and failed while Postgres stayed idle (Little's
     law). Pointing back at the in-region primary (or rolling back) fixes it; a bigger pool or a
     bigger database doesn't.

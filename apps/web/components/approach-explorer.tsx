@@ -13,10 +13,10 @@ export type ExplorerApproach = Approach & {
   cons: string[];
 };
 
-/** "Your fix vs every other approach": pick one, see its idea, code, numbers and trade-offs. */
+/** "Your fix next to the other ways to fix it": pick one, see its idea, code, numbers and trade-offs. */
 export function ApproachExplorer({
   approaches,
-  label = "Known approaches",
+  label = "Ways to fix it",
 }: {
   approaches: ExplorerApproach[];
   label?: string;

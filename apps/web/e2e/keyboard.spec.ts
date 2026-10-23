@@ -56,37 +56,35 @@ test.describe("incident workspace", () => {
     await expect(page.getByRole("tab", { name: "Logs" })).toHaveAttribute("aria-selected", "true");
   });
 
-  test("layout presets switch with Ctrl/Cmd + number", async ({ page }) => {
-    await open(page, "/incident/demo");
-    await page.getByRole("tab", { name: /Overview/ }).waitFor();
-    // Retry the key until the listener is attached (hydration timing on a busy dev server).
-    await expect(async () => {
-      await page.keyboard.press(`${mod}+2`);
-      await expect(page.getByRole("button", { name: "Debug" })).toHaveAttribute("aria-pressed", "true", {
-        timeout: 1000,
-      });
-    }).toPass();
-  });
-
   test("collapsed panels leave the tab order", async ({ page }) => {
     await open(page, "/incident/demo");
-    await page.getByRole("button", { name: "Postmortem" }).click();
-    // The Postmortem preset collapses the terminal to 0px: it must not hold focusable content.
+    await page.getByRole("tab", { name: /Overview/ }).waitFor();
+    // Focus mode collapses the terminal and the team chat to 0px: they must not hold focus.
+    await page.getByRole("region", { name: "Overview" }).focus();
+    await page.keyboard.press("f");
     const inert = page.locator("[inert]");
-    await expect(inert).toHaveCount(1);
+    await expect(inert).toHaveCount(2);
     await expect(inert.getByRole("heading", { name: "Terminal" })).toHaveCount(1);
-    await page.getByRole("button", { name: "Triage" }).click();
+    await page.keyboard.press("Escape");
     await expect(inert).toHaveCount(0);
   });
 
   test("splitters resize with the keyboard (WAI-ARIA window splitter)", async ({ page }) => {
     await open(page, "/incident/demo");
-    const separator = page.getByRole("separator").first();
-    const before = Number(await separator.getAttribute("aria-valuenow"));
-    await separator.focus();
-    await page.keyboard.press("ArrowLeft");
-    await page.keyboard.press("ArrowLeft");
-    await expect.poll(async () => Number(await separator.getAttribute("aria-valuenow"))).toBeLessThan(before);
+    // The team chat's splitter moves left and right; the terminal's (across the bottom) up and down.
+    for (const [name, key] of [
+      [/work area and the team chat/, "ArrowLeft"],
+      [/tool panel and the terminal/, "ArrowUp"],
+    ] as const) {
+      const separator = page.getByRole("separator", { name });
+      const before = Number(await separator.getAttribute("aria-valuenow"));
+      await separator.focus();
+      await page.keyboard.press(key);
+      await page.keyboard.press(key);
+      await expect
+        .poll(async () => Number(await separator.getAttribute("aria-valuenow")))
+        .toBeLessThan(before);
+    }
   });
 
   test("F maximises the focused panel and Escape restores it", async ({ page }) => {
@@ -95,15 +93,15 @@ test.describe("incident workspace", () => {
     // Focus the primary panel's scrollable body (a focusable region), then press F.
     await page.getByRole("region", { name: "Overview" }).focus();
     await page.keyboard.press("f");
-    await expect(page.getByText("primary panel maximised. Press Escape to restore.")).toBeAttached();
+    await expect(page.getByText("Tool panel maximised. Press Escape to restore.")).toBeAttached();
     await page.keyboard.press("Escape");
-    await expect(page.getByText("primary panel maximised. Press Escape to restore.")).not.toBeAttached();
+    await expect(page.getByText("Tool panel maximised. Press Escape to restore.")).not.toBeAttached();
   });
 
   test("below 1024 px it offers alternatives instead of a cramped workspace", async ({ page }) => {
     await page.setViewportSize({ width: 900, height: 800 });
     await open(page, "/incident/demo");
-    await expect(page.getByRole("heading", { name: "This incident needs a bigger screen" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "This drill needs a bigger screen" })).toBeVisible();
     await expect(page.getByRole("link", { name: "Play Quick Fire" })).toBeVisible();
   });
 });

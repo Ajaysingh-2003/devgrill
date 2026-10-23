@@ -18,7 +18,7 @@ import { ENDED, type IncidentSnapshot } from "./model";
 // ------------------------------------------------------------------------------- boot
 
 const BOOT: { id: string; label: string; detail?: string }[] = [
-  { id: "sandbox", label: "Allocating your sandbox", detail: "an isolated network with no way out" },
+  { id: "sandbox", label: "Setting up your practice system", detail: "a private network, just for you" },
   { id: "services", label: "Starting the system", detail: "api, worker, Postgres, the cache, Toxiproxy" },
   { id: "source", label: "Cloning the source", detail: "with its git history" },
   { id: "history", label: "Shipping the latest deploys" },
@@ -54,10 +54,7 @@ export function BootOverlay() {
   return (
     <div className="absolute inset-0 z-30 grid place-items-center bg-canvas/95 px-6">
       <div className="w-full max-w-md rounded-md border border-border bg-surface p-6 shadow-lg">
-        <BootSequence
-          steps={steps}
-          title={resetting ? "Resetting the sandbox" : "Getting your incident ready"}
-        />
+        <BootSequence steps={steps} title={resetting ? "Starting over" : "Getting your drill ready"} />
         <p className="text-caption text-fg-muted">
           Usually under 30 seconds. The clock starts when you are paged.
         </p>
@@ -69,10 +66,16 @@ export function BootOverlay() {
 // ------------------------------------------------------------------------------ ended
 
 const ENDINGS: Record<string, { title: string; body: string }> = {
-  resolved: { title: "Resolved", body: "Every probe passed. Your debrief is ready." },
-  expired: { title: "Time's up", body: "The sandbox reached its time limit and was torn down." },
-  abandoned: { title: "You left this incident", body: "The sandbox has been torn down." },
-  failed: { title: "The sandbox stopped working", body: "Something on our side went wrong, not your fix." },
+  resolved: { title: "Fixed", body: "Every check passed. Your results are ready." },
+  expired: {
+    title: "Time's up",
+    body: "This run reached its time limit, so your practice system shut down.",
+  },
+  abandoned: { title: "You left this drill", body: "Your practice system has shut down." },
+  failed: {
+    title: "Your practice system stopped working",
+    body: "Something on our side went wrong, not your fix.",
+  },
 };
 
 export function EndedOverlay({ briefingHref }: { briefingHref: string }) {
@@ -89,7 +92,7 @@ export function EndedOverlay({ briefingHref }: { briefingHref: string }) {
   const ending = ENDINGS[state] ?? ENDINGS.failed!;
   const body =
     state === "expired" && endedReason === "idle timeout"
-      ? "Nobody touched the sandbox for a while, so it was torn down to save resources."
+      ? "Nothing happened for a while, so your practice system shut down to save resources."
       : ending.body;
   return (
     <div className="absolute inset-0 z-30 grid place-items-center bg-canvas/95 px-6">
@@ -112,7 +115,7 @@ export function EndedOverlay({ briefingHref }: { briefingHref: string }) {
               href={`/incident/${info.attempt.id}/debrief`}
               className="inline-flex h-10 items-center rounded-sm bg-brand px-4 text-body font-semibold text-on-brand hover:bg-brand-hover"
             >
-              Open the debrief
+              See your results
             </Link>
           ) : (
             <>
@@ -137,7 +140,8 @@ export function EndedOverlay({ briefingHref }: { briefingHref: string }) {
             <button
               type="button"
               onClick={async () => {
-                const details = `attempt ${info.attempt.id}\nscenario ${info.attempt.scenario_slug}\nreason ${endedReason ?? "unknown"}\nat ${new Date().toISOString()}`;
+                // Support details, pasted into a bug report: internal names on purpose.
+                const details = `attempt ${info.attempt.id}\nscenario ${info.attempt.scenario_slug}\nreason ${endedReason ?? "unknown"}\nat ${new Date().toISOString()}`; // copy-ok
                 try {
                   await navigator.clipboard.writeText(details);
                   setCopied(true);
@@ -185,8 +189,8 @@ export function ExpiryBanner() {
     >
       <Clock className="size-4 shrink-0" aria-hidden="true" />
       <span>
-        {minutes <= 1 ? "Less than a minute left" : `${minutes} minutes left`} before the sandbox is torn
-        down.
+        {minutes <= 1 ? "Less than a minute left" : `${minutes} minutes left`} before your practice system
+        shuts down.
       </span>
       {extendsLeft > 0 && info.extend_minutes > 0 ? (
         <button
@@ -223,8 +227,8 @@ export function IdleBanner({ lastTouch }: { lastTouch: number }) {
     >
       <Clock className="size-4 shrink-0" aria-hidden="true" />
       <span>
-        Still there? The sandbox shuts down after {info.idle_minutes} minutes without activity. Press any key
-        or click anywhere to keep it.
+        Still there? Your practice system shuts down after {info.idle_minutes} minutes without activity. Press
+        any key or click anywhere to keep it.
       </span>
     </div>
   );
@@ -257,8 +261,8 @@ export function NetworkBanner() {
     >
       <WifiOff className="size-4 shrink-0 text-warning-text" aria-hidden="true" />
       {online
-        ? "Reconnecting to your sandbox… it keeps running meanwhile."
-        : "You're offline. Your sandbox keeps running; we'll reconnect when you're back."}
+        ? "Reconnecting… your practice system keeps running meanwhile."
+        : "You're offline. Your practice system keeps running; we'll reconnect when you're back."}
     </div>
   );
 }
@@ -306,21 +310,21 @@ export function VerifyDialog({
   const finished = verify?.probes.filter((p) => p.status === "passed" || p.status === "failed").length ?? 0;
   const running = verify?.probes.find((p) => p.status === "running");
   const title = !verify
-    ? "Starting verify"
+    ? "Starting the check"
     : !done
-      ? "Verifying your fix"
+      ? "Checking your fix"
       : verify.error
-        ? "Verify couldn't finish"
+        ? "The check couldn't finish"
         : passed
-          ? "Verify passed"
+          ? "Your fix works"
           : "Not fixed yet";
   const description = !done
-    ? "Replaying the traffic, then attacking the fix: a cold cache, chaos, correctness checks. Two to four minutes; the incident is paused meanwhile."
+    ? "Replaying real traffic, then testing the fix: a cold cache, failures, correctness checks. Two to four minutes; the clock is paused meanwhile."
     : verify?.error
-      ? `${verify.error} Your sandbox is back as it was; run verify again when you're ready.`
+      ? `${verify.error} Your practice system is back as it was; check again when you're ready.`
       : passed
-        ? "Your fix held under the replay and every check. The incident is resolved."
-        : "Some checks failed. The sandbox is still yours: keep going and verify again.";
+        ? "Your fix held up under real traffic and every check. The drill is done."
+        : "Some checks failed. Your practice system is still running: keep going and check again.";
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent instant className="max-w-2xl">
@@ -338,13 +342,13 @@ export function VerifyDialog({
                 ? `Checking ${running.title} (${Math.min(finished + 1, total)} of ${total})`
                 : verify
                   ? `${finished} of ${total} checks done`
-                  : "Starting the verifier…"}
+                  : "Starting the check…"}
             </>
           ) : (
             `${probes.filter((p) => p.outcome === "pass").length} of ${total} checks passed.`
           )}
         </p>
-        {probes.length ? <ProbeTable probes={probes} caption="Verify checks" /> : null}
+        {probes.length ? <ProbeTable probes={probes} caption="Checks" /> : null}
         {done && !verify?.error ? (
           passed ? (
             <Link
@@ -352,7 +356,7 @@ export function VerifyDialog({
               className="inline-flex h-10 items-center gap-1.5 self-start rounded-sm bg-brand px-4 text-body font-semibold text-on-brand"
             >
               <CircleCheck className="size-4" aria-hidden="true" />
-              Open the debrief
+              See your results
             </Link>
           ) : null
         ) : null}
@@ -407,7 +411,7 @@ export function HintsDialog({
           </button>
         ) : (
           <p className="text-body text-fg-muted">
-            {info.hints_total ? "That's every hint for this incident." : "This incident has no hints."}
+            {info.hints_total ? "That's every hint for this drill." : "This drill has no hints."}
           </p>
         )}
         {take.error ? <p className="text-body text-danger-text">{take.error}</p> : null}

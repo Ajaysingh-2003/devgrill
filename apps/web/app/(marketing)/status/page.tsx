@@ -15,20 +15,20 @@ export default function StatusPage() {
           title="You’re third in line"
           action={<span className="font-mono text-mono text-fg-muted">About 40 seconds</span>}
         >
-          Every sandbox is busy right now. Yours starts as soon as one frees up; keep this tab open.
+          Everyone’s practising right now. Your drill starts as soon as there’s room; keep this tab open.
         </EmptyState>
       </section>
       <section aria-label="Maintenance" className="rounded-md border border-border bg-surface">
         <EmptyState
           icon={Wrench}
-          title="Incidents are paused for maintenance"
+          title="Drills are paused for maintenance"
           action={
             <Link href="/quickfire" className="text-body font-medium text-brand-text hover:underline">
               Play Quick Fire meanwhile
             </Link>
           }
         >
-          We are upgrading the sandbox hosts until 02:30 IST. Your streak is safe today.
+          We’re upgrading our servers until 02:30 IST. Your streak is safe today.
         </EmptyState>
       </section>
     </div>

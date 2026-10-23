@@ -48,9 +48,9 @@ const probes: Probe[] = [
 ];
 
 export const Probes: Story = {
-  render: () => <ProbeTable probes={probes} caption="Verify probes" />,
+  render: () => <ProbeTable probes={probes} caption="Checks" />,
   play: async ({ canvas }) => {
-    await expect(canvas.getByRole("table", { name: "Verify probes" })).toBeVisible();
+    await expect(canvas.getByRole("table", { name: "Checks" })).toBeVisible();
     for (const label of ["Pass", "Fail", "Partial", "Running", "Queued"]) {
       await expect(canvas.getByText(label)).toBeVisible();
     }

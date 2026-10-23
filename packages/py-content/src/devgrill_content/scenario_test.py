@@ -3,6 +3,8 @@
 The reference fix runs the way a real attempt does (the SandboxLifecycle workflow):
   boot → faults due before T → load (T) → faults due after T
   → BREAKS: every fault's symptom contract shows, and the SLO is violated within 60 s
+  → STAYS BROKEN: left alone for twice the SLO's `for_s` (at least 60 s), the SLO never holds
+    for `for_s`: a break that recovers on its own would count as mitigated with no fix
   → apply solution/ → MITIGATED: the SLO holds for its `for_s`
   → stop load → VERIFY: every probe passes, within the verify time budget
 With `--approaches`, each `approaches/*.yaml` then gets a fresh sandbox: break, apply its
@@ -33,6 +35,8 @@ from devgrill.sandbox.driver import SandboxError, SandboxHandle, SandboxSpec
 from devgrill.sandbox.verifier import ProbeResult, Verifier, check
 
 SLO_BREACH_WITHIN_S = 60
+#: How long an unfixed scenario is watched after it breaks (at least; twice `for_s` if longer).
+STAYS_BROKEN_S = 60
 MITIGATION_WITHIN_S = 150
 SAMPLE_EVERY_S = 5.0
 #: Phase 5 gate: a verify run finishes within this.
@@ -64,6 +68,8 @@ class Report:
     boot_s: float | None = None
     slo_breached_after_s: float | None = None
     symptoms: dict[str, float | None] = field(default_factory=dict)
+    #: Set when the unfixed scenario held its SLO for `for_s` (it would mitigate itself).
+    self_recovered_after_s: float | None = None
     mitigated_after_s: float | None = None
     verify_s: float | None = None
     probes: list[dict[str, Any]] = field(default_factory=list)
@@ -180,6 +186,34 @@ async def _break(
     )
 
 
+async def _stays_broken(bundle: Bundle, verifier: Verifier, report: Report) -> bool:
+    """Left alone, the SLO must not hold for `for_s`: the workspace would call that mitigated."""
+    slo = bundle.scenario.slo
+    assert slo is not None
+    hold_s = float(slo.for_s)
+    t0 = time.monotonic()
+    healthy_since: float | None = None
+    prev = await verifier.scrape()
+    while time.monotonic() - t0 < max(STAYS_BROKEN_S, 2 * hold_s):
+        await asyncio.sleep(SAMPLE_EVERY_S)
+        elapsed = time.monotonic() - t0
+        cur = await verifier.scrape()
+        values = verifier.values(prev, cur)
+        prev = cur
+        report.samples.append({"t": round(elapsed, 1), "phase": "unfixed", **_round(values)})
+        measured = all(values.get(m) is not None for m in slo.targets())
+        if not measured:
+            continue
+        if check(slo.targets(), values):
+            healthy_since = None
+        elif healthy_since is None:
+            healthy_since = elapsed
+        elif elapsed - healthy_since >= hold_s:
+            report.self_recovered_after_s = round(elapsed, 1)
+            return False
+    return True
+
+
 async def run_test(bundle: Bundle, driver: ComposeDriver, *, echo: Any = print) -> Report:
     scenario = bundle.scenario
     report = Report(scenario.slug)
@@ -200,6 +234,15 @@ async def run_test(bundle: Bundle, driver: ComposeDriver, *, echo: Any = print) 
         if not broke:
             report.error = "the scenario does not break as declared"
             return report
+
+        report.stage = "stays broken"
+        if not await _stays_broken(bundle, verifier, report):
+            report.error = (
+                "the break doesn't hold: with no fix, the SLO recovered on its own after "
+                f"{report.self_recovered_after_s}s (players would see it mitigate itself)"
+            )
+            return report
+        echo("  stays broken when left alone")
 
         report.stage = "fix"
         for fix in solution.steps:

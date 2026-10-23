@@ -10,10 +10,10 @@ import { Settling } from "./settling";
 import { clock, minutes, toProbeRow } from "./format";
 
 const ENDINGS: Record<string, string> = {
-  resolved: "Your fix survived the replay",
+  resolved: "Your fix held up",
   expired: "Time ran out",
-  abandoned: "You left this incident",
-  failed: "The sandbox stopped working",
+  abandoned: "You left this drill",
+  failed: "Your practice system stopped working",
 };
 
 const MARKS = {
@@ -39,7 +39,7 @@ function CoachNote({ text, replay }: { text: string; replay: ReplayEntryOut[] })
           key={m.index}
           href={`#replay-e${id}`}
           className="font-mono text-mono-sm text-brand-text hover:underline"
-          aria-label={`Replay at ${clock(seconds)}`}
+          aria-label={`See the moment at ${clock(seconds)}`}
         >
           [{clock(seconds)}]
         </a>
@@ -52,9 +52,9 @@ function CoachNote({ text, replay }: { text: string; replay: ReplayEntryOut[] })
 }
 
 const POSTMORTEM_LINK = {
-  none: "Write the postmortem",
-  draft: "Finish your postmortem",
-  submitted: "Read your postmortem",
+  none: "Write it up",
+  draft: "Finish your write-up",
+  submitted: "Read your write-up",
 } as const;
 
 /** T6 Debrief, live: what verify threw at the fix, the score, the investigation, what's next. */
@@ -69,7 +69,7 @@ export function LiveDebrief({ d }: { d: DebriefOut }) {
   return (
     <>
       <IncidentPageHeader
-        context={`${d.scenario_title}, debrief`}
+        context={`${d.scenario_title}, results`}
         back={{ href: briefing, label: "Back to the briefing" }}
       />
       <main id="main" className="mx-auto flex max-w-[72rem] flex-col gap-12 px-4 py-10 sm:px-6">
@@ -89,14 +89,14 @@ export function LiveDebrief({ d }: { d: DebriefOut }) {
             </h1>
             <p className="text-body-lg text-fg-muted">
               {d.verify
-                ? `Your best verify run passed ${passed} of ${probes.length} checks.`
+                ? `In your best check, ${passed} of ${probes.length} checks passed.`
                 : resolved
                   ? "Every check passed."
-                  : "You didn't run verify, so nothing was checked."}{" "}
+                  : "You didn't check your fix, so nothing was measured."}{" "}
               {d.rating
                 ? `${d.track_title} rating ${Math.round(d.rating.before)} → ${Math.round(d.rating.after)}.`
                 : d.settled && !d.rating && d.attempt.state !== "failed"
-                  ? "This attempt doesn't change your rating."
+                  ? "This run doesn't change your rating."
                   : ""}
             </p>
           </header>
@@ -107,8 +107,8 @@ export function LiveDebrief({ d }: { d: DebriefOut }) {
           {(
             [
               [
-                "Mitigated in",
-                score?.mitigation_minutes != null ? minutes(score.mitigation_minutes) : "Not mitigated",
+                "Working again in",
+                score?.mitigation_minutes != null ? minutes(score.mitigation_minutes) : "Not yet",
                 score ? `par is ${score.par_minutes} minutes` : "",
               ],
               [
@@ -122,9 +122,9 @@ export function LiveDebrief({ d }: { d: DebriefOut }) {
                 score?.hints_penalty ? `−${Math.round(score.hints_penalty * 100)} points` : "full credit",
               ],
               [
-                "Incident score",
+                "Score",
                 score ? `${Math.round(score.incident * 100)} / 100` : "…",
-                score?.total == null ? "postmortem not reviewed yet" : "",
+                score?.total == null ? "write-up not reviewed yet" : "",
               ],
             ] as const
           ).map(([k, v, note]) => (
@@ -139,13 +139,13 @@ export function LiveDebrief({ d }: { d: DebriefOut }) {
         {probes.length ? (
           <section aria-labelledby="probes-title" className="flex flex-col gap-3">
             <h2 id="probes-title" className="text-heading-lg font-semibold tracking-tight text-fg">
-              What verify threw at your fix
+              What the check threw at your fix
             </h2>
             <p className="max-w-2xl text-body-lg text-fg-muted">
-              Each probe checks a behaviour, measured from outside your code. Any fix that holds all of them
-              passes.
+              Each check tests one behaviour, measured from outside your code. Any fix that holds up in all of
+              them passes.
             </p>
-            <ProbeTable probes={probes.map(toProbeRow)} caption="Verify probes and results" />
+            <ProbeTable probes={probes.map(toProbeRow)} caption="The checks your fix faced, and how it did" />
           </section>
         ) : null}
 
@@ -172,10 +172,10 @@ export function LiveDebrief({ d }: { d: DebriefOut }) {
               <tbody className="font-mono text-mono tabular-nums">
                 {(
                   [
-                    ["Time to mitigate", score.weights.mitigation_time, score.mitigation_time],
-                    ["Verify checks passed", score.weights.resolution, score.resolution],
+                    ["Time to get it working", score.weights.mitigation_time, score.mitigation_time],
+                    ["Checks passed", score.weights.resolution, score.resolution],
                     ["Status updates posted", score.weights.communication, score.communication],
-                    ["Postmortem", score.weights.postmortem, score.postmortem],
+                    ["Write-up", score.weights.postmortem, score.postmortem],
                   ] as const
                 ).map(([part, weight, credit]) => (
                   <tr key={part} className="border-b border-border">
@@ -201,8 +201,8 @@ export function LiveDebrief({ d }: { d: DebriefOut }) {
             </table>
             {score.mitigation_minutes != null && score.mitigation_time === 0 ? (
               <p className="max-w-2xl text-body text-fg-muted">
-                Mitigation counts once verify has measured the same recovery from outside: none of your runs
-                held the SLO under the replay.
+                Getting it working counts once the check sees the same recovery from outside: none of your
+                checks kept the service on target under real traffic.
               </p>
             ) : null}
           </section>
@@ -227,7 +227,7 @@ export function LiveDebrief({ d }: { d: DebriefOut }) {
           </h2>
           {d.approaches ? (
             <ApproachExplorer
-              label="Known approaches"
+              label="Ways to fix it"
               approaches={d.approaches.map((a) => ({
                 id: a.key,
                 name: a.name,
@@ -243,7 +243,7 @@ export function LiveDebrief({ d }: { d: DebriefOut }) {
           ) : (
             <p className="flex max-w-2xl items-start gap-2 rounded-md border border-border bg-surface p-4 text-body text-fg-muted">
               <Lock className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
-              The known approaches are spoilers. Resolve this incident and they open here, with yours marked.
+              Other ways to fix it would spoil the drill. Solve it and they open here, with yours marked.
             </p>
           )}
           {d.approach_note?.source === "ai" && d.approach_note.rationale ? (
@@ -257,7 +257,7 @@ export function LiveDebrief({ d }: { d: DebriefOut }) {
         <div className="grid gap-8 lg:grid-cols-[1fr_20rem]">
           <section aria-labelledby="replay-title" className="flex flex-col gap-3">
             <h2 id="replay-title" className="text-heading-md font-semibold text-fg">
-              How your investigation went
+              How it went
             </h2>
             {d.replay.length ? (
               <ol className="flex flex-col rounded-md border border-border bg-surface">
@@ -266,7 +266,7 @@ export function LiveDebrief({ d }: { d: DebriefOut }) {
                 ))}
               </ol>
             ) : (
-              <p className="text-body text-fg-muted">Nothing was recorded for this attempt.</p>
+              <p className="text-body text-fg-muted">Nothing was recorded for this run.</p>
             )}
           </section>
 
@@ -279,11 +279,11 @@ export function LiveDebrief({ d }: { d: DebriefOut }) {
             </Link>
             {d.review?.status === "graded" ? (
               <p className="text-label text-fg-muted">
-                Postmortem review: {d.review.total} of {d.review.max}
+                Write-up review: {d.review.total} of {d.review.max}
                 {d.review.blameless === false ? ", not blameless" : ""}
               </p>
             ) : d.review?.status === "pending" ? (
-              <p className="text-label text-fg-muted">Your postmortem is being reviewed.</p>
+              <p className="text-label text-fg-muted">Your write-up is being reviewed.</p>
             ) : null}
             <h2 id="next-title" className="text-body font-semibold text-fg">
               Next in {d.track_title}
@@ -309,7 +309,7 @@ export function LiveDebrief({ d }: { d: DebriefOut }) {
             )}
             {!resolved ? (
               <Link href={briefing} className="text-body font-medium text-brand-text hover:underline">
-                Try this incident again
+                Try this drill again
               </Link>
             ) : null}
           </aside>
