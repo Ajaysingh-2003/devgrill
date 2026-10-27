@@ -13,6 +13,7 @@ from fastapi import Depends, Header, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from devgrill.config import Settings
+from devgrill.domain import admin as admin_policy
 from devgrill.domain.enums import Role
 from devgrill.infra.models import Profile
 from devgrill.infra.repositories import profiles
@@ -147,6 +148,24 @@ def require_role(*roles: Role) -> Callable[..., Coroutine[Any, Any, CurrentUser]
 
 
 Admin = Annotated[CurrentUser, Depends(require_role(Role.ADMIN))]
+
+
+def require(permission: admin_policy.Permission) -> Callable[..., Coroutine[Any, Any, CurrentUser]]:
+    """403 unless the user's roles grant `permission` (devgrill.domain.admin)."""
+
+    async def check(user: User) -> CurrentUser:
+        if not admin_policy.allowed(user.roles, permission):
+            raise AppError(403, "forbidden", "You don't have access to this.")
+        return user
+
+    return check
+
+
+P = admin_policy.Permission
+#: Content console access (author, reviewer or admin).
+Console = Annotated[CurrentUser, Depends(require(P.VIEW_CONSOLE))]
+Reviewer = Annotated[CurrentUser, Depends(require(P.REVIEW_FIXES))]
+UserManager = Annotated[CurrentUser, Depends(require(P.MANAGE_USERS))]
 
 
 async def guest_jti(

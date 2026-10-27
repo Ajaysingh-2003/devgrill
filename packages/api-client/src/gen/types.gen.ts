@@ -12,14 +12,41 @@ export type ClientOptions = {
 export type Access = 'free' | 'pro';
 
 /**
+ * Action
+ */
+export type Action = 'submit' | 'send_back' | 'publish' | 'retire' | 'restore';
+
+/**
+ * AdminMe
+ */
+export type AdminMe = {
+    /**
+     * Permissions
+     */
+    permissions: Array<string>;
+    /**
+     * Roles
+     */
+    roles: Array<string>;
+};
+
+/**
  * AdminScenario
  */
 export type AdminScenario = {
+    /**
+     * Actions
+     */
+    actions?: Array<'submit' | 'send_back' | 'publish' | 'retire' | 'restore'>;
     /**
      * Attempts
      */
     attempts: number;
     difficulty: Difficulty;
+    /**
+     * Report Ok
+     */
+    report_ok?: boolean | null;
     /**
      * Resolved
      */
@@ -59,6 +86,44 @@ export type AdminScenarioPage = {
      * Next Cursor
      */
     next_cursor: string | null;
+};
+
+/**
+ * AdminUser
+ */
+export type AdminUser = {
+    /**
+     * Attempts
+     */
+    attempts: number;
+    /**
+     * Created At
+     */
+    created_at: string;
+    /**
+     * Display Name
+     */
+    display_name: string;
+    /**
+     * Handle
+     */
+    handle: string;
+    /**
+     * Last Active
+     */
+    last_active: string | null;
+    /**
+     * Plan
+     */
+    plan: string;
+    /**
+     * Roles
+     */
+    roles: Array<string>;
+    /**
+     * User Id
+     */
+    user_id: string;
 };
 
 /**
@@ -378,6 +443,38 @@ export type AttemptSummary = {
      * Track Slug
      */
     track_slug: string;
+};
+
+/**
+ * AuditEntry
+ */
+export type AuditEntry = {
+    /**
+     * Action
+     */
+    action: string;
+    /**
+     * Actor
+     */
+    actor: string | null;
+    /**
+     * Data
+     */
+    data: {
+        [key: string]: unknown;
+    };
+    /**
+     * Id
+     */
+    id: number;
+    /**
+     * Target
+     */
+    target: string;
+    /**
+     * Ts
+     */
+    ts: string;
 };
 
 /**
@@ -1156,6 +1253,16 @@ export type LeaveOut = {
 };
 
 /**
+ * LifecycleIn
+ */
+export type LifecycleIn = {
+    /**
+     * Note
+     */
+    note?: string | null;
+};
+
+/**
  * MasteryOut
  *
  * Share of the track's published scenarios resolved, 0-100, before and after.
@@ -1921,6 +2028,21 @@ export type RestartOut = {
 };
 
 /**
+ * Role
+ */
+export type Role = 'user' | 'author' | 'reviewer' | 'admin';
+
+/**
+ * RolesIn
+ */
+export type RolesIn = {
+    /**
+     * Roles
+     */
+    roles: Array<Role>;
+};
+
+/**
  * RollbackIn
  */
 export type RollbackIn = {
@@ -1932,6 +2054,53 @@ export type RollbackIn = {
      * Service
      */
     service?: string | null;
+};
+
+/**
+ * ScenarioAnalytics
+ */
+export type ScenarioAnalytics = {
+    /**
+     * Abandon Rate
+     */
+    abandon_rate: number;
+    /**
+     * Attempts
+     */
+    attempts: number;
+    /**
+     * Est Minutes
+     */
+    est_minutes: number;
+    /**
+     * Flags
+     */
+    flags: Array<string>;
+    /**
+     * Hints Per Attempt
+     */
+    hints_per_attempt: number;
+    /**
+     * Median Minutes
+     */
+    median_minutes: number | null;
+    /**
+     * Rating Drift
+     */
+    rating_drift: number;
+    /**
+     * Slug
+     */
+    slug: string;
+    /**
+     * Solve Rate
+     */
+    solve_rate: number;
+    status: ScenarioStatus;
+    /**
+     * Title
+     */
+    title: string;
 };
 
 /**
@@ -2508,6 +2677,26 @@ export type UsageOut = {
 };
 
 /**
+ * ValidationReportOut
+ */
+export type ValidationReportOut = {
+    /**
+     * Report
+     */
+    report: {
+        [key: string]: unknown;
+    } | null;
+    /**
+     * Slug
+     */
+    slug: string;
+    /**
+     * Version
+     */
+    version: number | null;
+};
+
+/**
  * VerifyRunOut
  */
 export type VerifyRunOut = {
@@ -2702,6 +2891,71 @@ export type AdminAiCostsResponses = {
 
 export type AdminAiCostsResponse = AdminAiCostsResponses[keyof AdminAiCostsResponses];
 
+export type AdminAnalyticsData = {
+    body?: never;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+    };
+    path?: never;
+    query?: never;
+    url: '/v1/admin/analytics/scenarios';
+};
+
+export type AdminAnalyticsErrors = {
+    /**
+     * Bad request (e.g. an invalid cursor).
+     */
+    400: Problem;
+    /**
+     * Missing or invalid credentials.
+     */
+    401: Problem;
+    /**
+     * Signed in, but not allowed.
+     */
+    403: Problem;
+    /**
+     * Not found.
+     */
+    404: Problem;
+    /**
+     * Conflict (e.g. a request with this Idempotency-Key is still running).
+     */
+    409: Problem;
+    /**
+     * The request is invalid; see `errors`.
+     */
+    422: Problem;
+    /**
+     * Rate limited; see Retry-After.
+     */
+    429: Problem;
+    /**
+     * Server error.
+     */
+    500: Problem;
+    /**
+     * Temporarily unavailable.
+     */
+    503: Problem;
+};
+
+export type AdminAnalyticsError = AdminAnalyticsErrors[keyof AdminAnalyticsErrors];
+
+export type AdminAnalyticsResponses = {
+    /**
+     * Response Admin Analytics
+     *
+     * Successful Response
+     */
+    200: Array<ScenarioAnalytics>;
+};
+
+export type AdminAnalyticsResponse = AdminAnalyticsResponses[keyof AdminAnalyticsResponses];
+
 export type AdminApproachCandidatesData = {
     body?: never;
     headers?: {
@@ -2835,6 +3089,143 @@ export type AdminReviewCandidateResponses = {
 
 export type AdminReviewCandidateResponse = AdminReviewCandidateResponses[keyof AdminReviewCandidateResponses];
 
+export type AdminAuditData = {
+    body?: never;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+    };
+    path?: never;
+    query?: {
+        /**
+         * Before
+         */
+        before?: number | null;
+        /**
+         * Limit
+         */
+        limit?: number;
+    };
+    url: '/v1/admin/audit';
+};
+
+export type AdminAuditErrors = {
+    /**
+     * Bad request (e.g. an invalid cursor).
+     */
+    400: Problem;
+    /**
+     * Missing or invalid credentials.
+     */
+    401: Problem;
+    /**
+     * Signed in, but not allowed.
+     */
+    403: Problem;
+    /**
+     * Not found.
+     */
+    404: Problem;
+    /**
+     * Conflict (e.g. a request with this Idempotency-Key is still running).
+     */
+    409: Problem;
+    /**
+     * The request is invalid; see `errors`.
+     */
+    422: Problem;
+    /**
+     * Rate limited; see Retry-After.
+     */
+    429: Problem;
+    /**
+     * Server error.
+     */
+    500: Problem;
+    /**
+     * Temporarily unavailable.
+     */
+    503: Problem;
+};
+
+export type AdminAuditError = AdminAuditErrors[keyof AdminAuditErrors];
+
+export type AdminAuditResponses = {
+    /**
+     * Response Admin Audit
+     *
+     * Successful Response
+     */
+    200: Array<AuditEntry>;
+};
+
+export type AdminAuditResponse = AdminAuditResponses[keyof AdminAuditResponses];
+
+export type AdminMeData = {
+    body?: never;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+    };
+    path?: never;
+    query?: never;
+    url: '/v1/admin/me';
+};
+
+export type AdminMeErrors = {
+    /**
+     * Bad request (e.g. an invalid cursor).
+     */
+    400: Problem;
+    /**
+     * Missing or invalid credentials.
+     */
+    401: Problem;
+    /**
+     * Signed in, but not allowed.
+     */
+    403: Problem;
+    /**
+     * Not found.
+     */
+    404: Problem;
+    /**
+     * Conflict (e.g. a request with this Idempotency-Key is still running).
+     */
+    409: Problem;
+    /**
+     * The request is invalid; see `errors`.
+     */
+    422: Problem;
+    /**
+     * Rate limited; see Retry-After.
+     */
+    429: Problem;
+    /**
+     * Server error.
+     */
+    500: Problem;
+    /**
+     * Temporarily unavailable.
+     */
+    503: Problem;
+};
+
+export type AdminMeError = AdminMeErrors[keyof AdminMeErrors];
+
+export type AdminMeResponses = {
+    /**
+     * Successful Response
+     */
+    200: AdminMe;
+};
+
+export type AdminMeResponse = AdminMeResponses[keyof AdminMeResponses];
+
 export type AdminScenariosData = {
     body?: never;
     headers?: {
@@ -2914,6 +3305,281 @@ export type AdminScenariosResponses = {
 };
 
 export type AdminScenariosResponse = AdminScenariosResponses[keyof AdminScenariosResponses];
+
+export type AdminScenarioActionData = {
+    body: LifecycleIn;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+    };
+    path: {
+        /**
+         * Slug
+         */
+        slug: string;
+        action: Action;
+    };
+    query?: never;
+    url: '/v1/admin/scenarios/{slug}/actions/{action}';
+};
+
+export type AdminScenarioActionErrors = {
+    /**
+     * Bad request (e.g. an invalid cursor).
+     */
+    400: Problem;
+    /**
+     * Missing or invalid credentials.
+     */
+    401: Problem;
+    /**
+     * Signed in, but not allowed.
+     */
+    403: Problem;
+    /**
+     * Not found.
+     */
+    404: Problem;
+    /**
+     * Conflict (e.g. a request with this Idempotency-Key is still running).
+     */
+    409: Problem;
+    /**
+     * The request is invalid; see `errors`.
+     */
+    422: Problem;
+    /**
+     * Rate limited; see Retry-After.
+     */
+    429: Problem;
+    /**
+     * Server error.
+     */
+    500: Problem;
+    /**
+     * Temporarily unavailable.
+     */
+    503: Problem;
+};
+
+export type AdminScenarioActionError = AdminScenarioActionErrors[keyof AdminScenarioActionErrors];
+
+export type AdminScenarioActionResponses = {
+    /**
+     * Successful Response
+     */
+    200: AdminScenario;
+};
+
+export type AdminScenarioActionResponse = AdminScenarioActionResponses[keyof AdminScenarioActionResponses];
+
+export type AdminScenarioReportData = {
+    body?: never;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+    };
+    path: {
+        /**
+         * Slug
+         */
+        slug: string;
+    };
+    query?: never;
+    url: '/v1/admin/scenarios/{slug}/report';
+};
+
+export type AdminScenarioReportErrors = {
+    /**
+     * Bad request (e.g. an invalid cursor).
+     */
+    400: Problem;
+    /**
+     * Missing or invalid credentials.
+     */
+    401: Problem;
+    /**
+     * Signed in, but not allowed.
+     */
+    403: Problem;
+    /**
+     * Not found.
+     */
+    404: Problem;
+    /**
+     * Conflict (e.g. a request with this Idempotency-Key is still running).
+     */
+    409: Problem;
+    /**
+     * The request is invalid; see `errors`.
+     */
+    422: Problem;
+    /**
+     * Rate limited; see Retry-After.
+     */
+    429: Problem;
+    /**
+     * Server error.
+     */
+    500: Problem;
+    /**
+     * Temporarily unavailable.
+     */
+    503: Problem;
+};
+
+export type AdminScenarioReportError = AdminScenarioReportErrors[keyof AdminScenarioReportErrors];
+
+export type AdminScenarioReportResponses = {
+    /**
+     * Successful Response
+     */
+    200: ValidationReportOut;
+};
+
+export type AdminScenarioReportResponse = AdminScenarioReportResponses[keyof AdminScenarioReportResponses];
+
+export type AdminUsersData = {
+    body?: never;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+    };
+    path?: never;
+    query: {
+        /**
+         * Q
+         */
+        q: string;
+    };
+    url: '/v1/admin/users';
+};
+
+export type AdminUsersErrors = {
+    /**
+     * Bad request (e.g. an invalid cursor).
+     */
+    400: Problem;
+    /**
+     * Missing or invalid credentials.
+     */
+    401: Problem;
+    /**
+     * Signed in, but not allowed.
+     */
+    403: Problem;
+    /**
+     * Not found.
+     */
+    404: Problem;
+    /**
+     * Conflict (e.g. a request with this Idempotency-Key is still running).
+     */
+    409: Problem;
+    /**
+     * The request is invalid; see `errors`.
+     */
+    422: Problem;
+    /**
+     * Rate limited; see Retry-After.
+     */
+    429: Problem;
+    /**
+     * Server error.
+     */
+    500: Problem;
+    /**
+     * Temporarily unavailable.
+     */
+    503: Problem;
+};
+
+export type AdminUsersError = AdminUsersErrors[keyof AdminUsersErrors];
+
+export type AdminUsersResponses = {
+    /**
+     * Response Admin Users
+     *
+     * Successful Response
+     */
+    200: Array<AdminUser>;
+};
+
+export type AdminUsersResponse = AdminUsersResponses[keyof AdminUsersResponses];
+
+export type AdminSetRolesData = {
+    body: RolesIn;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+    };
+    path: {
+        /**
+         * User Id
+         */
+        user_id: string;
+    };
+    query?: never;
+    url: '/v1/admin/users/{user_id}/roles';
+};
+
+export type AdminSetRolesErrors = {
+    /**
+     * Bad request (e.g. an invalid cursor).
+     */
+    400: Problem;
+    /**
+     * Missing or invalid credentials.
+     */
+    401: Problem;
+    /**
+     * Signed in, but not allowed.
+     */
+    403: Problem;
+    /**
+     * Not found.
+     */
+    404: Problem;
+    /**
+     * Conflict (e.g. a request with this Idempotency-Key is still running).
+     */
+    409: Problem;
+    /**
+     * The request is invalid; see `errors`.
+     */
+    422: Problem;
+    /**
+     * Rate limited; see Retry-After.
+     */
+    429: Problem;
+    /**
+     * Server error.
+     */
+    500: Problem;
+    /**
+     * Temporarily unavailable.
+     */
+    503: Problem;
+};
+
+export type AdminSetRolesError = AdminSetRolesErrors[keyof AdminSetRolesErrors];
+
+export type AdminSetRolesResponses = {
+    /**
+     * Successful Response
+     */
+    200: AdminUser;
+};
+
+export type AdminSetRolesResponse = AdminSetRolesResponses[keyof AdminSetRolesResponses];
 
 export type StartAttemptData = {
     body: AttemptIn;

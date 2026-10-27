@@ -124,6 +124,39 @@ Property tests cover the rules:
   - `List-Unsubscribe` with `List-Unsubscribe-Post` gives mail clients RFC 8058 one-click
     unsubscribe, through a token-only web route.
 
+### The content console: roles, lifecycle and audit
+
+Content is edited in git, so the console never edits content itself. It moves scenarios
+through their lifecycle and shows what play says about them.
+`devgrill.domain.admin` holds the rules.
+
+**What each role can do:**
+
+| Role | Can do |
+| --- | --- |
+| author | See the console and analytics; submit a draft for review |
+| reviewer | Send back (with a reason), publish, retire and restore; review unrecognised fixes |
+| admin | Everything above, plus AI spend, user lookup, role changes and the audit log |
+
+So authors can't publish, and reviewers can't move content into review.
+
+**How it's enforced:**
+- The API checks each action, and the console only shows the buttons a role allows
+  (`GET /v1/admin/me`).
+- A lifecycle action writes its audit entry in the same transaction, recording the from and
+  to states and any note.
+- So does each role change and each review decision on an unrecognised fix.
+
+**Who owns status:** the status in a scenario file only applies when the seed first creates
+the scenario. After that the console owns it, so a re-seed can't undo a review decision.
+
+**Validation reports:** `devgrill-content test` writes `.reports/<slug>.json`. The seed
+attaches it, without the samples, to the current version, and the console shows passed,
+failed or none.
+
+**Analytics** cover finished runs on all versions: solve rate, leavers, median time, hints
+and rating drift. Flags appear only from 10 runs on.
+
 ## Consequences
 
 - An old public link to a profile created after 0005 doesn't exist until its owner opts in.

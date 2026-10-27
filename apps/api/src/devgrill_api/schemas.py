@@ -6,7 +6,7 @@ import uuid
 from datetime import date, datetime
 from enum import StrEnum
 from importlib.resources import files
-from typing import TYPE_CHECKING, Annotated, Literal
+from typing import TYPE_CHECKING, Annotated, Any, Literal
 
 from pydantic import (
     BaseModel,
@@ -27,6 +27,7 @@ from devgrill.domain.enums import (
     Difficulty,
     ExperienceLevel,
     QuickfireKind,
+    Role,
     ScenarioStatus,
     StreakMode,
 )
@@ -206,7 +207,11 @@ class MePatch(Input):
     the others can't be null (the schema shows them as non-nullable)."""
 
     # Constraints sit on the str member: on the union they would also run against None.
-    display_name: Annotated[str, Field(min_length=1, max_length=60)] | SkipJsonSchema[None] = None
+    # No control characters: Postgres rejects NUL in text (a 500, found by the contract test).
+    display_name: (
+        Annotated[str, Field(min_length=1, max_length=60, pattern=r"^[^\x00-\x1f\x7f]+$")]
+        | SkipJsonSchema[None]
+    ) = None
     country: str | None = Field(default=None, pattern=r"^[A-Z]{2}$")
     experience_level: ExperienceLevel | None = None
     is_public: StrictBool | SkipJsonSchema[None] = None
@@ -593,6 +598,10 @@ class PublicProfile(Model):
 # -------------------------------------------------------------------------- admin
 
 
+#: Lifecycle actions (devgrill.domain.admin.Action), as the API names them.
+ScenarioAction = Literal["submit", "send_back", "publish", "retire", "restore"]
+
+
 class AdminScenario(Model):
     slug: str
     title: str
@@ -603,11 +612,70 @@ class AdminScenario(Model):
     attempts: int
     resolved: int
     updated_at: datetime
+    #: What the caller may do to it now (devgrill.domain.admin), for the console's buttons.
+    actions: list[ScenarioAction] = Field(default_factory=list)
+    #: The current version's validation report, if one was attached: passed or not.
+    report_ok: bool | None = None
 
 
 class AdminScenarioPage(Model):
     items: list[AdminScenario]
     next_cursor: str | None
+
+
+class AdminMe(Model):
+    roles: list[str]
+    permissions: list[str]
+
+
+class LifecycleIn(Input):
+    #: Why (shown in the audit log); required when sending a scenario back.
+    note: str | None = Field(default=None, max_length=500)
+
+
+class ValidationReportOut(Model):
+    slug: str
+    version: int | None
+    report: dict[str, Any] | None
+
+
+class ScenarioAnalytics(Model):
+    slug: str
+    title: str
+    status: ScenarioStatus
+    est_minutes: int
+    attempts: int
+    solve_rate: float
+    abandon_rate: float
+    median_minutes: float | None
+    hints_per_attempt: float
+    #: How far play has moved the scenario's rating from where it started (1500).
+    rating_drift: float
+    flags: list[str]
+
+
+class AdminUser(Model):
+    user_id: uuid.UUID
+    handle: str
+    display_name: str
+    roles: list[str]
+    plan: str
+    attempts: int
+    last_active: date | None
+    created_at: datetime
+
+
+class RolesIn(Input):
+    roles: list[Role] = Field(max_length=4)
+
+
+class AuditEntry(Model):
+    id: int
+    ts: datetime
+    actor: str | None
+    action: str
+    target: str
+    data: dict[str, Any]
 
 
 # ------------------------------------------------------------------------ internal

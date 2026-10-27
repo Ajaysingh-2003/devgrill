@@ -2,7 +2,7 @@
 
 import type { Client, ClientMeta, Options as Options2, RequestResult, ServerSentEventsResult, TDataShape } from './client';
 import { client } from './client.gen';
-import type { AbandonAttemptData, AbandonAttemptErrors, AbandonAttemptResponses, AdminAiCostsData, AdminAiCostsErrors, AdminAiCostsResponses, AdminApproachCandidatesData, AdminApproachCandidatesErrors, AdminApproachCandidatesResponses, AdminReviewCandidateData, AdminReviewCandidateErrors, AdminReviewCandidateResponses, AdminScenariosData, AdminScenariosErrors, AdminScenariosResponses, AnswerCardData, AnswerCardErrors, AnswerCardResponses, AttemptEventsData, AttemptEventsErrors, AttemptEventsResponses, CacheInsightsData, CacheInsightsErrors, CacheInsightsResponses, CalibrationDeckData, CalibrationDeckErrors, CalibrationDeckResponses, CanPlayData, CanPlayErrors, CanPlayResponses, ClaimGuestData, ClaimGuestErrors, ClaimGuestResponses, CreateGuestTokenData, CreateGuestTokenErrors, CreateGuestTokenResponses, CreateWsTicketData, CreateWsTicketErrors, CreateWsTicketResponses, DailyChallengeData, DailyChallengeErrors, DailyChallengeResponses, DbInsightsData, DbInsightsErrors, DbInsightsResponses, DbQueryData, DbQueryErrors, DbQueryResponses, DeclareMitigatedData, DeclareMitigatedErrors, DeclareMitigatedResponses, DeployChangesData, DeployChangesErrors, DeployChangesResponses, DeployData, DeployErrors, DeployResponses, ExtendAttemptData, ExtendAttemptErrors, ExtendAttemptResponses, FinishOnboardingData, FinishOnboardingErrors, FinishOnboardingResponses, GetApproachesData, GetApproachesErrors, GetApproachesResponses, GetAttemptData, GetAttemptErrors, GetAttemptResponses, GetDebriefData, GetDebriefErrors, GetDebriefResponses, GetMeData, GetMeErrors, GetMeResponses, GetPostmortemData, GetPostmortemErrors, GetPostmortemResponses, GetScenarioData, GetScenarioErrors, GetScenarioResponses, GetTrackData, GetTrackErrors, GetTrackResponses, GetWorkspaceData, GetWorkspaceErrors, GetWorkspaceResponses, HealthzData, HealthzResponses, ListDeploysData, ListDeploysErrors, ListDeploysResponses, ListFilesData, ListFilesErrors, ListFilesResponses, ListHintsData, ListHintsErrors, ListHintsResponses, ListScenariosData, ListScenariosErrors, ListScenariosResponses, ListTracksData, ListTracksErrors, ListTracksResponses, MyAttemptsData, MyAttemptsErrors, MyAttemptsResponses, MyLeaveData, MyLeaveErrors, MyLeaveResponses, MyProgressData, MyProgressErrors, MyProgressResponses, MyRatingsData, MyRatingsErrors, MyRatingsResponses, MyStreakData, MyStreakErrors, MyStreakResponses, MyUsageData, MyUsageErrors, MyUsageResponses, NudgeData, NudgeErrors, NudgeResponses, PatchMeData, PatchMeErrors, PatchMeResponses, PauseEmailsData, PauseEmailsErrors, PauseEmailsResponses, PostMessageData, PostMessageErrors, PostMessageResponses, PublicProfileData, PublicProfileErrors, PublicProfileResponses, QuickfireDeckData, QuickfireDeckErrors, QuickfireDeckResponses, ReadFileData, ReadFileErrors, ReadFileResponses, ReadyzData, ReadyzErrors, ReadyzResponses, ResetAttemptData, ResetAttemptErrors, ResetAttemptResponses, RestartServiceData, RestartServiceErrors, RestartServiceResponses, ReviewPostmortemData, ReviewPostmortemErrors, ReviewPostmortemResponses, RollbackData, RollbackErrors, RollbackResponses, SandboxStatusData, SandboxStatusErrors, SandboxStatusResponses, SavePostmortemData, SavePostmortemErrors, SavePostmortemResponses, SetLeaveData, SetLeaveErrors, SetLeaveResponses, ShareCardData, ShareCardErrors, ShareCardResponses, StartAttemptData, StartAttemptErrors, StartAttemptResponses, SubmitPostmortemData, SubmitPostmortemErrors, SubmitPostmortemResponses, TakeHintData, TakeHintErrors, TakeHintResponses, TouchAttemptData, TouchAttemptErrors, TouchAttemptResponses, VerifyAttemptData, VerifyAttemptErrors, VerifyAttemptResponses, WeeklyChallengeData, WeeklyChallengeErrors, WeeklyChallengeResponses, WriteFileData, WriteFileErrors, WriteFileResponses } from './types.gen';
+import type { AbandonAttemptData, AbandonAttemptErrors, AbandonAttemptResponses, AdminAiCostsData, AdminAiCostsErrors, AdminAiCostsResponses, AdminAnalyticsData, AdminAnalyticsErrors, AdminAnalyticsResponses, AdminApproachCandidatesData, AdminApproachCandidatesErrors, AdminApproachCandidatesResponses, AdminAuditData, AdminAuditErrors, AdminAuditResponses, AdminMeData, AdminMeErrors, AdminMeResponses, AdminReviewCandidateData, AdminReviewCandidateErrors, AdminReviewCandidateResponses, AdminScenarioActionData, AdminScenarioActionErrors, AdminScenarioActionResponses, AdminScenarioReportData, AdminScenarioReportErrors, AdminScenarioReportResponses, AdminScenariosData, AdminScenariosErrors, AdminScenariosResponses, AdminSetRolesData, AdminSetRolesErrors, AdminSetRolesResponses, AdminUsersData, AdminUsersErrors, AdminUsersResponses, AnswerCardData, AnswerCardErrors, AnswerCardResponses, AttemptEventsData, AttemptEventsErrors, AttemptEventsResponses, CacheInsightsData, CacheInsightsErrors, CacheInsightsResponses, CalibrationDeckData, CalibrationDeckErrors, CalibrationDeckResponses, CanPlayData, CanPlayErrors, CanPlayResponses, ClaimGuestData, ClaimGuestErrors, ClaimGuestResponses, CreateGuestTokenData, CreateGuestTokenErrors, CreateGuestTokenResponses, CreateWsTicketData, CreateWsTicketErrors, CreateWsTicketResponses, DailyChallengeData, DailyChallengeErrors, DailyChallengeResponses, DbInsightsData, DbInsightsErrors, DbInsightsResponses, DbQueryData, DbQueryErrors, DbQueryResponses, DeclareMitigatedData, DeclareMitigatedErrors, DeclareMitigatedResponses, DeployChangesData, DeployChangesErrors, DeployChangesResponses, DeployData, DeployErrors, DeployResponses, ExtendAttemptData, ExtendAttemptErrors, ExtendAttemptResponses, FinishOnboardingData, FinishOnboardingErrors, FinishOnboardingResponses, GetApproachesData, GetApproachesErrors, GetApproachesResponses, GetAttemptData, GetAttemptErrors, GetAttemptResponses, GetDebriefData, GetDebriefErrors, GetDebriefResponses, GetMeData, GetMeErrors, GetMeResponses, GetPostmortemData, GetPostmortemErrors, GetPostmortemResponses, GetScenarioData, GetScenarioErrors, GetScenarioResponses, GetTrackData, GetTrackErrors, GetTrackResponses, GetWorkspaceData, GetWorkspaceErrors, GetWorkspaceResponses, HealthzData, HealthzResponses, ListDeploysData, ListDeploysErrors, ListDeploysResponses, ListFilesData, ListFilesErrors, ListFilesResponses, ListHintsData, ListHintsErrors, ListHintsResponses, ListScenariosData, ListScenariosErrors, ListScenariosResponses, ListTracksData, ListTracksErrors, ListTracksResponses, MyAttemptsData, MyAttemptsErrors, MyAttemptsResponses, MyLeaveData, MyLeaveErrors, MyLeaveResponses, MyProgressData, MyProgressErrors, MyProgressResponses, MyRatingsData, MyRatingsErrors, MyRatingsResponses, MyStreakData, MyStreakErrors, MyStreakResponses, MyUsageData, MyUsageErrors, MyUsageResponses, NudgeData, NudgeErrors, NudgeResponses, PatchMeData, PatchMeErrors, PatchMeResponses, PauseEmailsData, PauseEmailsErrors, PauseEmailsResponses, PostMessageData, PostMessageErrors, PostMessageResponses, PublicProfileData, PublicProfileErrors, PublicProfileResponses, QuickfireDeckData, QuickfireDeckErrors, QuickfireDeckResponses, ReadFileData, ReadFileErrors, ReadFileResponses, ReadyzData, ReadyzErrors, ReadyzResponses, ResetAttemptData, ResetAttemptErrors, ResetAttemptResponses, RestartServiceData, RestartServiceErrors, RestartServiceResponses, ReviewPostmortemData, ReviewPostmortemErrors, ReviewPostmortemResponses, RollbackData, RollbackErrors, RollbackResponses, SandboxStatusData, SandboxStatusErrors, SandboxStatusResponses, SavePostmortemData, SavePostmortemErrors, SavePostmortemResponses, SetLeaveData, SetLeaveErrors, SetLeaveResponses, ShareCardData, ShareCardErrors, ShareCardResponses, StartAttemptData, StartAttemptErrors, StartAttemptResponses, SubmitPostmortemData, SubmitPostmortemErrors, SubmitPostmortemResponses, TakeHintData, TakeHintErrors, TakeHintResponses, TouchAttemptData, TouchAttemptErrors, TouchAttemptResponses, VerifyAttemptData, VerifyAttemptErrors, VerifyAttemptResponses, WeeklyChallengeData, WeeklyChallengeErrors, WeeklyChallengeResponses, WriteFileData, WriteFileErrors, WriteFileResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -36,6 +36,14 @@ export const readyz = <ThrowOnError extends boolean = false>(options?: Options<R
 export const adminAiCosts = <ThrowOnError extends boolean = false>(options?: Options<AdminAiCostsData, ThrowOnError>): RequestResult<AdminAiCostsResponses, AdminAiCostsErrors, ThrowOnError> => (options?.client ?? client).get<AdminAiCostsResponses, AdminAiCostsErrors, ThrowOnError>({ url: '/v1/admin/ai/costs', ...options });
 
 /**
+ * Admin Analytics
+ *
+ * Per scenario (all versions): solve rate, median time, hints, drop-off, rating drift,
+ * with automatic flags (devgrill.domain.admin.flags).
+ */
+export const adminAnalytics = <ThrowOnError extends boolean = false>(options?: Options<AdminAnalyticsData, ThrowOnError>): RequestResult<AdminAnalyticsResponses, AdminAnalyticsErrors, ThrowOnError> => (options?.client ?? client).get<AdminAnalyticsResponses, AdminAnalyticsErrors, ThrowOnError>({ url: '/v1/admin/analytics/scenarios', ...options });
+
+/**
  * Admin Approach Candidates
  *
  * Open candidates, grouped per scenario into clusters of similar fixes (largest first).
@@ -57,11 +65,67 @@ export const adminReviewCandidate = <ThrowOnError extends boolean = false>(optio
 });
 
 /**
+ * Admin Audit
+ *
+ * The audit log, newest first (keyset on id).
+ */
+export const adminAudit = <ThrowOnError extends boolean = false>(options?: Options<AdminAuditData, ThrowOnError>): RequestResult<AdminAuditResponses, AdminAuditErrors, ThrowOnError> => (options?.client ?? client).get<AdminAuditResponses, AdminAuditErrors, ThrowOnError>({ url: '/v1/admin/audit', ...options });
+
+/**
+ * Admin Me
+ *
+ * The caller's roles and what they allow, so the console shows only what works.
+ */
+export const adminMe = <ThrowOnError extends boolean = false>(options?: Options<AdminMeData, ThrowOnError>): RequestResult<AdminMeResponses, AdminMeErrors, ThrowOnError> => (options?.client ?? client).get<AdminMeResponses, AdminMeErrors, ThrowOnError>({ url: '/v1/admin/me', ...options });
+
+/**
  * Admin Scenarios
  *
  * Every scenario in any status, with attempt counts.
  */
 export const adminScenarios = <ThrowOnError extends boolean = false>(options?: Options<AdminScenariosData, ThrowOnError>): RequestResult<AdminScenariosResponses, AdminScenariosErrors, ThrowOnError> => (options?.client ?? client).get<AdminScenariosResponses, AdminScenariosErrors, ThrowOnError>({ url: '/v1/admin/scenarios', ...options });
+
+/**
+ * Admin Scenario Action
+ *
+ * Move a scenario through its lifecycle (draft, review, published, retired).
+ */
+export const adminScenarioAction = <ThrowOnError extends boolean = false>(options: Options<AdminScenarioActionData, ThrowOnError>): RequestResult<AdminScenarioActionResponses, AdminScenarioActionErrors, ThrowOnError> => (options.client ?? client).post<AdminScenarioActionResponses, AdminScenarioActionErrors, ThrowOnError>({
+    url: '/v1/admin/scenarios/{slug}/actions/{action}',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Admin Scenario Report
+ *
+ * The current version's validation report (`devgrill-content test`, attached at seed).
+ */
+export const adminScenarioReport = <ThrowOnError extends boolean = false>(options: Options<AdminScenarioReportData, ThrowOnError>): RequestResult<AdminScenarioReportResponses, AdminScenarioReportErrors, ThrowOnError> => (options.client ?? client).get<AdminScenarioReportResponses, AdminScenarioReportErrors, ThrowOnError>({ url: '/v1/admin/scenarios/{slug}/report', ...options });
+
+/**
+ * Admin Users
+ *
+ * Support lookup by handle or display name (prefix, case-insensitive), at most 20.
+ */
+export const adminUsers = <ThrowOnError extends boolean = false>(options: Options<AdminUsersData, ThrowOnError>): RequestResult<AdminUsersResponses, AdminUsersErrors, ThrowOnError> => (options.client ?? client).get<AdminUsersResponses, AdminUsersErrors, ThrowOnError>({ url: '/v1/admin/users', ...options });
+
+/**
+ * Admin Set Roles
+ *
+ * Set a user's roles ("user" is always kept). Admins can't remove their own admin role.
+ */
+export const adminSetRoles = <ThrowOnError extends boolean = false>(options: Options<AdminSetRolesData, ThrowOnError>): RequestResult<AdminSetRolesResponses, AdminSetRolesErrors, ThrowOnError> => (options.client ?? client).put<AdminSetRolesResponses, AdminSetRolesErrors, ThrowOnError>({
+    url: '/v1/admin/users/{user_id}/roles',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
 
 /**
  * Start Attempt

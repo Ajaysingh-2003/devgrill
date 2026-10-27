@@ -281,17 +281,41 @@ ADMIN_ROUTES = [
     ("GET", "/v1/admin/ai/costs"),
     ("GET", "/v1/admin/approach-candidates"),
     ("POST", "/v1/admin/approach-candidates/{candidate_id}"),
+    ("GET", "/v1/admin/me"),
+    ("POST", "/v1/admin/scenarios/{slug}/actions/{action}"),
+    ("GET", "/v1/admin/scenarios/{slug}/report"),
+    ("GET", "/v1/admin/analytics/scenarios"),
+    ("GET", "/v1/admin/users"),
+    ("PUT", "/v1/admin/users/{user_id}/roles"),
+    ("GET", "/v1/admin/audit"),
 ]
 #: What an admin gets with these test inputs (a random id is a 404).
-ADMIN_OK = {"/v1/admin/approach-candidates/{candidate_id}": 404}
-ADMIN_BODY = {"/v1/admin/approach-candidates/{candidate_id}": {"status": "dismissed"}}
+ADMIN_OK = {
+    "/v1/admin/approach-candidates/{candidate_id}": 404,
+    "/v1/admin/users/{user_id}/roles": 404,
+}
+ADMIN_BODY = {
+    "/v1/admin/approach-candidates/{candidate_id}": {"status": "dismissed"},
+    "/v1/admin/scenarios/{slug}/actions/{action}": {},
+    "/v1/admin/users/{user_id}/roles": {"roles": []},
+}
+ADMIN_QUERY = {"/v1/admin/users": "?q=ro"}
+
+
+def _admin_url(path: str) -> str:
+    return (
+        path.replace("{candidate_id}", str(uuid.uuid4()))
+        .replace("{user_id}", str(uuid.uuid4()))
+        .replace("{slug}", "ttl-zero")
+        .replace("{action}", "retire")
+    ) + ADMIN_QUERY.get(path, "")
 
 
 @pytest.mark.parametrize(("method", "path"), ADMIN_ROUTES)
 def test_admin_routes_need_the_admin_role(
     api: TestClient, seeded: AsyncSession, auth, method: str, path: str
 ) -> None:  # type: ignore[no-untyped-def]
-    url = path.replace("{candidate_id}", str(uuid.uuid4()))
+    url = _admin_url(path)
     body = ADMIN_BODY.get(path)
     assert api.request(method, url, json=body).status_code == 401
     rando = auth(uuid.uuid4(), login="rando")
@@ -539,3 +563,12 @@ def test_onboarding_seeds_starting_ratings_once(
 def test_onboarding_needs_an_account(api: TestClient, seeded: AsyncSession) -> None:
     assert api.get("/v1/onboarding/calibration").status_code == 401
     assert api.post("/v1/me/onboarding", json={"experience_level": "0-2"}).status_code == 401
+
+
+def test_display_names_reject_control_characters(
+    api: TestClient, seeded: AsyncSession, auth
+) -> None:  # type: ignore[no-untyped-def]
+    headers = auth(uuid.uuid4(), login="nul-name")
+    for bad in ("a" + chr(0) + "b", "line" + chr(10) + "break", chr(127)):
+        assert api.patch("/v1/me", json={"display_name": bad}, headers=headers).status_code == 422
+    assert api.patch("/v1/me", json={"display_name": "Ajay S"}, headers=headers).status_code == 200

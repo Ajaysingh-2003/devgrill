@@ -1,6 +1,6 @@
 # Phase 7 QC report: content, progression and onboarding
 
-Date: 2026-10-27 · Result: **IN PROGRESS** (waves 7A to 7D done) · Decision: ADR 017.
+Date: 2026-10-27 · Result: **IN PROGRESS** (waves 7A to 7E done) · Decision: ADR 017.
 
 Phase 7 runs in waves, each tested and committed on its own:
 
@@ -10,8 +10,8 @@ Phase 7 runs in waves, each tested and committed on its own:
 | 7B | `/try` guest tutorial with progressive unlocks and tips | Done |
 | 7C | Quick Fire cards and onboarding calibration | Done |
 | 7D | Streak freezes and on-call leave, email digests (Mailpit) | Done |
-| 7E | Admin console: RBAC, audit log, review queue, publish and retire | Next |
-| 7F | Content sprint toward 20 drills, the Ledger app | |
+| 7E | Admin console: RBAC, audit log, review queue, publish and retire | Done |
+| 7F | Content sprint toward 20 drills, the Ledger app | Next |
 | 7G | Case files | |
 
 ## Wave 7A: what was built
@@ -152,6 +152,45 @@ Phase 7 runs in waves, each tested and committed on its own:
   - Two signed-in accessibility tests failed on the first run with a Postgres connection
     timeout under parallel load. They passed on rerun.
 
+## Wave 7E: what was built
+
+- **Roles and lifecycle (ADR 017):**
+  - authors submit drafts;
+  - reviewers send back (with a reason), publish, retire and restore;
+  - admins do everything, plus users, roles, AI spend and the audit log.
+
+  The API enforces this per action.
+- **Audit log:** every lifecycle step, role change and fix review is written in the same
+  transaction. Admins can page back through it at `/admin/audit`.
+- **Console sections:** Scenarios (status, report, actions), Analytics (with flags), AI and
+  fixes, Users (lookup and roles) and Audit log. The navigation shows only the sections the
+  role opens.
+- **Seed:** it no longer overwrites a scenario's status after the first time, and attaches
+  `devgrill-content test` reports to the current version.
+- **Not built:**
+  - **Playtest in author mode** (a sandbox with the solution visible and faults toggleable)
+    needs sandbox work.
+  - **Validation from the console:** reports come from `devgrill-content test` in CI and
+    locally, and are attached at seed, but the console can't start a run itself yet.
+
+## Checks run (wave 7E)
+
+- **Python API tests:**
+  - the role matrix in the policy, and through the API (authors can't publish, reviewers
+    can't submit, only admins see the audit log and users);
+  - a full lifecycle walk with its audit entries;
+  - analytics flags from 12 runs;
+  - user lookup with literal wildcards, and the guard on an admin's own role;
+  - a re-seed keeping the console's status.
+- **The authorization test:** it lists every `/v1/admin` route, including the new ones.
+- **Contract (Schemathesis):** it found two things, both fixed.
+  - Lifecycle actions moved to `/actions/{action}`, so they no longer shadow `/report`.
+  - `PATCH /v1/me` returned a 500 for a display name with a NUL; display names now reject control characters, and a test covers it.
+- **e2e:** 67 passed, 1 skipped.
+  - New: retire and restore through the UI, then seen in the audit log.
+  - A plain account sees no console sections.
+  - Every console page is in the WCAG sweep.
+
 ## Gate checklist (docs/PLAN.md, Phase 7), so far
 
 - [ ] All 20 scenarios pass `devgrill-content test` nightly (7F).
@@ -161,7 +200,7 @@ Phase 7 runs in waves, each tested and committed on its own:
   - Done in 7A: the rollover and the share card.
   - Owed: the pre-warm pool, and the card in dark mode (OG images are light only).
 - [x] Streak logic property-tested (time zones, DST, freezes, leave days); notification caps enforced (7D).
-- [ ] Admin RBAC and audit log (7E).
+- [x] Admin RBAC: authors can't publish; reviewers can't edit content; every admin action is audit-logged (7E).
 - [ ] Design QC and the ethical-gamification checklist.
 
 ## Fixed along the way

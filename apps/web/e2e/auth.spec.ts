@@ -99,7 +99,7 @@ test("the content console needs the admin role", async ({ browser }) => {
   const visitor = await browser.newPage();
   await signIn(visitor, uniqueLogin("frank"), "/drills");
   await visitor.goto("/admin");
-  await expect(visitor.getByText("The content console needs the admin role")).toBeVisible();
+  await expect(visitor.getByText("The content console needs another role")).toBeVisible();
   await visitor.close();
 
   const admin = await browser.newPage();

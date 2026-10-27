@@ -7,6 +7,10 @@
 - A version's probes, hints and rubric are stored with it (verify results point at the
   probes; versions seeded before phase 5 get theirs filled in).
 - Known approaches (`approaches/*.yaml`, never the cheats) are upserted by key for the debrief.
+- A scenario's `status` comes from its file only when the scenario is new: after that the
+  content console owns the lifecycle (submit, publish, retire; devgrill.domain.admin).
+- A validation report (`.reports/<slug>.json`, from `devgrill-content test`) is attached to
+  the scenario's current version.
 - Quick Fire cards (`quickfire/<track>.yaml`) are upserted by slug. A card keeps the rating
   play has given it; cards no longer in content are removed.
 """
@@ -228,7 +232,8 @@ async def seed(session: AsyncSession, root: Path, *, now: datetime | None = None
             await session.execute(
                 stmt.on_conflict_do_update(
                     index_elements=["slug"],
-                    set_={k: stmt.excluded[k] for k in values if k != "slug"},
+                    # Status is the console's after the first seed (see the module docstring).
+                    set_={k: stmt.excluded[k] for k in values if k not in ("slug", "status")},
                 ).returning(Scenario.id, (Scenario.current_version_id.is_(None)).label("fresh"))
             )
         ).one()
@@ -277,10 +282,32 @@ async def seed(session: AsyncSession, root: Path, *, now: datetime | None = None
         scenario.current_version_id = version.id
         report.versions_new += 1
 
+    await _attach_reports(session, root)
     await _quickfire(session, cards, track_ids)
     report.cards = len(cards)
     await session.flush()
     return report
+
+
+async def _attach_reports(session: AsyncSession, root: Path) -> None:
+    """Attach `.reports/<slug>.json` to each scenario's current version (samples dropped)."""
+    folder = root / ".reports"
+    if not folder.is_dir():
+        return
+    for path in sorted(folder.glob("*.json")):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except OSError, ValueError:
+            continue  # a half-written report: the next test run replaces it
+        data.pop("samples", None)
+        data["attached_at"] = datetime.now(UTC).isoformat()
+        version_id = await session.scalar(
+            select(Scenario.current_version_id).where(Scenario.slug == path.stem)
+        )
+        if version_id is not None:
+            version = await session.get(ScenarioVersion, version_id)
+            if version is not None:
+                version.validation_report = data
 
 
 async def _quickfire(
