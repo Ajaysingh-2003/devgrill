@@ -19,3 +19,9 @@ export function timeLeft(iso: string, now: Date = new Date()): string {
 export function monthYear(iso: string): string {
   return new Intl.DateTimeFormat("en-IN", { month: "long", year: "numeric" }).format(new Date(iso));
 }
+
+/** "sev2" -> 2, for the SEV glyph components. */
+export function sevNumber(difficulty: string): 1 | 2 | 3 | 4 {
+  const n = Number(difficulty.replace("sev", ""));
+  return (n >= 1 && n <= 4 ? n : 4) as 1 | 2 | 3 | 4;
+}

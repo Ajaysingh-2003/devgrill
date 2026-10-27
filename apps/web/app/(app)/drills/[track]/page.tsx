@@ -1,56 +1,20 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { Suspense, cache } from "react";
-import { CircleCheck, CircleDashed, CircleDot } from "lucide-react";
-import { getTrack, type ScenarioCard } from "@devgrill/api-client";
+import { getTrack } from "@devgrill/api-client";
 import { MasteryRing } from "@devgrill/ui/components/devgrill/mastery-ring";
-import { SevBadge } from "@devgrill/ui/components/devgrill/sev-badge";
 import { ServiceIcon } from "@devgrill/ui/icons";
 import { PageSkeleton } from "@/components/page-skeleton";
 import { PageTransition } from "@/components/page-transition";
-import { api, sevNumber, unwrap } from "@/lib/api";
+import { Primer } from "@/components/primer";
+import { ScenarioRow } from "@/components/scenario-row";
+import { api, unwrap } from "@/lib/api";
 
 const loadTrack = cache(async (slug: string) => unwrap(getTrack({ client: await api(), path: { slug } })));
 
 export async function generateMetadata({ params }: PageProps<"/drills/[track]">): Promise<Metadata> {
   const { track: slug } = await params;
   return { title: (await loadTrack(slug)).title };
-}
-
-const STATUS = {
-  solved: { label: "Solved", icon: CircleCheck, tone: "text-success-text" },
-  attempted: { label: "Not solved yet", icon: CircleDot, tone: "text-warning-text" },
-  new: { label: "Not started", icon: CircleDashed, tone: "text-fg-subtle" },
-} as const;
-
-function ScenarioRow({ trackSlug, s }: { trackSlug: string; s: ScenarioCard }) {
-  const st = s.progress ? STATUS[s.progress] : null;
-  return (
-    <li>
-      <Link
-        href={`/drills/${trackSlug}/${s.slug}`}
-        transitionTypes={["nav-forward"]}
-        className="grid grid-cols-[auto_1fr] items-center gap-x-4 gap-y-1 rounded-sm px-3 py-3 hover:bg-raised md:grid-cols-[6rem_1fr_7rem_8rem]"
-      >
-        <SevBadge sev={sevNumber(s.difficulty)} />
-        <span className="flex min-w-0 flex-col">
-          <span className="text-body font-semibold text-fg">{s.title}</span>
-          <span className="truncate text-label text-fg-muted">{s.summary}</span>
-        </span>
-        <span className="col-start-2 font-mono text-mono-sm text-fg-muted md:col-start-auto">
-          about {s.est_minutes} min
-        </span>
-        {st ? (
-          <span
-            className={`col-start-2 inline-flex items-center gap-1.5 text-label md:col-start-auto ${st.tone}`}
-          >
-            <st.icon className="size-4" strokeWidth={1.75} aria-hidden="true" />
-            {st.label}
-          </span>
-        ) : null}
-      </Link>
-    </li>
-  );
 }
 
 async function TrackContent({ params }: { params: PageProps<"/drills/[track]">["params"] }) {
@@ -101,10 +65,11 @@ async function TrackContent({ params }: { params: PageProps<"/drills/[track]">["
               {topic.title}
             </h2>
           </div>
+          {topic.primer_md ? <Primer markdown={topic.primer_md} topic={topic.title} /> : null}
           {topic.scenarios.length ? (
             <ul className="flex flex-col">
               {topic.scenarios.map((s) => (
-                <ScenarioRow key={s.slug} trackSlug={t.slug} s={s} />
+                <ScenarioRow key={s.slug} s={s} />
               ))}
             </ul>
           ) : (

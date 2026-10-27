@@ -18,13 +18,7 @@ tracks:
     icon: cache
     summary: Caches hide problems until the moment they stop working.
     topics:
-      - slug: stampedes
-        title: Stampedes
-        primer: |
-          A cache stampede happens when many requests miss the cache at the same moment and all
-          go to the database together: after a restart, a deploy that changes keys, or one hot
-          key expiring under load. Fixes spread the misses out (jittered TTLs, early refresh) or
-          collapse them into one (request coalescing, a lock per key).
+      - { slug: stampedes, title: Stampedes }
       - { slug: invalidation, title: Invalidation }
       - { slug: hot-keys, title: Hot keys }
       - { slug: eviction, title: Eviction }

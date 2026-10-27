@@ -6,6 +6,7 @@ import { DEMO_DEBRIEF } from "@/components/debrief/demo";
 import { LiveDebrief } from "@/components/debrief/live-debrief";
 import { DEMO_ID } from "@/components/workspace/ids";
 import { api, unwrap } from "@/lib/api";
+import { getViewer } from "@/lib/viewer";
 
 export const metadata: Metadata = { title: "Results" };
 
@@ -22,7 +23,9 @@ async function Debrief({ params }: { params: PageProps<"/incident/[attemptId]/de
   const result = await getDebrief({ client: await api(), path: { attempt_id: attemptId } });
   // Still running: the debrief opens when the incident ends.
   if (result.response?.status === 409) redirect(`/incident/${attemptId}`);
-  return <LiveDebrief d={await unwrap(Promise.resolve(result))} />;
+  const viewer = await getViewer();
+  // Pro mode: the result, without the celebration.
+  return <LiveDebrief d={await unwrap(Promise.resolve(result))} celebrate={!viewer?.prefs.pro_mode} />;
 }
 
 /** T6 Debrief: Field Manual layer plus the one celebration moment. */

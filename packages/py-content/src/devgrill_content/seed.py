@@ -25,7 +25,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from devgrill.domain.enums import ApproachOutcome, ScenarioStatus
-from devgrill.domain.spec import ApproachSpec, ScenarioSpec, TracksFile
+from devgrill.domain.spec import ApproachSpec, ScenarioSpec, TopicSpec, TracksFile
 from devgrill.infra.models import (
     Approach,
     BaseApp,
@@ -39,7 +39,7 @@ from devgrill.infra.models import (
 )
 
 
-class ContentError(Exception):
+class ContentError(ValueError):
     """A content file is missing, malformed or refers to something that doesn't exist."""
 
 
@@ -54,10 +54,37 @@ class SeedReport:
     problems: list[str] = field(default_factory=list)
 
 
+def attach_primers(tracks: TracksFile, root: Path) -> TracksFile:
+    """Topic primers from content/primers/<track>/<topic>.md (a file there wins over YAML).
+
+    A primer file for a topic that doesn't exist is an error, so a typo can't hide one.
+    """
+    folder = root / "primers"
+    known = {(t.slug, topic.slug) for t in tracks.tracks for topic in t.topics}
+    if folder.is_dir():
+        for path in sorted(folder.glob("*/*.md")):
+            if (path.parent.name, path.stem) not in known:
+                raise ContentError(
+                    f"primers/{path.parent.name}/{path.name}: no such topic in tracks.yaml"
+                )
+    updated = []
+    for track in tracks.tracks:
+        topics = []
+        for topic in track.topics:
+            path = folder / track.slug / f"{topic.slug}.md"
+            if path.is_file():
+                text = path.read_text(encoding="utf-8").strip()
+                topic = TopicSpec.model_validate({**topic.model_dump(), "primer": text})
+            topics.append(topic)
+        updated.append(track.model_copy(update={"topics": topics}))
+    return tracks.model_copy(update={"tracks": updated})
+
+
 def load_tracks(root: Path) -> TracksFile:
     path = root / "tracks.yaml"
     try:
-        return TracksFile.model_validate(yaml.safe_load(path.read_text(encoding="utf-8")))
+        tracks = TracksFile.model_validate(yaml.safe_load(path.read_text(encoding="utf-8")))
+        return attach_primers(tracks, root)
     except (OSError, yaml.YAMLError, ValidationError) as exc:
         raise ContentError(f"{path}: {exc}") from exc
 

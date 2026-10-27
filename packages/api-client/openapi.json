@@ -1,6 +1,15 @@
 {
   "components": {
     "schemas": {
+      "Access": {
+        "description": "Which plans may play a scenario live (ADR 013).",
+        "enum": [
+          "free",
+          "pro"
+        ],
+        "title": "Access",
+        "type": "string"
+      },
       "AdminScenario": {
         "properties": {
           "attempts": {
@@ -650,6 +659,10 @@
       },
       "Briefing": {
         "properties": {
+          "access": {
+            "$ref": "#/components/schemas/Access",
+            "default": "pro"
+          },
           "briefing": {
             "$ref": "#/components/schemas/BriefingSpec"
           },
@@ -666,6 +679,11 @@
             },
             "title": "Modes",
             "type": "array"
+          },
+          "playable": {
+            "default": true,
+            "title": "Playable",
+            "type": "boolean"
           },
           "progress": {
             "anyOf": [
@@ -3044,12 +3062,21 @@
       },
       "ScenarioCard": {
         "properties": {
+          "access": {
+            "$ref": "#/components/schemas/Access",
+            "default": "pro"
+          },
           "difficulty": {
             "$ref": "#/components/schemas/Difficulty"
           },
           "est_minutes": {
             "title": "Est Minutes",
             "type": "integer"
+          },
+          "playable": {
+            "default": true,
+            "title": "Playable",
+            "type": "boolean"
           },
           "progress": {
             "anyOf": [
@@ -3359,6 +3386,56 @@
           "started_at"
         ],
         "title": "ServiceStatus",
+        "type": "object"
+      },
+      "ShareCardOut": {
+        "description": "A resolved attempt, spoiler-free, for its share card. Nothing about the player.",
+        "properties": {
+          "daily_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Daily On"
+          },
+          "difficulty": {
+            "$ref": "#/components/schemas/Difficulty"
+          },
+          "hints_used": {
+            "title": "Hints Used",
+            "type": "integer"
+          },
+          "resolved_in_s": {
+            "title": "Resolved In S",
+            "type": "integer"
+          },
+          "scenario_slug": {
+            "title": "Scenario Slug",
+            "type": "string"
+          },
+          "scenario_title": {
+            "title": "Scenario Title",
+            "type": "string"
+          },
+          "track_slug": {
+            "title": "Track Slug",
+            "type": "string"
+          }
+        },
+        "required": [
+          "scenario_title",
+          "scenario_slug",
+          "track_slug",
+          "difficulty",
+          "resolved_in_s",
+          "hints_used"
+        ],
+        "title": "ShareCardOut",
         "type": "object"
       },
       "SloTarget": {
@@ -4161,6 +4238,17 @@
           "has_primer": {
             "title": "Has Primer",
             "type": "boolean"
+          },
+          "primer_md": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Primer Md"
           },
           "scenarios": {
             "items": {
@@ -12657,6 +12745,130 @@
         ]
       }
     },
+    "/v1/share/{attempt_id}": {
+      "get": {
+        "description": "A resolved attempt's result for its share card: public to anyone with the link.\n\nSpoiler-free by construction: severity, time and hints, never the cause or the fix, and\nnothing about who played (the attempt id is the only key, and it is unguessable).",
+        "operationId": "share_card",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "attempt_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Attempt Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShareCardOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad request (e.g. an invalid cursor)."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing or invalid credentials."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Signed in, but not allowed."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not found."
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict (e.g. a request with this Idempotency-Key is still running)."
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "The request is invalid; see `errors`."
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Rate limited; see Retry-After."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Server error."
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Temporarily unavailable."
+          }
+        },
+        "summary": "Share Card",
+        "tags": [
+          "debrief"
+        ]
+      }
+    },
     "/v1/tracks": {
       "get": {
         "description": "Published tracks with scenario counts, plus the caller's progress when signed in.",
@@ -12934,7 +13146,7 @@
     },
     "/v1/users/{handle}": {
       "get": {
-        "description": "A player's public profile (404 when private, so private handles can't be probed).",
+        "description": "A player's public profile (404 when private, so private handles can't be probed).\nIts owner always sees it.",
         "operationId": "public_profile",
         "parameters": [
           {
@@ -12946,6 +13158,22 @@
               "pattern": "^[A-Za-z0-9][A-Za-z0-9-]{0,38}$",
               "title": "Handle",
               "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
             }
           }
         ],

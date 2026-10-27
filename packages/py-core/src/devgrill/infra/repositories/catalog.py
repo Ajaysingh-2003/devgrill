@@ -36,6 +36,8 @@ class ScenarioRow:
     scenario: Scenario
     track_slug: str
     topic: Topic | None
+    #: Its current version can be played live (placeholders show a briefing only).
+    playable: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,15 +115,18 @@ def scenarios_query(
     after_slug: str | None = None,
     limit: int = 20,
     order_by_difficulty: bool = False,
-) -> Select[Scenario, str, Topic]:
+) -> Select[Scenario, str, Topic, bool | None]:
     """Published scenarios, keyset-paginated on slug (or all of a track by difficulty).
 
     Exposed separately so the query-plan test can EXPLAIN exactly what the API runs.
     """
+    # Whether the current version is playable (placeholders aren't): joined, not a subquery
+    # per row, so a whole track still lists in one pass.
     stmt = (
-        select(Scenario, Track.slug, Topic)
+        select(Scenario, Track.slug, Topic, ScenarioVersion.spec["playable"].as_boolean())
         .join(Track, Track.id == Scenario.track_id)
         .outerjoin(Topic, Topic.id == Scenario.topic_id)
+        .outerjoin(ScenarioVersion, ScenarioVersion.id == Scenario.current_version_id)
         .where(Scenario.status == ScenarioStatus.PUBLISHED, Track.status == TrackStatus.PUBLISHED)
     )
     if track_slug:
@@ -144,7 +149,10 @@ def scenarios_query(
 
 async def scenarios(session: AsyncSession, **filters: Any) -> list[ScenarioRow]:
     rows = (await session.execute(scenarios_query(**filters))).all()
-    return [ScenarioRow(scenario=s, track_slug=t, topic=topic) for s, t, topic in rows]
+    return [
+        ScenarioRow(scenario=s, track_slug=t, topic=topic, playable=playable is not False)
+        for s, t, topic, playable in rows
+    ]
 
 
 async def scenario_by_slug(

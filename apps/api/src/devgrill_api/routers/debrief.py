@@ -16,20 +16,22 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, Response
 from sqlalchemy import func, select
 
 from devgrill.domain import entitlements as policy
 from devgrill.domain import postmortem as pm
 from devgrill.domain.attempt import TERMINAL_STATES
 from devgrill.domain.debrief import REPLAY_TYPES, TrailEvent, replay
-from devgrill.domain.enums import AttemptState, ScenarioStatus
+from devgrill.domain.enums import AttemptState, ChallengeKind, ScenarioStatus
 from devgrill.domain.spec import ScenarioSpec
+from devgrill.domain.streaks import activity_day
 from devgrill.infra import assist as ai
 from devgrill.infra.models import (
     Approach,
     Attempt,
     AttemptEvent,
+    Challenge,
     Postmortem,
     PostmortemGrade,
     Scenario,
@@ -66,6 +68,7 @@ from devgrill_api.schemas import (
     RatingChangeOut,
     ReplayEntryOut,
     ScoreOut,
+    ShareCardOut,
     SloTarget,
     VerifyRunOut,
 )
@@ -242,6 +245,55 @@ async def _shares(session: Any, scenario: Scenario) -> dict[uuid.UUID, int]:
     ).all()
     total = sum(n for _, n in rows)
     return {aid: round(100 * n / total) for aid, n in rows if aid is not None and total}
+
+
+@router.get("/share/{attempt_id}", response_model=ShareCardOut)
+async def share_card(
+    attempt_id: uuid.UUID, session: SessionDep, response: Response
+) -> ShareCardOut:
+    """A resolved attempt's result for its share card: public to anyone with the link.
+
+    Spoiler-free by construction: severity, time and hints, never the cause or the fix, and
+    nothing about who played (the attempt id is the only key, and it is unguessable).
+    """
+    row = (
+        await session.execute(
+            select(Attempt, Scenario, Track.slug)
+            .join(ScenarioVersion, ScenarioVersion.id == Attempt.scenario_version_id)
+            .join(Scenario, Scenario.id == ScenarioVersion.scenario_id)
+            .join(Track, Track.id == Scenario.track_id)
+            .where(Attempt.id == attempt_id, Attempt.state == AttemptState.RESOLVED)
+        )
+    ).one_or_none()
+    if row is None:
+        raise AppError(404, "share_not_found", "There is no result to share at this link.")
+    attempt, scenario, track_slug = row
+    began = attempt.active_at or attempt.started_at
+    ended = attempt.resolved_at or attempt.ended_at or began
+    daily = (
+        await session.execute(
+            select(Challenge.starts_at)
+            .join(ScenarioVersion, ScenarioVersion.id == Challenge.scenario_version_id)
+            .where(
+                Challenge.kind == ChallengeKind.DAILY,
+                ScenarioVersion.scenario_id == scenario.id,
+                Challenge.starts_at <= attempt.started_at,
+                Challenge.ends_at > attempt.started_at,
+            )
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    # A result never changes once resolved.
+    response.headers["Cache-Control"] = "public, max-age=86400"
+    return ShareCardOut(
+        scenario_title=scenario.title,
+        scenario_slug=scenario.slug,
+        track_slug=track_slug,
+        difficulty=scenario.difficulty,
+        resolved_in_s=max(0, int((ended - began).total_seconds())),
+        hints_used=attempt.hints_used,
+        daily_on=activity_day(daily) if daily else None,
+    )
 
 
 @router.get("/attempts/{attempt_id}/debrief", response_model=DebriefOut)

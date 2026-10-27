@@ -14,7 +14,7 @@ from devgrill.infra.models import Profile
 from devgrill.infra.repositories import catalog, profiles, progress
 from devgrill_api import pagination
 from devgrill_api.auth import guest
-from devgrill_api.deps import SessionDep, SettingsDep, User, guest_ttl
+from devgrill_api.deps import OptionalUser, SessionDep, SettingsDep, User, guest_ttl
 from devgrill_api.errors import AppError
 from devgrill_api.ratelimit import rate_limit
 from devgrill_api.schemas import (
@@ -238,10 +238,14 @@ async def create_guest_token(settings: SettingsDep) -> GuestTokenOut:
 
 
 @router.get("/users/{handle}", response_model=PublicProfile, tags=["profiles"])
-async def public_profile(handle: pagination.HandlePath, session: SessionDep) -> PublicProfile:
-    """A player's public profile (404 when private, so private handles can't be probed)."""
+async def public_profile(
+    handle: pagination.HandlePath, session: SessionDep, user: OptionalUser
+) -> PublicProfile:
+    """A player's public profile (404 when private, so private handles can't be probed).
+    Its owner always sees it."""
     profile = await profiles.get_by_handle(session, handle)
-    if profile is None or not profile.is_public:
+    mine = profile is not None and user is not None and user.id == profile.user_id
+    if profile is None or not (profile.is_public or mine):
         raise AppError(404, "user_not_found", f"No public profile for {handle!r}.")
     return PublicProfile(
         handle=profile.handle,

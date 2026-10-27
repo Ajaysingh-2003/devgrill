@@ -19,6 +19,7 @@ from devgrill.infra.workflows import connect_temporal
 from devgrill.observability import configure_logging
 from devgrill.sandbox.compose import ComposeDriver
 from devgrill_worker.ai_activities import AiActivities
+from devgrill_worker.challenges import ChallengeActivities, ensure_schedule
 from devgrill_worker.sandbox_activities import SandboxActivities
 from devgrill_worker.workflows import ACTIVITIES, WORKFLOWS, PingWorkflow
 
@@ -58,8 +59,14 @@ async def run_worker() -> None:
         client,
         task_queue=settings.temporal_task_queue,
         workflows=WORKFLOWS,
-        activities=[*ACTIVITIES, *sandbox.all(), *ai.all()],
+        activities=[
+            *ACTIVITIES,
+            *sandbox.all(),
+            *ai.all(),
+            ChallengeActivities(session_factory).ensure,
+        ],
     )
+    await ensure_schedule(client, settings.temporal_task_queue)
     log.info("worker_started", task_queue=settings.temporal_task_queue)
     try:
         await worker.run()

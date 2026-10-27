@@ -5,6 +5,13 @@ export type ClientOptions = {
 };
 
 /**
+ * Access
+ *
+ * Which plans may play a scenario live (ADR 013).
+ */
+export type Access = 'free' | 'pro';
+
+/**
  * AdminScenario
  */
 export type AdminScenario = {
@@ -377,6 +384,7 @@ export type AttemptSummary = {
  * Briefing
  */
 export type Briefing = {
+    access?: Access;
     briefing: BriefingSpec;
     difficulty: Difficulty;
     /**
@@ -387,6 +395,10 @@ export type Briefing = {
      * Modes
      */
     modes: Array<AttemptMode>;
+    /**
+     * Playable
+     */
+    playable?: boolean;
     /**
      * Progress
      *
@@ -1720,11 +1732,16 @@ export type RollbackIn = {
  * ScenarioCard
  */
 export type ScenarioCard = {
+    access?: Access;
     difficulty: Difficulty;
     /**
      * Est Minutes
      */
     est_minutes: number;
+    /**
+     * Playable
+     */
+    playable?: boolean;
     /**
      * Progress
      *
@@ -1893,6 +1910,39 @@ export type ServiceStatus = {
 };
 
 /**
+ * ShareCardOut
+ *
+ * A resolved attempt, spoiler-free, for its share card. Nothing about the player.
+ */
+export type ShareCardOut = {
+    /**
+     * Daily On
+     */
+    daily_on?: string | null;
+    difficulty: Difficulty;
+    /**
+     * Hints Used
+     */
+    hints_used: number;
+    /**
+     * Resolved In S
+     */
+    resolved_in_s: number;
+    /**
+     * Scenario Slug
+     */
+    scenario_slug: string;
+    /**
+     * Scenario Title
+     */
+    scenario_title: string;
+    /**
+     * Track Slug
+     */
+    track_slug: string;
+};
+
+/**
  * SloTarget
  */
 export type SloTarget = {
@@ -2015,6 +2065,10 @@ export type TopicOut = {
      * Has Primer
      */
     has_primer: boolean;
+    /**
+     * Primer Md
+     */
+    primer_md?: string | null;
     /**
      * Scenarios
      */
@@ -5981,6 +6035,68 @@ export type CanPlayResponses = {
 
 export type CanPlayResponse = CanPlayResponses[keyof CanPlayResponses];
 
+export type ShareCardData = {
+    body?: never;
+    path: {
+        /**
+         * Attempt Id
+         */
+        attempt_id: string;
+    };
+    query?: never;
+    url: '/v1/share/{attempt_id}';
+};
+
+export type ShareCardErrors = {
+    /**
+     * Bad request (e.g. an invalid cursor).
+     */
+    400: Problem;
+    /**
+     * Missing or invalid credentials.
+     */
+    401: Problem;
+    /**
+     * Signed in, but not allowed.
+     */
+    403: Problem;
+    /**
+     * Not found.
+     */
+    404: Problem;
+    /**
+     * Conflict (e.g. a request with this Idempotency-Key is still running).
+     */
+    409: Problem;
+    /**
+     * The request is invalid; see `errors`.
+     */
+    422: Problem;
+    /**
+     * Rate limited; see Retry-After.
+     */
+    429: Problem;
+    /**
+     * Server error.
+     */
+    500: Problem;
+    /**
+     * Temporarily unavailable.
+     */
+    503: Problem;
+};
+
+export type ShareCardError = ShareCardErrors[keyof ShareCardErrors];
+
+export type ShareCardResponses = {
+    /**
+     * Successful Response
+     */
+    200: ShareCardOut;
+};
+
+export type ShareCardResponse = ShareCardResponses[keyof ShareCardResponses];
+
 export type ListTracksData = {
     body?: never;
     headers?: {
@@ -6116,6 +6232,12 @@ export type GetTrackResponse = GetTrackResponses[keyof GetTrackResponses];
 
 export type PublicProfileData = {
     body?: never;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+    };
     path: {
         /**
          * Handle

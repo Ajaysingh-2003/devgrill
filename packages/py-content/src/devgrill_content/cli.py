@@ -96,11 +96,12 @@ def main(argv: list[str] | None = None) -> int:
 def validate(root: Path, slug: str | None = None) -> int:
     from pydantic import ValidationError
 
-    from devgrill.domain.spec import FaultSpec, ScenarioSpec, TracksFile
+    from devgrill.domain.spec import FaultSpec, ScenarioSpec
     from devgrill.sandbox.baseapp import load_base_app
     from devgrill.sandbox.content import ContentError, load_approaches, load_bundle, load_yaml
     from devgrill_content.patchcheck import check_fault, check_scenario
     from devgrill_content.scenario_test import load_solution
+    from devgrill_content.seed import load_tracks
 
     errors: list[str] = []
 
@@ -111,7 +112,8 @@ def validate(root: Path, slug: str | None = None) -> int:
             errors.append(f"{label}: {exc}")
             return None
 
-    attempt("tracks.yaml", lambda: TracksFile.model_validate(load_yaml(root / "tracks.yaml")))
+    # Tracks with their primers (content/primers/<track>/<topic>.md).
+    attempt("tracks.yaml", lambda: load_tracks(root))
     apps = []
     for folder in sorted((root / "base-apps").glob("*/base-app.yaml")):
         loaded = attempt(

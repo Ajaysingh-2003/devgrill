@@ -415,6 +415,9 @@ class ScenarioSpec(_Strict):
     briefing: BriefingSpec
     #: Not yet runnable as a sandbox (metadata only, e.g. a placeholder in the library).
     playable: bool = True
+    #: In the Daily and Weekly rotation (playable scenarios only). Authors opt a scenario
+    #: out when it needs context a cold player won't have.
+    daily: bool = True
     #: Which plans may play it live (ADR 013). The Daily Incident is open to every plan.
     access: Access = Access.PRO
 
@@ -595,10 +598,15 @@ class ApproachSpec(_Strict):
 # ----------------------------------------------------------------------------------- tracks
 
 
+#: A primer is a four-minute read: Markdown in content/primers/<track>/<topic>.md.
+PRIMER_MAX_CHARS = 6000
+
+
 class TopicSpec(_Strict):
     slug: Slug
     title: str = Field(max_length=60)
-    primer: str | None = Field(default=None, max_length=4000)
+    #: Filled from content/primers/<track>/<topic>.md when that file exists.
+    primer: str | None = Field(default=None, max_length=PRIMER_MAX_CHARS)
 
 
 class TrackSpec(_Strict):

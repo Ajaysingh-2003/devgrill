@@ -49,7 +49,8 @@ class Profile(Base):
         ARRAY(Text), server_default=text("ARRAY['user']::text[]")
     )
     prefs: Mapped[JsonObject]
-    is_public: Mapped[bool] = mapped_column(server_default=text("true"))
+    #: Opt-in (phase 7): a new profile is visible only to its owner until they share it.
+    is_public: Mapped[bool] = mapped_column(server_default=text("false"))
     created_at: Mapped[CreatedAt]
     updated_at: Mapped[UpdatedAt]
 

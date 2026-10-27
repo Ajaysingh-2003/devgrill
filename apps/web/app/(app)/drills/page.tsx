@@ -1,10 +1,18 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { Suspense } from "react";
-import { dailyChallenge, listTracks, myAttempts, type AttemptSummary } from "@devgrill/api-client";
+import {
+  dailyChallenge,
+  listScenarios,
+  listTracks,
+  myAttempts,
+  type AttemptSummary,
+  type ScenarioCard,
+} from "@devgrill/api-client";
 import { MasteryRing } from "@devgrill/ui/components/devgrill/mastery-ring";
 import { SevBadge } from "@devgrill/ui/components/devgrill/sev-badge";
 import { ServiceIcon } from "@devgrill/ui/icons";
+import { DrillBrowser } from "@/components/drill-browser";
 import { PageHeader } from "@/components/page-header";
 import { PageSkeleton } from "@/components/page-skeleton";
 import { PageTransition } from "@/components/page-transition";
@@ -152,6 +160,34 @@ async function ContinueList() {
   );
 }
 
+/** Every published drill, for the filterable list (the catalog fits in a few pages). */
+async function AllDrills() {
+  const client = await api();
+  const drills: ScenarioCard[] = [];
+  let cursor: string | undefined;
+  for (let page = 0; page < 10; page += 1) {
+    const res = await unwrap(listScenarios({ client, query: { limit: 100, cursor } }));
+    drills.push(...res.items);
+    if (!res.next_cursor) break;
+    cursor = res.next_cursor;
+  }
+  // Playable drills first, warm-ups (SEV4) before outages; placeholders after.
+  drills.sort(
+    (a, b) =>
+      Number(a.playable === false) - Number(b.playable === false) ||
+      b.difficulty.localeCompare(a.difficulty) ||
+      a.title.localeCompare(b.title),
+  );
+  return (
+    <section aria-labelledby="all-title" className="flex flex-col gap-4">
+      <h2 id="all-title" className="text-heading-md font-semibold text-fg">
+        All drills
+      </h2>
+      <DrillBrowser drills={drills} signedIn={drills.some((s) => s.progress)} />
+    </section>
+  );
+}
+
 export default function DrillsPage() {
   return (
     <PageTransition>
@@ -168,6 +204,9 @@ export default function DrillsPage() {
         </Suspense>
         <Suspense fallback={null}>
           <ContinueList />
+        </Suspense>
+        <Suspense fallback={<PageSkeleton label="Loading drills" />}>
+          <AllDrills />
         </Suspense>
       </div>
     </PageTransition>

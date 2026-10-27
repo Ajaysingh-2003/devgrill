@@ -7,6 +7,7 @@ import { PageSkeleton } from "@/components/page-skeleton";
 import { api, unwrap } from "@/lib/api";
 import { requireSession } from "@/lib/auth";
 import { ProModeSwitch } from "./pro-mode-switch";
+import { PublicProfileSwitch } from "./public-profile-switch";
 
 export const metadata: Metadata = { title: "Settings" };
 
@@ -36,10 +37,25 @@ async function Preferences() {
             Pro mode
           </h2>
           <p className="text-body text-fg-muted">
-            Hides streaks and leagues for people who just want the drills.
+            Hides streaks, celebrations and reminders for people who just want the drills. Your ratings stay.
           </p>
         </div>
         <ProModeSwitch initial={me.prefs.pro_mode ?? false} />
+      </section>
+      <section
+        aria-labelledby="public-profile"
+        className="flex flex-col gap-3 rounded-md border border-border bg-surface p-5"
+      >
+        <div className="flex flex-col gap-1">
+          <h2 id="public-profile" className="text-body font-semibold text-fg">
+            Public profile
+          </h2>
+          <p className="text-body text-fg-muted">
+            Shows your name, ratings and drills solved. Your drill history, streak and plan always stay
+            private.
+          </p>
+        </div>
+        <PublicProfileSwitch initial={me.is_public} handle={me.handle} />
       </section>
     </>
   );

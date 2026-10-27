@@ -68,8 +68,5 @@ export async function unwrap<T>(call: Promise<Result<T>>): Promise<T> {
   throw failure;
 }
 
-/** "sev2" -> 2, for the SEV glyph components. */
-export function sevNumber(difficulty: string): 1 | 2 | 3 | 4 {
-  const n = Number(difficulty.replace("sev", ""));
-  return (n >= 1 && n <= 4 ? n : 4) as 1 | 2 | 3 | 4;
-}
+// Client components import it from @/lib/format; this file is server-only.
+export { sevNumber } from "./format";

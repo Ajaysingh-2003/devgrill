@@ -6,7 +6,10 @@ import { existsSync, readFileSync } from "node:fs";
 const ROOTS = ["apps/web/", "packages/ui/"];
 const EXTENSIONS = /\.(tsx?|css|mjs)$/;
 // Documented exceptions: OG images render outside the browser (no CSS variables), stories use tokens only.
-const ALLOWED_FILES = new Set(["apps/web/app/opengraph-image.tsx"]);
+const ALLOWED_FILES = new Set([
+  "apps/web/app/opengraph-image.tsx",
+  "apps/web/app/(marketing)/share/[attemptId]/opengraph-image.tsx",
+]);
 
 const PALETTE =
   "black|white|slate|gray|zinc|neutral|stone|red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose";

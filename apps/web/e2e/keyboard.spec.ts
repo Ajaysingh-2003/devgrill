@@ -29,6 +29,20 @@ test("command palette opens with the keyboard and navigates", async ({ page }) =
   await expect(page).toHaveURL(/\/daily$/);
 });
 
+test("drill filters narrow the list and clear again", async ({ page }) => {
+  await open(page, "/drills");
+  const list = page.getByRole("region", { name: "All drills" });
+  const count = list.getByText(/^\d+ drills$/);
+  const total = Number((await count.textContent())!.split(" ")[0]);
+  await list.getByRole("searchbox", { name: "Search drills" }).fill("ttl");
+  await expect(list.getByText(`1 of ${total} drills`)).toBeVisible();
+  await expect(list.getByRole("link", { name: /TTL zero/ })).toBeVisible();
+  await list.getByRole("group", { name: "Severity" }).getByRole("button", { name: /SEV1/ }).click();
+  await expect(list.getByText("No drills match these filters.")).toBeVisible();
+  await list.getByRole("button", { name: "Clear filters" }).last().click();
+  await expect(list.getByText(`${total} drills`)).toBeVisible();
+});
+
 test("theme choice persists across reloads", async ({ page }) => {
   await open(page, "/drills");
   await page

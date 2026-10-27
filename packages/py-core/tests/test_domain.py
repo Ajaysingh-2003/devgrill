@@ -159,3 +159,22 @@ def test_current_never_exceeds_active_days_plus_freezes(offsets: set[int], freez
     assert s.current <= len(offsets)
     assert s.freezes_used <= freezes
     assert s.longest >= s.current
+
+
+def test_consecutive_dailies_differ() -> None:
+    import itertools
+    import uuid
+    from datetime import UTC, datetime, timedelta
+
+    from devgrill.domain.enums import ChallengeKind
+    from devgrill.infra.repositories.challenges import pick_for, window
+
+    day = datetime(2026, 10, 1, 12, tzinfo=UTC)
+    for size in (2, 3, 7):
+        pool = [uuid.uuid4() for _ in range(size)]
+        picks = [
+            pick_for(ChallengeKind.DAILY, window(ChallengeKind.DAILY, day + timedelta(i)), pool)
+            for i in range(200)
+        ]
+        assert all(a != b for a, b in itertools.pairwise(picks))
+        assert set(picks) == set(pool)  # the whole rotation gets played

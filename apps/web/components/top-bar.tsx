@@ -159,7 +159,7 @@ export function TopBar({ viewer }: { viewer: Viewer | null | undefined }) {
             <span>Search or jump to</span>
             <kbd className="ml-4 font-mono text-mono-sm">{isMac ? "⌘K" : "Ctrl K"}</kbd>
           </button>
-          {viewer ? <Streak days={viewer.streak} /> : null}
+          {viewer && !viewer.prefs.pro_mode ? <Streak days={viewer.streak} /> : null}
           <ThemeSwitch className="hidden sm:inline-flex" />
           <AccountButton viewer={viewer} pathname={pathname} />
           <Sheet>

@@ -19,6 +19,7 @@ from pydantic import (
 from pydantic.json_schema import SkipJsonSchema
 
 from devgrill.domain.enums import (
+    Access,
     ApproachOutcome,
     AttemptMode,
     AttemptState,
@@ -85,6 +86,10 @@ class ScenarioCard(Model):
     track_slug: str
     topic_slug: str | None
     topic_title: str | None
+    #: Which plans can play it live (ADR 013).
+    access: Access = Access.PRO
+    #: False for drills that aren't playable yet (a briefing only).
+    playable: bool = True
     progress: ScenarioProgress | None = Field(
         default=None, description="Only for signed-in callers."
     )
@@ -94,6 +99,8 @@ class TopicOut(Model):
     slug: str
     title: str
     has_primer: bool
+    #: A four-minute read on the topic (Markdown: headings, lists, code blocks; no HTML).
+    primer_md: str | None = None
     scenarios: list[ScenarioCard]
 
 
@@ -785,6 +792,20 @@ class PostmortemReviewOut(Model):
     blame: list[str] = Field(default_factory=list)
     feedback: str | None = None
     graded_at: datetime | None = None
+
+
+class ShareCardOut(Model):
+    """A resolved attempt, spoiler-free, for its share card. Nothing about the player."""
+
+    scenario_title: str
+    scenario_slug: str
+    track_slug: str
+    difficulty: Difficulty
+    #: From the alert to the verified fix.
+    resolved_in_s: int
+    hints_used: int
+    #: Set when it was that day's Daily drill (the IST calendar day).
+    daily_on: date | None = None
 
 
 class DebriefOut(Model):

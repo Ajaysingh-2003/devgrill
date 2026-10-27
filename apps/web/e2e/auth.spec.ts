@@ -110,7 +110,7 @@ test("preferences follow the account to a new browser", async ({ browser, page }
   const login = uniqueLogin("gina");
   await signIn(page, login, "/settings");
   await page.getByRole("main").getByRole("button", { name: "Dark" }).click();
-  await page.getByRole("switch").click();
+  await page.getByRole("switch", { name: "Pro mode" }).click();
   await expect
     .poll(
       async () =>
@@ -130,7 +130,7 @@ test("preferences follow the account to a new browser", async ({ browser, page }
   await other.goto("/drills");
   await expect(other.locator("html")).toHaveClass(/dark/);
   await other.goto("/settings");
-  await expect(other.getByRole("switch")).toBeChecked();
+  await expect(other.getByRole("switch", { name: "Pro mode" })).toBeChecked();
   await fresh.close();
 });
 

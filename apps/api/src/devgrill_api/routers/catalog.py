@@ -7,7 +7,7 @@ from typing import cast
 from fastapi import APIRouter, Response
 from pydantic import ValidationError
 
-from devgrill.domain.enums import AttemptMode, ChallengeKind, Difficulty
+from devgrill.domain.enums import Access, AttemptMode, ChallengeKind, Difficulty
 from devgrill.domain.spec import BriefingSpec, Goal
 from devgrill.infra.models import ScenarioVersion
 from devgrill.infra.repositories import catalog, challenges
@@ -70,6 +70,8 @@ def card(row: ScenarioRow, progress: str | None = None) -> ScenarioCard:
         track_slug=row.track_slug,
         topic_slug=row.topic.slug if row.topic else None,
         topic_title=row.topic.title if row.topic else None,
+        access=Access(s.access),
+        playable=row.playable,
         progress=cast(ScenarioProgress | None, progress),
     )
 
@@ -149,6 +151,7 @@ async def get_track(
             slug=t.slug,
             title=t.title,
             has_primer=bool(t.primer_md),
+            primer_md=t.primer_md,
             scenarios=by_topic.get(t.slug, []),
         )
         for t in row.topics

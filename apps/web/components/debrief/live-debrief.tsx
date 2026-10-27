@@ -7,6 +7,7 @@ import { cn } from "@devgrill/ui/lib/utils";
 import { ApproachExplorer } from "@/components/approach-explorer";
 import { IncidentPageHeader } from "@/components/incident-page-header";
 import { Settling } from "./settling";
+import { ShareResult } from "./share-result";
 import { clock, minutes, toProbeRow } from "./format";
 
 const ENDINGS: Record<string, string> = {
@@ -58,12 +59,12 @@ const POSTMORTEM_LINK = {
 } as const;
 
 /** T6 Debrief, live: what verify threw at the fix, the score, the investigation, what's next. */
-export function LiveDebrief({ d }: { d: DebriefOut }) {
+export function LiveDebrief({ d, celebrate: allowed = true }: { d: DebriefOut; celebrate?: boolean }) {
   const resolved = d.attempt.state === "resolved";
   const probes = d.verify?.probes ?? [];
   const passed = probes.filter((p) => p.passed).length;
   const score = d.score;
-  const celebrate = resolved && d.rating && d.mastery && d.rating.delta > 0;
+  const celebrate = allowed && resolved && d.rating && d.mastery && d.rating.delta > 0;
   const briefing = `/drills/${d.track_slug}/${d.attempt.scenario_slug}`;
 
   return (
@@ -101,6 +102,7 @@ export function LiveDebrief({ d }: { d: DebriefOut }) {
             </p>
           </header>
         )}
+        {resolved ? <ShareResult attemptId={d.attempt.id} title={d.scenario_title} /> : null}
         {!d.settled ? <Settling /> : null}
 
         <dl className="grid gap-px overflow-hidden rounded-md border border-border bg-border sm:grid-cols-4">

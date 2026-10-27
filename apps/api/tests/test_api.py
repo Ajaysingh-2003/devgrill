@@ -12,8 +12,8 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from devgrill.domain.enums import ApproachOutcome, AttemptMode, AttemptState
-from devgrill.infra.models import Approach, Attempt, Scenario
+from devgrill.domain.enums import ApproachOutcome, AttemptMode, AttemptState, ChallengeKind
+from devgrill.infra.models import Approach, Attempt, Scenario, ScenarioVersion
 from devgrill_api.auth import guest, internal
 from devgrill_content.seed import seed
 
@@ -235,7 +235,12 @@ async def test_progress_streak_and_history(api: TestClient, seeded: AsyncSession
 
 def test_public_profiles_respect_privacy(api: TestClient, seeded: AsyncSession, auth) -> None:  # type: ignore[no-untyped-def]
     headers = auth(uuid.uuid4(), login="shy")
-    api.get("/v1/me", headers=headers)
+    assert api.get("/v1/me", headers=headers).json()["is_public"] is False
+    # Private by default (opt-in): hidden from everyone else, but the owner can see it.
+    assert api.get("/v1/users/shy").json()["code"] == "user_not_found"
+    assert api.get("/v1/users/shy", headers=auth(uuid.uuid4(), login="nosy")).status_code == 404
+    assert api.get("/v1/users/shy", headers=headers).status_code == 200
+    api.patch("/v1/me", json={"is_public": True}, headers=headers)
     assert api.get("/v1/users/shy").status_code == 200
     api.patch("/v1/me", json={"is_public": False}, headers=headers)
     assert api.get("/v1/users/shy").json()["code"] == "user_not_found"
@@ -401,3 +406,66 @@ def test_cors_only_allows_the_web_origin(api: TestClient) -> None:
     assert "access-control-allow-credentials" not in allowed.headers
     denied = api.options("/v1/tracks", headers={"Origin": "https://evil.example", **preflight})
     assert "access-control-allow-origin" not in denied.headers
+
+
+async def test_daily_rotation_only_has_playable_scenarios(seeded: AsyncSession) -> None:
+    from sqlalchemy import select
+
+    from devgrill.infra.models import Scenario
+    from devgrill.infra.repositories import challenges
+
+    versions = await challenges.rotation(seeded)
+    slugs = set(
+        (
+            await seeded.scalars(
+                select(Scenario.slug).where(Scenario.current_version_id.in_(versions))
+            )
+        ).all()
+    )
+    # Placeholders (playable: false) never become the Daily.
+    assert slugs == {"ttl-zero", "pool-party", "big-sale-meltdown"}
+
+
+async def test_share_card_is_public_and_spoiler_free(api: TestClient, seeded: AsyncSession) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    from devgrill.domain.streaks import activity_day
+    from devgrill.infra.repositories import challenges
+
+    now = datetime.now(UTC)
+    current = await challenges.current(seeded, ChallengeKind.DAILY, now=now)
+    assert current is not None
+    daily, _ = current
+    slug = (
+        await seeded.execute(
+            select(Scenario.slug)
+            .join(ScenarioVersion, ScenarioVersion.scenario_id == Scenario.id)
+            .where(ScenarioVersion.id == daily.scenario_version_id)
+        )
+    ).scalar_one()
+    attempt = await _attempt(seeded, slug, guest_hash="g")
+    attempt.active_at = now - timedelta(minutes=11, seconds=42)
+    attempt.resolved_at = now
+    attempt.hints_used = 1
+    await seeded.commit()
+
+    card = api.get(f"/v1/share/{attempt.id}")
+    assert card.status_code == 200
+    body = card.json()
+    assert body["resolved_in_s"] == 702
+    assert body["hints_used"] == 1
+    assert body["daily_on"] == activity_day(now).isoformat()
+    # Nothing about the player, the cause or the fix.
+    assert set(body) == {
+        "scenario_title",
+        "scenario_slug",
+        "track_slug",
+        "difficulty",
+        "resolved_in_s",
+        "hints_used",
+        "daily_on",
+    }
+    # Unresolved attempts and unknown ids share nothing.
+    open_attempt = await _attempt(seeded, slug, guest_hash="h", state=AttemptState.ACTIVE)
+    assert api.get(f"/v1/share/{open_attempt.id}").json()["code"] == "share_not_found"
+    assert api.get(f"/v1/share/{uuid.uuid4()}").status_code == 404

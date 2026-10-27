@@ -19,6 +19,7 @@ export function ProModeSwitch({ initial }: { initial: boolean }) {
   return (
     <label className="flex w-fit items-center gap-3 text-body text-fg">
       <Switch
+        aria-labelledby="pro-mode"
         checked={on}
         disabled={save.isPending}
         onCheckedChange={(value) => {

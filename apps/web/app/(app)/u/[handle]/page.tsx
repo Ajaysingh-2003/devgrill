@@ -77,7 +77,7 @@ function shortDate(iso: string): string {
 }
 
 /** Practice days in the last 12 weeks: one column per week, oldest first. */
-function ActivityGrid({ streak }: { streak: StreakOut }) {
+function ActivityGrid({ streak, pro = false }: { streak: StreakOut; pro?: boolean }) {
   const active = new Set(streak.days);
   const start = new Date(`${streak.window_start}T00:00:00Z`);
   const days = Array.from({ length: 84 }, (_, i) => {
@@ -109,11 +109,15 @@ function ActivityGrid({ streak }: { streak: StreakOut }) {
         ))}
       </div>
       <p className="text-label text-fg-muted">
-        {active.size === 1 ? "1 day" : `${active.size} days`} with a finished drill. Longest streak{" "}
-        {streak.longest === 1 ? "1 day" : `${streak.longest} days`}
-        {streak.freezes
-          ? `, ${streak.freezes} streak ${streak.freezes === 1 ? "freeze" : "freezes"} saved`
-          : ""}
+        {active.size === 1 ? "1 day" : `${active.size} days`} with a finished drill
+        {pro ? null : (
+          <>
+            . Longest streak {streak.longest === 1 ? "1 day" : `${streak.longest} days`}
+            {streak.freezes
+              ? `, ${streak.freezes} streak ${streak.freezes === 1 ? "freeze" : "freezes"} saved`
+              : ""}
+          </>
+        )}
         .
       </p>
     </section>
@@ -336,6 +340,8 @@ async function Profile({ params }: { params: PageProps<"/u/[handle]">["params"] 
   const { handle } = await params;
   const [profile, viewer] = await Promise.all([loadProfile(handle), getViewer()]);
   const isMe = viewer?.handle.toLowerCase() === profile.handle.toLowerCase();
+  // Pro mode: no streaks, just the work.
+  const pro = isMe && Boolean(viewer?.prefs.pro_mode);
 
   let me, streak, attempts, tracks, usage;
   if (isMe) {
@@ -385,7 +391,7 @@ async function Profile({ params }: { params: PageProps<"/u/[handle]">["params"] 
         ) : null}
       </header>
 
-      <Stats profile={profile} streak={streak ?? undefined} usage={usage ?? undefined} />
+      <Stats profile={profile} streak={pro ? undefined : (streak ?? undefined)} usage={usage ?? undefined} />
 
       <div className="grid gap-10 lg:grid-cols-[minmax(0,1fr)_18rem]">
         <div className="flex min-w-0 flex-col gap-10">
@@ -395,7 +401,7 @@ async function Profile({ params }: { params: PageProps<"/u/[handle]">["params"] 
         {isMe ? (
           <aside aria-label="Progress" className="flex flex-col gap-10">
             {tracks ? <Mastery tracks={tracks} /> : null}
-            {streak ? <ActivityGrid streak={streak} /> : null}
+            {streak ? <ActivityGrid streak={streak} pro={pro} /> : null}
           </aside>
         ) : null}
       </div>
