@@ -151,10 +151,14 @@ def test_rating_changes_are_bounded_and_have_the_right_sign(
         assert change.delta >= 0
     elif outcome < expected - 1e-9:
         assert change.delta <= 0
-    # Away from the expectation, the scenario moves the other way. (Right at it, each side's
-    # expectation uses the other's deviation, so both can move by a hair.)
-    if abs(outcome - expected) > 0.02:
-        assert change.delta * scenario_delta <= 1e-9
+    # The scenario plays the other side (it scores 1 - outcome) against its own expectation,
+    # which uses the player's deviation, not its own: with very different deviations the two
+    # expectations differ, and near them both sides can move the same way.
+    scenario_expected = expected_score(scenario, player)
+    if 1 - outcome > scenario_expected + 1e-9:
+        assert scenario_delta >= -1e-9
+    elif 1 - outcome < scenario_expected - 1e-9:
+        assert scenario_delta <= 1e-9
 
 
 @given(ratings, ratings, unit)
