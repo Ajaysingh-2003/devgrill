@@ -1710,6 +1710,19 @@
         "title": "Difficulty",
         "type": "string"
       },
+      "EmailPauseOut": {
+        "properties": {
+          "paused": {
+            "title": "Paused",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "paused"
+        ],
+        "title": "EmailPauseOut",
+        "type": "object"
+      },
       "ExperienceLevel": {
         "enum": [
           "student",
@@ -1910,6 +1923,43 @@
         "title": "HintOut",
         "type": "object"
       },
+      "LeaveIn": {
+        "additionalProperties": false,
+        "description": "The leave from today on, replacing what was booked (past leave can't change).",
+        "properties": {
+          "days": {
+            "items": {
+              "format": "date",
+              "type": "string"
+            },
+            "maxItems": 31,
+            "title": "Days",
+            "type": "array"
+          }
+        },
+        "required": [
+          "days"
+        ],
+        "title": "LeaveIn",
+        "type": "object"
+      },
+      "LeaveOut": {
+        "properties": {
+          "days": {
+            "items": {
+              "format": "date",
+              "type": "string"
+            },
+            "title": "Days",
+            "type": "array"
+          }
+        },
+        "required": [
+          "days"
+        ],
+        "title": "LeaveOut",
+        "type": "object"
+      },
       "MasteryOut": {
         "description": "Share of the track's published scenarios resolved, 0-100, before and after.",
         "properties": {
@@ -1975,6 +2025,11 @@
           "handle": {
             "title": "Handle",
             "type": "string"
+          },
+          "has_email": {
+            "default": false,
+            "title": "Has Email",
+            "type": "boolean"
           },
           "is_public": {
             "title": "Is Public",
@@ -2510,6 +2565,23 @@
       },
       "Prefs": {
         "properties": {
+          "digest_hour": {
+            "default": 9,
+            "enum": [
+              8,
+              9,
+              13,
+              18,
+              21
+            ],
+            "title": "Digest Hour",
+            "type": "integer"
+          },
+          "email_digest": {
+            "default": false,
+            "title": "Email Digest",
+            "type": "boolean"
+          },
           "job_role": {
             "anyOf": [
               {
@@ -2579,6 +2651,35 @@
       "PrefsPatch": {
         "additionalProperties": false,
         "properties": {
+          "digest_hour": {
+            "anyOf": [
+              {
+                "enum": [
+                  8,
+                  9,
+                  13,
+                  18,
+                  21
+                ],
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Digest Hour"
+          },
+          "email_digest": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email Digest"
+          },
           "job_role": {
             "anyOf": [
               {
@@ -3810,6 +3911,14 @@
               }
             ],
             "title": "Last Day"
+          },
+          "leave_days": {
+            "items": {
+              "format": "date",
+              "type": "string"
+            },
+            "title": "Leave Days",
+            "type": "array"
           },
           "longest": {
             "title": "Longest",
@@ -11139,6 +11248,130 @@
         ]
       }
     },
+    "/v1/emails/pause": {
+      "post": {
+        "description": "One tap from an email (or a mail client's one-click unsubscribe): stop the daily email.\nNo sign-in: the signed token names the account and only allows this.",
+        "operationId": "pause_emails",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "token",
+            "required": true,
+            "schema": {
+              "title": "Token",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmailPauseOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad request (e.g. an invalid cursor)."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing or invalid credentials."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Signed in, but not allowed."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not found."
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict (e.g. a request with this Idempotency-Key is still running)."
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "The request is invalid; see `errors`."
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Rate limited; see Retry-After."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Server error."
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Temporarily unavailable."
+          }
+        },
+        "summary": "Pause Emails",
+        "tags": [
+          "me",
+          "emails"
+        ]
+      }
+    },
     "/v1/guest-tokens": {
       "post": {
         "description": "A signed token for playing /try without an account. Keep it in an httpOnly cookie.",
@@ -11813,6 +12046,274 @@
           }
         },
         "summary": "Claim Guest",
+        "tags": [
+          "me"
+        ]
+      }
+    },
+    "/v1/me/leave": {
+      "get": {
+        "description": "On-call leave booked from today on: days that never break the streak.",
+        "operationId": "my_leave",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LeaveOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad request (e.g. an invalid cursor)."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing or invalid credentials."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Signed in, but not allowed."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not found."
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict (e.g. a request with this Idempotency-Key is still running)."
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "The request is invalid; see `errors`."
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Rate limited; see Retry-After."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Server error."
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Temporarily unavailable."
+          }
+        },
+        "summary": "My Leave",
+        "tags": [
+          "me"
+        ]
+      },
+      "put": {
+        "description": "Book on-call leave (today on, up to 90 days ahead, at most 31 days at a time).",
+        "operationId": "set_leave",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LeaveIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LeaveOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad request (e.g. an invalid cursor)."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing or invalid credentials."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Signed in, but not allowed."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not found."
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict (e.g. a request with this Idempotency-Key is still running)."
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "The request is invalid; see `errors`."
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Rate limited; see Retry-After."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Server error."
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Temporarily unavailable."
+          }
+        },
+        "summary": "Set Leave",
         "tags": [
           "me"
         ]
@@ -12635,7 +13136,7 @@
     },
     "/v1/quickfire/cards/{card_id}/answer": {
       "post": {
-        "description": "Whether `choice` is right, with the answer and why.",
+        "description": "Whether `choice` is right, with the answer and why. A signed-in answer counts as the\nday's activity for the streak (any Quick Fire play does, PLAN §8.5).",
         "operationId": "answer_card",
         "parameters": [
           {
@@ -12646,6 +13147,22 @@
               "format": "uuid",
               "title": "Card Id",
               "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
             }
           }
         ],

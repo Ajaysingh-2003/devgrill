@@ -88,6 +88,42 @@ Topic primers live in `content/primers/<track>/<topic>.md`, not inline in tracks
 - **When it's offered:** sign-in offers onboarding once, to accounts with no experience level
   that haven't skipped it (`prefs.onboarded`).
 
+### Streaks: earned freezes and on-call leave, all derived
+
+The streak is still recomputed from `activity_days`, never incremented. The history is
+replayed oldest first:
+
+- **Freezes:** every 7 active days in a row (4 weeks in weekly mode) earns a freeze, holding at
+  most 2. A missed period spends one automatically. Freezes are never sold or granted by
+  hand; `streaks.freezes` is derived.
+- **On-call leave** (`leave_days`, booked from today up to 90 days ahead) is neutral: it neither
+  extends nor breaks the run. In weekly mode, only a whole week of leave counts as leave.
+  Leave can't be booked in the past, so a missed day can't be excused after the fact.
+- **Quick Fire:** any answer from a signed-in player counts as that day's activity.
+
+Property tests cover the rules:
+- freezes only help, and more activity or leave never shortens a streak;
+- today, still in progress, never breaks it;
+- one play per local day across DST changes stays unbroken in four zones.
+
+### The daily email: opt-in, capped by the database, paused in one tap
+
+- **Opt-in:** the email is off by default, like public profiles. It goes to the GitHub email
+  the sign-in hook now stores on the profile (`profiles.email`). It is only used for this email
+  and never shown.
+- **Rules** (`devgrill.domain.digest`): the player picks a send hour (08, 09, 13, 18 or 21,
+  local time). The email is never sent between 22:00 and 08:00, and at most once per local day.
+- **Sending:** a Temporal schedule sweeps hourly. Each send first inserts a row into
+  `notifications_sent`, keyed by user, kind and day. Only an insert that succeeds goes on to
+  send, so retries and concurrent sweeps can't send twice. A send that fails after its claim
+  is skipped for that day.
+- **Mail port:** `devgrill.infra.mail` (SMTP; Mailpit in dev). A provider is another adapter.
+- **Pausing:** every email has a pause link with an HMAC token for that user, which can do
+  nothing else.
+  - The page asks for one tap, because link scanners open links.
+  - `List-Unsubscribe` with `List-Unsubscribe-Post` gives mail clients RFC 8058 one-click
+    unsubscribe, through a token-only web route.
+
 ## Consequences
 
 - An old public link to a profile created after 0005 doesn't exist until its owner opts in.

@@ -79,6 +79,7 @@ function shortDate(iso: string): string {
 /** Practice days in the last 12 weeks: one column per week, oldest first. */
 function ActivityGrid({ streak, pro = false }: { streak: StreakOut; pro?: boolean }) {
   const active = new Set(streak.days);
+  const leave = new Set(streak.leave_days ?? []);
   const start = new Date(`${streak.window_start}T00:00:00Z`);
   const days = Array.from({ length: 84 }, (_, i) => {
     const d = new Date(start);
@@ -86,6 +87,7 @@ function ActivityGrid({ streak, pro = false }: { streak: StreakOut; pro?: boolea
     return d.toISOString().slice(0, 10);
   });
   const weeks = Array.from({ length: 12 }, (_, w) => days.slice(w * 7, w * 7 + 7));
+  const leaveShown = days.filter((d) => leave.has(d) && !active.has(d)).length;
   return (
     <section aria-labelledby="activity-title" className="flex flex-col gap-3">
       <h2 id="activity-title" className="text-heading-md font-semibold text-fg">
@@ -93,7 +95,9 @@ function ActivityGrid({ streak, pro = false }: { streak: StreakOut; pro?: boolea
       </h2>
       <div
         role="img"
-        aria-label={`Practised on ${active.size} of the last 84 days; longest streak ${streak.longest} days`}
+        aria-label={`Practised on ${active.size} of the last 84 days${
+          leaveShown ? `, on leave ${leaveShown}` : ""
+        }; longest streak ${streak.longest} days`}
         className="flex gap-1"
       >
         {weeks.map((week) => (
@@ -101,15 +105,23 @@ function ActivityGrid({ streak, pro = false }: { streak: StreakOut; pro?: boolea
             {week.map((day) => (
               <span
                 key={day}
-                title={day}
-                className={cn("size-3.5 rounded-[3px]", active.has(day) ? "bg-brand" : "bg-raised")}
+                title={leave.has(day) && !active.has(day) ? `${day}, on leave` : day}
+                className={cn(
+                  "size-3.5 rounded-[3px]",
+                  active.has(day)
+                    ? "bg-brand"
+                    : leave.has(day)
+                      ? "border border-dashed border-border-strong"
+                      : "bg-raised",
+                )}
               />
             ))}
           </div>
         ))}
       </div>
       <p className="text-label text-fg-muted">
-        {active.size === 1 ? "1 day" : `${active.size} days`} with a finished drill
+        {active.size === 1 ? "1 day" : `${active.size} days`} of practice
+        {leaveShown ? `, ${leaveShown} on leave (dashed)` : ""}
         {pro ? null : (
           <>
             . Longest streak {streak.longest === 1 ? "1 day" : `${streak.longest} days`}

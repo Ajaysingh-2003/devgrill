@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends
 
 from devgrill.domain.enums import StreakMode
 from devgrill.domain.streaks import DEFAULT_TIMEZONE
+from devgrill.infra.mail import verify_pause_token
 from devgrill.infra.models import Profile
 from devgrill.infra.repositories import catalog, profiles, progress
 from devgrill_api import pagination
@@ -22,7 +23,10 @@ from devgrill_api.schemas import (
     AttemptSummary,
     ClaimGuestIn,
     ClaimGuestOut,
+    EmailPauseOut,
     GuestTokenOut,
+    LeaveIn,
+    LeaveOut,
     Me,
     MePatch,
     Prefs,
@@ -64,6 +68,7 @@ def _me(profile: Profile) -> Me:
         roles=profile.roles,
         prefs=_prefs(profile),
         is_public=profile.is_public,
+        has_email=bool(profile.email),
         created_at=profile.created_at,
     )
 
@@ -159,8 +164,38 @@ async def my_streak(user: User, session: SessionDep) -> StreakOut:
         freezes=streak.freezes,
         last_day=streak.last_day,
         days=await progress.activity_days(session, user.id, since),
+        leave_days=await progress.leave_days(session, user.id, since),
         window_start=since,
     )
+
+
+#: How far ahead leave can be booked, and how much at once.
+LEAVE_AHEAD_DAYS = 90
+
+
+def _today(user: User) -> date:
+    tz = _prefs(user.profile).timezone or DEFAULT_TIMEZONE
+    return datetime.now(UTC).astimezone(ZoneInfo(tz)).date()
+
+
+@router.get("/me/leave", response_model=LeaveOut)
+async def my_leave(user: User, session: SessionDep) -> LeaveOut:
+    """On-call leave booked from today on: days that never break the streak."""
+    return LeaveOut(days=await progress.leave_days(session, user.id, _today(user)))
+
+
+@router.put("/me/leave", response_model=LeaveOut)
+async def set_leave(body: LeaveIn, user: User, session: SessionDep) -> LeaveOut:
+    """Book on-call leave (today on, up to 90 days ahead, at most 31 days at a time)."""
+    today = _today(user)
+    if any(d < today or d > today + timedelta(days=LEAVE_AHEAD_DAYS) for d in body.days):
+        raise AppError(
+            400,
+            "leave_out_of_range",
+            f"Leave can be booked from today up to {LEAVE_AHEAD_DAYS} days ahead.",
+        )
+    await progress.replace_upcoming_leave(session, user.id, today, body.days)
+    return LeaveOut(days=await progress.leave_days(session, user.id, today))
 
 
 @router.get("/me/attempts", response_model=AttemptPage)
@@ -235,6 +270,24 @@ async def create_guest_token(settings: SettingsDep) -> GuestTokenOut:
     except guest.GuestTokenError as exc:
         raise AppError(503, "guest_tokens_disabled", str(exc)) from exc
     return GuestTokenOut(token=issued.token, expires_at=issued.expires_at)
+
+
+@router.post(
+    "/emails/pause",
+    response_model=EmailPauseOut,
+    tags=["emails"],
+    dependencies=[Depends(rate_limit("emails-pause", limit=20, window_s=60))],
+)
+async def pause_emails(token: str, session: SessionDep, settings: SettingsDep) -> EmailPauseOut:
+    """One tap from an email (or a mail client's one-click unsubscribe): stop the daily email.
+    No sign-in: the signed token names the account and only allows this."""
+    user_id = verify_pause_token(token, settings.internal_hmac_secret)
+    profile = await profiles.get(session, user_id) if user_id else None
+    if profile is None:
+        raise AppError(400, "invalid_token", "This link isn't valid. Turn emails off in Settings.")
+    profile.prefs = profiles.merged_prefs(profile.prefs, {"email_digest": False})
+    await session.flush()
+    return EmailPauseOut(paused=True)
 
 
 @router.get("/users/{handle}", response_model=PublicProfile, tags=["profiles"])

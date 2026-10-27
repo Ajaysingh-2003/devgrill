@@ -985,6 +985,16 @@ export type DeployOut = {
 export type Difficulty = 'sev4' | 'sev3' | 'sev2' | 'sev1';
 
 /**
+ * EmailPauseOut
+ */
+export type EmailPauseOut = {
+    /**
+     * Paused
+     */
+    paused: boolean;
+};
+
+/**
  * ExperienceLevel
  */
 export type ExperienceLevel = 'student' | '0-2' | '2-5' | '5+';
@@ -1124,6 +1134,28 @@ export type HintOut = {
 };
 
 /**
+ * LeaveIn
+ *
+ * The leave from today on, replacing what was booked (past leave can't change).
+ */
+export type LeaveIn = {
+    /**
+     * Days
+     */
+    days: Array<string>;
+};
+
+/**
+ * LeaveOut
+ */
+export type LeaveOut = {
+    /**
+     * Days
+     */
+    days: Array<string>;
+};
+
+/**
  * MasteryOut
  *
  * Share of the track's published scenarios resolved, 0-100, before and after.
@@ -1164,6 +1196,10 @@ export type Me = {
      * Handle
      */
     handle: string;
+    /**
+     * Has Email
+     */
+    has_email?: boolean;
     /**
      * Is Public
      */
@@ -1437,6 +1473,14 @@ export type PostmortemReviewOut = {
  */
 export type Prefs = {
     /**
+     * Digest Hour
+     */
+    digest_hour?: 8 | 9 | 13 | 18 | 21;
+    /**
+     * Email Digest
+     */
+    email_digest?: boolean;
+    /**
      * Job Role
      */
     job_role?: 'backend' | 'sre' | 'frontend' | 'data' | 'student' | 'other' | null;
@@ -1468,6 +1512,14 @@ export type Prefs = {
  * PrefsPatch
  */
 export type PrefsPatch = {
+    /**
+     * Digest Hour
+     */
+    digest_hour?: 8 | 9 | 13 | 18 | 21 | null;
+    /**
+     * Email Digest
+     */
+    email_digest?: boolean | null;
     /**
      * Job Role
      */
@@ -2145,6 +2197,10 @@ export type StreakOut = {
      * Last Day
      */
     last_day: string | null;
+    /**
+     * Leave Days
+     */
+    leave_days?: Array<string>;
     /**
      * Longest
      */
@@ -5313,6 +5369,68 @@ export type WeeklyChallengeResponses = {
 
 export type WeeklyChallengeResponse = WeeklyChallengeResponses[keyof WeeklyChallengeResponses];
 
+export type PauseEmailsData = {
+    body?: never;
+    path?: never;
+    query: {
+        /**
+         * Token
+         */
+        token: string;
+    };
+    url: '/v1/emails/pause';
+};
+
+export type PauseEmailsErrors = {
+    /**
+     * Bad request (e.g. an invalid cursor).
+     */
+    400: Problem;
+    /**
+     * Missing or invalid credentials.
+     */
+    401: Problem;
+    /**
+     * Signed in, but not allowed.
+     */
+    403: Problem;
+    /**
+     * Not found.
+     */
+    404: Problem;
+    /**
+     * Conflict (e.g. a request with this Idempotency-Key is still running).
+     */
+    409: Problem;
+    /**
+     * The request is invalid; see `errors`.
+     */
+    422: Problem;
+    /**
+     * Rate limited; see Retry-After.
+     */
+    429: Problem;
+    /**
+     * Server error.
+     */
+    500: Problem;
+    /**
+     * Temporarily unavailable.
+     */
+    503: Problem;
+};
+
+export type PauseEmailsError = PauseEmailsErrors[keyof PauseEmailsErrors];
+
+export type PauseEmailsResponses = {
+    /**
+     * Successful Response
+     */
+    200: EmailPauseOut;
+};
+
+export type PauseEmailsResponse = PauseEmailsResponses[keyof PauseEmailsResponses];
+
 export type CreateGuestTokenData = {
     body?: never;
     path?: never;
@@ -5630,6 +5748,132 @@ export type ClaimGuestResponses = {
 };
 
 export type ClaimGuestResponse = ClaimGuestResponses[keyof ClaimGuestResponses];
+
+export type MyLeaveData = {
+    body?: never;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+    };
+    path?: never;
+    query?: never;
+    url: '/v1/me/leave';
+};
+
+export type MyLeaveErrors = {
+    /**
+     * Bad request (e.g. an invalid cursor).
+     */
+    400: Problem;
+    /**
+     * Missing or invalid credentials.
+     */
+    401: Problem;
+    /**
+     * Signed in, but not allowed.
+     */
+    403: Problem;
+    /**
+     * Not found.
+     */
+    404: Problem;
+    /**
+     * Conflict (e.g. a request with this Idempotency-Key is still running).
+     */
+    409: Problem;
+    /**
+     * The request is invalid; see `errors`.
+     */
+    422: Problem;
+    /**
+     * Rate limited; see Retry-After.
+     */
+    429: Problem;
+    /**
+     * Server error.
+     */
+    500: Problem;
+    /**
+     * Temporarily unavailable.
+     */
+    503: Problem;
+};
+
+export type MyLeaveError = MyLeaveErrors[keyof MyLeaveErrors];
+
+export type MyLeaveResponses = {
+    /**
+     * Successful Response
+     */
+    200: LeaveOut;
+};
+
+export type MyLeaveResponse = MyLeaveResponses[keyof MyLeaveResponses];
+
+export type SetLeaveData = {
+    body: LeaveIn;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+    };
+    path?: never;
+    query?: never;
+    url: '/v1/me/leave';
+};
+
+export type SetLeaveErrors = {
+    /**
+     * Bad request (e.g. an invalid cursor).
+     */
+    400: Problem;
+    /**
+     * Missing or invalid credentials.
+     */
+    401: Problem;
+    /**
+     * Signed in, but not allowed.
+     */
+    403: Problem;
+    /**
+     * Not found.
+     */
+    404: Problem;
+    /**
+     * Conflict (e.g. a request with this Idempotency-Key is still running).
+     */
+    409: Problem;
+    /**
+     * The request is invalid; see `errors`.
+     */
+    422: Problem;
+    /**
+     * Rate limited; see Retry-After.
+     */
+    429: Problem;
+    /**
+     * Server error.
+     */
+    500: Problem;
+    /**
+     * Temporarily unavailable.
+     */
+    503: Problem;
+};
+
+export type SetLeaveError = SetLeaveErrors[keyof SetLeaveErrors];
+
+export type SetLeaveResponses = {
+    /**
+     * Successful Response
+     */
+    200: LeaveOut;
+};
+
+export type SetLeaveResponse = SetLeaveResponses[keyof SetLeaveResponses];
 
 export type FinishOnboardingData = {
     body: OnboardingIn;
@@ -6019,6 +6263,12 @@ export type CalibrationDeckResponse = CalibrationDeckResponses[keyof Calibration
 
 export type AnswerCardData = {
     body: QuickfireAnswerIn;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+    };
     path: {
         /**
          * Card Id

@@ -8,16 +8,18 @@ per track into starting ratings (devgrill.domain.calibration).
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, Response
 
 from devgrill.domain import calibration
+from devgrill.domain.streaks import DEFAULT_TIMEZONE, activity_day
 from devgrill.infra.models import QuickfireCard, Track
-from devgrill.infra.repositories import profiles
+from devgrill.infra.repositories import profiles, progress
 from devgrill.infra.repositories import quickfire as repo
 from devgrill_api import pagination
-from devgrill_api.deps import SessionDep, User
+from devgrill_api.deps import OptionalUser, SessionDep, User
 from devgrill_api.errors import AppError
 from devgrill_api.ratelimit import rate_limit
 from devgrill_api.routers.me import _me
@@ -74,12 +76,18 @@ async def quickfire_deck(
     dependencies=[Depends(rate_limit("quickfire-answer", limit=120, window_s=60))],
 )
 async def answer_card(
-    card_id: uuid.UUID, body: QuickfireAnswerIn, session: SessionDep
+    card_id: uuid.UUID, body: QuickfireAnswerIn, session: SessionDep, user: OptionalUser
 ) -> QuickfireAnswerOut:
-    """Whether `choice` is right, with the answer and why."""
+    """Whether `choice` is right, with the answer and why. A signed-in answer counts as the
+    day's activity for the streak (any Quick Fire play does, PLAN §8.5)."""
     found = (await repo.cards_by_id(session, [card_id])).get(card_id)
     if found is None:
         raise AppError(404, "card_not_found", "There's no such card.")
+    if user is not None:
+        tz = str(user.profile.prefs.get("timezone") or DEFAULT_TIMEZONE)
+        await progress.record_activity(
+            session, user.id, activity_day(datetime.now(UTC), tz), "quickfire"
+        )
     return _result(found[0], body.choice)
 
 
@@ -102,7 +110,7 @@ async def finish_onboarding(body: OnboardingIn, user: User, session: SessionDep)
     by_track: dict[str, bool] = {}
     for a in body.answers:
         if a.card_id not in found:
-            raise AppError(422, "card_not_found", "One of the answered cards doesn't exist.")
+            raise AppError(400, "card_not_found", "One of the answered cards doesn't exist.")
         card, track = found[a.card_id]
         result = _result(card, a.choice)
         results.append(result)

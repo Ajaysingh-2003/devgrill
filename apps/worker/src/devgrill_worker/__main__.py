@@ -13,13 +13,15 @@ from temporalio.worker import Worker
 from devgrill.config import get_settings
 from devgrill.infra import db
 from devgrill.infra.cache import create_valkey
+from devgrill.infra.digests import Links
 from devgrill.infra.llm import OpenAiLlm
+from devgrill.infra.mail import SmtpMailer
 from devgrill.infra.objectstore import ObjectStore
 from devgrill.infra.workflows import connect_temporal
 from devgrill.observability import configure_logging
 from devgrill.sandbox.compose import ComposeDriver
+from devgrill_worker import challenges, digests
 from devgrill_worker.ai_activities import AiActivities
-from devgrill_worker.challenges import ChallengeActivities, ensure_schedule
 from devgrill_worker.sandbox_activities import SandboxActivities
 from devgrill_worker.workflows import ACTIVITIES, WORKFLOWS, PingWorkflow
 
@@ -63,10 +65,17 @@ async def run_worker() -> None:
             *ACTIVITIES,
             *sandbox.all(),
             *ai.all(),
-            ChallengeActivities(session_factory).ensure,
+            challenges.ChallengeActivities(session_factory).ensure,
+            digests.DigestActivities(
+                session_factory,
+                SmtpMailer(settings.smtp_host, settings.smtp_port, settings.mail_from),
+                Links(site=settings.site_url, secret=settings.internal_hmac_secret),
+            ).send_due,
         ],
     )
-    await ensure_schedule(client, settings.temporal_task_queue)
+    await challenges.ensure_schedule(client, settings.temporal_task_queue)
+    if settings.smtp_host and settings.internal_hmac_secret:
+        await digests.ensure_schedule(client, settings.temporal_task_queue)
     log.info("worker_started", task_queue=settings.temporal_task_queue)
     try:
         await worker.run()

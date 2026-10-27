@@ -42,6 +42,8 @@ class Profile(Base):
     display_name: Mapped[str] = mapped_column(Text)
     avatar_url: Mapped[str | None] = mapped_column(Text)
     country: Mapped[str | None] = mapped_column(String(2))
+    #: From GitHub at each sign-in (None when GitHub keeps it private). Only for the digest.
+    email: Mapped[str | None] = mapped_column(Text)
     experience_level: Mapped[ExperienceLevel | None] = mapped_column(
         pg_enum(ExperienceLevel, "experience_level")
     )

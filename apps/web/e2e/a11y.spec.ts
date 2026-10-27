@@ -14,6 +14,7 @@ const ROUTES = [
   "/drills/caching/big-sale-meltdown",
   "/daily",
   "/try",
+  "/emails/pause?token=e2e-not-a-real-token",
   "/incident/demo",
   "/incident/demo?tutorial=1",
   "/incident/demo/debrief",

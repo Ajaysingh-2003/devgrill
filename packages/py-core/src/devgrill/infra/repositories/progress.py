@@ -6,7 +6,8 @@ import uuid
 from dataclasses import dataclass
 from datetime import date, datetime
 
-from sqlalchemy import func, select, update
+from sqlalchemy import case, delete, func, select, update
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from devgrill.domain.attempt import LIVE_STATES
@@ -15,6 +16,7 @@ from devgrill.domain.streaks import compute_streak
 from devgrill.infra.models import (
     ActivityDay,
     Attempt,
+    LeaveDay,
     RatingHistory,
     Scenario,
     ScenarioVersion,
@@ -85,7 +87,11 @@ async def refresh_streak(
         streak = Streak(user_id=user_id, mode=mode, freezes=0)
         session.add(streak)
         await session.flush()
-    summary = compute_streak(days, today, mode=mode, freezes=streak.freezes)
+    leave = list(
+        (await session.execute(select(LeaveDay.day).where(LeaveDay.user_id == user_id))).scalars()
+    )
+    # Freezes are derived too: earned by play, spent on misses (devgrill.domain.streaks).
+    summary = compute_streak(days, today, mode=mode, leave=leave)
     await session.execute(
         update(Streak)
         .where(Streak.user_id == user_id)
@@ -93,6 +99,7 @@ async def refresh_streak(
             mode=mode,
             current=summary.current,
             longest=max(summary.longest, streak.longest),
+            freezes=summary.freezes,
             last_day=summary.last_day,
         )
     )
@@ -186,3 +193,43 @@ async def claim_guest_attempts(session: AsyncSession, user_id: uuid.UUID, guest_
         )
         count += len(moved.all())
     return count
+
+
+async def record_activity(session: AsyncSession, user_id: uuid.UUID, day: date, kind: str) -> None:
+    """Mark `day` active for `kind` (idempotent). Any Quick Fire answer counts (PLAN §8.5)."""
+    stmt = insert(ActivityDay).values(user_id=user_id, day=day, kinds=[kind])
+    await session.execute(
+        stmt.on_conflict_do_update(
+            index_elements=["user_id", "day"],
+            set_={
+                "kinds": case(
+                    (ActivityDay.kinds.contains([kind]), ActivityDay.kinds),
+                    else_=func.array_append(ActivityDay.kinds, kind),
+                )
+            },
+        )
+    )
+
+
+async def leave_days(session: AsyncSession, user_id: uuid.UUID, since: date) -> list[date]:
+    result = await session.execute(
+        select(LeaveDay.day)
+        .where(LeaveDay.user_id == user_id, LeaveDay.day >= since)
+        .order_by(LeaveDay.day)
+    )
+    return list(result.scalars())
+
+
+async def replace_upcoming_leave(
+    session: AsyncSession, user_id: uuid.UUID, today: date, days: list[date]
+) -> None:
+    """Set the leave from `today` on to exactly `days` (past leave stays as it was)."""
+    await session.execute(
+        delete(LeaveDay).where(LeaveDay.user_id == user_id, LeaveDay.day >= today)
+    )
+    if days:
+        await session.execute(
+            insert(LeaveDay)
+            .values([{"user_id": user_id, "day": d} for d in sorted(set(days))])
+            .on_conflict_do_nothing()
+        )

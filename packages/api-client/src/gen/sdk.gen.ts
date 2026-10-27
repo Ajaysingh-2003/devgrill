@@ -2,7 +2,7 @@
 
 import type { Client, ClientMeta, Options as Options2, RequestResult, ServerSentEventsResult, TDataShape } from './client';
 import { client } from './client.gen';
-import type { AbandonAttemptData, AbandonAttemptErrors, AbandonAttemptResponses, AdminAiCostsData, AdminAiCostsErrors, AdminAiCostsResponses, AdminApproachCandidatesData, AdminApproachCandidatesErrors, AdminApproachCandidatesResponses, AdminReviewCandidateData, AdminReviewCandidateErrors, AdminReviewCandidateResponses, AdminScenariosData, AdminScenariosErrors, AdminScenariosResponses, AnswerCardData, AnswerCardErrors, AnswerCardResponses, AttemptEventsData, AttemptEventsErrors, AttemptEventsResponses, CacheInsightsData, CacheInsightsErrors, CacheInsightsResponses, CalibrationDeckData, CalibrationDeckErrors, CalibrationDeckResponses, CanPlayData, CanPlayErrors, CanPlayResponses, ClaimGuestData, ClaimGuestErrors, ClaimGuestResponses, CreateGuestTokenData, CreateGuestTokenErrors, CreateGuestTokenResponses, CreateWsTicketData, CreateWsTicketErrors, CreateWsTicketResponses, DailyChallengeData, DailyChallengeErrors, DailyChallengeResponses, DbInsightsData, DbInsightsErrors, DbInsightsResponses, DbQueryData, DbQueryErrors, DbQueryResponses, DeclareMitigatedData, DeclareMitigatedErrors, DeclareMitigatedResponses, DeployChangesData, DeployChangesErrors, DeployChangesResponses, DeployData, DeployErrors, DeployResponses, ExtendAttemptData, ExtendAttemptErrors, ExtendAttemptResponses, FinishOnboardingData, FinishOnboardingErrors, FinishOnboardingResponses, GetApproachesData, GetApproachesErrors, GetApproachesResponses, GetAttemptData, GetAttemptErrors, GetAttemptResponses, GetDebriefData, GetDebriefErrors, GetDebriefResponses, GetMeData, GetMeErrors, GetMeResponses, GetPostmortemData, GetPostmortemErrors, GetPostmortemResponses, GetScenarioData, GetScenarioErrors, GetScenarioResponses, GetTrackData, GetTrackErrors, GetTrackResponses, GetWorkspaceData, GetWorkspaceErrors, GetWorkspaceResponses, HealthzData, HealthzResponses, ListDeploysData, ListDeploysErrors, ListDeploysResponses, ListFilesData, ListFilesErrors, ListFilesResponses, ListHintsData, ListHintsErrors, ListHintsResponses, ListScenariosData, ListScenariosErrors, ListScenariosResponses, ListTracksData, ListTracksErrors, ListTracksResponses, MyAttemptsData, MyAttemptsErrors, MyAttemptsResponses, MyProgressData, MyProgressErrors, MyProgressResponses, MyRatingsData, MyRatingsErrors, MyRatingsResponses, MyStreakData, MyStreakErrors, MyStreakResponses, MyUsageData, MyUsageErrors, MyUsageResponses, NudgeData, NudgeErrors, NudgeResponses, PatchMeData, PatchMeErrors, PatchMeResponses, PostMessageData, PostMessageErrors, PostMessageResponses, PublicProfileData, PublicProfileErrors, PublicProfileResponses, QuickfireDeckData, QuickfireDeckErrors, QuickfireDeckResponses, ReadFileData, ReadFileErrors, ReadFileResponses, ReadyzData, ReadyzErrors, ReadyzResponses, ResetAttemptData, ResetAttemptErrors, ResetAttemptResponses, RestartServiceData, RestartServiceErrors, RestartServiceResponses, ReviewPostmortemData, ReviewPostmortemErrors, ReviewPostmortemResponses, RollbackData, RollbackErrors, RollbackResponses, SandboxStatusData, SandboxStatusErrors, SandboxStatusResponses, SavePostmortemData, SavePostmortemErrors, SavePostmortemResponses, ShareCardData, ShareCardErrors, ShareCardResponses, StartAttemptData, StartAttemptErrors, StartAttemptResponses, SubmitPostmortemData, SubmitPostmortemErrors, SubmitPostmortemResponses, TakeHintData, TakeHintErrors, TakeHintResponses, TouchAttemptData, TouchAttemptErrors, TouchAttemptResponses, VerifyAttemptData, VerifyAttemptErrors, VerifyAttemptResponses, WeeklyChallengeData, WeeklyChallengeErrors, WeeklyChallengeResponses, WriteFileData, WriteFileErrors, WriteFileResponses } from './types.gen';
+import type { AbandonAttemptData, AbandonAttemptErrors, AbandonAttemptResponses, AdminAiCostsData, AdminAiCostsErrors, AdminAiCostsResponses, AdminApproachCandidatesData, AdminApproachCandidatesErrors, AdminApproachCandidatesResponses, AdminReviewCandidateData, AdminReviewCandidateErrors, AdminReviewCandidateResponses, AdminScenariosData, AdminScenariosErrors, AdminScenariosResponses, AnswerCardData, AnswerCardErrors, AnswerCardResponses, AttemptEventsData, AttemptEventsErrors, AttemptEventsResponses, CacheInsightsData, CacheInsightsErrors, CacheInsightsResponses, CalibrationDeckData, CalibrationDeckErrors, CalibrationDeckResponses, CanPlayData, CanPlayErrors, CanPlayResponses, ClaimGuestData, ClaimGuestErrors, ClaimGuestResponses, CreateGuestTokenData, CreateGuestTokenErrors, CreateGuestTokenResponses, CreateWsTicketData, CreateWsTicketErrors, CreateWsTicketResponses, DailyChallengeData, DailyChallengeErrors, DailyChallengeResponses, DbInsightsData, DbInsightsErrors, DbInsightsResponses, DbQueryData, DbQueryErrors, DbQueryResponses, DeclareMitigatedData, DeclareMitigatedErrors, DeclareMitigatedResponses, DeployChangesData, DeployChangesErrors, DeployChangesResponses, DeployData, DeployErrors, DeployResponses, ExtendAttemptData, ExtendAttemptErrors, ExtendAttemptResponses, FinishOnboardingData, FinishOnboardingErrors, FinishOnboardingResponses, GetApproachesData, GetApproachesErrors, GetApproachesResponses, GetAttemptData, GetAttemptErrors, GetAttemptResponses, GetDebriefData, GetDebriefErrors, GetDebriefResponses, GetMeData, GetMeErrors, GetMeResponses, GetPostmortemData, GetPostmortemErrors, GetPostmortemResponses, GetScenarioData, GetScenarioErrors, GetScenarioResponses, GetTrackData, GetTrackErrors, GetTrackResponses, GetWorkspaceData, GetWorkspaceErrors, GetWorkspaceResponses, HealthzData, HealthzResponses, ListDeploysData, ListDeploysErrors, ListDeploysResponses, ListFilesData, ListFilesErrors, ListFilesResponses, ListHintsData, ListHintsErrors, ListHintsResponses, ListScenariosData, ListScenariosErrors, ListScenariosResponses, ListTracksData, ListTracksErrors, ListTracksResponses, MyAttemptsData, MyAttemptsErrors, MyAttemptsResponses, MyLeaveData, MyLeaveErrors, MyLeaveResponses, MyProgressData, MyProgressErrors, MyProgressResponses, MyRatingsData, MyRatingsErrors, MyRatingsResponses, MyStreakData, MyStreakErrors, MyStreakResponses, MyUsageData, MyUsageErrors, MyUsageResponses, NudgeData, NudgeErrors, NudgeResponses, PatchMeData, PatchMeErrors, PatchMeResponses, PauseEmailsData, PauseEmailsErrors, PauseEmailsResponses, PostMessageData, PostMessageErrors, PostMessageResponses, PublicProfileData, PublicProfileErrors, PublicProfileResponses, QuickfireDeckData, QuickfireDeckErrors, QuickfireDeckResponses, ReadFileData, ReadFileErrors, ReadFileResponses, ReadyzData, ReadyzErrors, ReadyzResponses, ResetAttemptData, ResetAttemptErrors, ResetAttemptResponses, RestartServiceData, RestartServiceErrors, RestartServiceResponses, ReviewPostmortemData, ReviewPostmortemErrors, ReviewPostmortemResponses, RollbackData, RollbackErrors, RollbackResponses, SandboxStatusData, SandboxStatusErrors, SandboxStatusResponses, SavePostmortemData, SavePostmortemErrors, SavePostmortemResponses, SetLeaveData, SetLeaveErrors, SetLeaveResponses, ShareCardData, ShareCardErrors, ShareCardResponses, StartAttemptData, StartAttemptErrors, StartAttemptResponses, SubmitPostmortemData, SubmitPostmortemErrors, SubmitPostmortemResponses, TakeHintData, TakeHintErrors, TakeHintResponses, TouchAttemptData, TouchAttemptErrors, TouchAttemptResponses, VerifyAttemptData, VerifyAttemptErrors, VerifyAttemptResponses, WeeklyChallengeData, WeeklyChallengeErrors, WeeklyChallengeResponses, WriteFileData, WriteFileErrors, WriteFileResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -364,6 +364,14 @@ export const dailyChallenge = <ThrowOnError extends boolean = false>(options?: O
 export const weeklyChallenge = <ThrowOnError extends boolean = false>(options?: Options<WeeklyChallengeData, ThrowOnError>): RequestResult<WeeklyChallengeResponses, WeeklyChallengeErrors, ThrowOnError> => (options?.client ?? client).get<WeeklyChallengeResponses, WeeklyChallengeErrors, ThrowOnError>({ url: '/v1/challenges/weekly', ...options });
 
 /**
+ * Pause Emails
+ *
+ * One tap from an email (or a mail client's one-click unsubscribe): stop the daily email.
+ * No sign-in: the signed token names the account and only allows this.
+ */
+export const pauseEmails = <ThrowOnError extends boolean = false>(options: Options<PauseEmailsData, ThrowOnError>): RequestResult<PauseEmailsResponses, PauseEmailsErrors, ThrowOnError> => (options.client ?? client).post<PauseEmailsResponses, PauseEmailsErrors, ThrowOnError>({ url: '/v1/emails/pause', ...options });
+
+/**
  * Create Guest Token
  *
  * A signed token for playing /try without an account. Keep it in an httpOnly cookie.
@@ -403,6 +411,27 @@ export const myAttempts = <ThrowOnError extends boolean = false>(options?: Optio
  */
 export const claimGuest = <ThrowOnError extends boolean = false>(options: Options<ClaimGuestData, ThrowOnError>): RequestResult<ClaimGuestResponses, ClaimGuestErrors, ThrowOnError> => (options.client ?? client).post<ClaimGuestResponses, ClaimGuestErrors, ThrowOnError>({
     url: '/v1/me/claim-guest',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * My Leave
+ *
+ * On-call leave booked from today on: days that never break the streak.
+ */
+export const myLeave = <ThrowOnError extends boolean = false>(options?: Options<MyLeaveData, ThrowOnError>): RequestResult<MyLeaveResponses, MyLeaveErrors, ThrowOnError> => (options?.client ?? client).get<MyLeaveResponses, MyLeaveErrors, ThrowOnError>({ url: '/v1/me/leave', ...options });
+
+/**
+ * Set Leave
+ *
+ * Book on-call leave (today on, up to 90 days ahead, at most 31 days at a time).
+ */
+export const setLeave = <ThrowOnError extends boolean = false>(options: Options<SetLeaveData, ThrowOnError>): RequestResult<SetLeaveResponses, SetLeaveErrors, ThrowOnError> => (options.client ?? client).put<SetLeaveResponses, SetLeaveErrors, ThrowOnError>({
+    url: '/v1/me/leave',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -462,7 +491,8 @@ export const calibrationDeck = <ThrowOnError extends boolean = false>(options?: 
 /**
  * Answer Card
  *
- * Whether `choice` is right, with the answer and why.
+ * Whether `choice` is right, with the answer and why. A signed-in answer counts as the
+ * day's activity for the streak (any Quick Fire play does, PLAN §8.5).
  */
 export const answerCard = <ThrowOnError extends boolean = false>(options: Options<AnswerCardData, ThrowOnError>): RequestResult<AnswerCardResponses, AnswerCardErrors, ThrowOnError> => (options.client ?? client).post<AnswerCardResponses, AnswerCardErrors, ThrowOnError>({
     url: '/v1/quickfire/cards/{card_id}/answer',

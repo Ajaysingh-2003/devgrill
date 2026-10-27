@@ -78,6 +78,27 @@ class ActivityDay(Base):
     kinds: Mapped[list[str]] = mapped_column(ARRAY(Text), server_default=text("'{}'::text[]"))
 
 
+class LeaveDay(Base):
+    """On-call leave the player booked: a neutral day for their streak (never breaks it)."""
+
+    __tablename__ = "leave_days"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(user_fk(), primary_key=True)
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+
+
+class NotificationSent(Base):
+    """One row per email sent: the primary key caps each kind at one per local day."""
+
+    __tablename__ = "notifications_sent"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(user_fk(), primary_key=True)
+    kind: Mapped[str] = mapped_column(Text, primary_key=True)
+    #: The recipient's local calendar day.
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+    sent_at: Mapped[CreatedAt]
+
+
 class Streak(Base):
     """Derived from activity_days (devgrill.domain.streaks) and recomputable at any time."""
 

@@ -126,6 +126,13 @@ class Settings(BaseSettings):
     langfuse_public_key: str = ""
     langfuse_secret_key: SecretStr = SecretStr("")
 
+    #: Email (the daily digest). Mailpit in dev (http://localhost:8025); empty host disables.
+    smtp_host: str = "localhost"
+    smtp_port: int = 1025
+    mail_from: str = "DevGrill <practice@devgrill.local>"
+    #: Where links in emails point.
+    site_url: str = Field(default="http://localhost:3000", alias="NEXT_PUBLIC_SITE_URL")
+
     otel_enabled: bool = False
     otel_exporter_otlp_endpoint: str = "http://localhost:4318"
     sentry_dsn: str | None = None

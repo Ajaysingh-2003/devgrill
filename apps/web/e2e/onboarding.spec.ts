@@ -44,3 +44,34 @@ test("Quick Fire answers by keyboard and explains each card", async ({ page }) =
   await page.keyboard.press("Enter");
   await expect(page.getByText(/^(Right|Not this time)\./)).toBeHidden();
 });
+
+test("on-call leave is booked and cancelled in Settings", async ({ page }) => {
+  await signIn(page, uniqueLogin("lena"), "/settings");
+  const leave = page.getByRole("region", { name: "On-call leave" });
+  await expect(leave.getByText("No leave booked.")).toBeVisible();
+  // Tomorrow to the day after, in the player's own calendar (dates are plain strings).
+  const today = await leave.getByLabel("From").getAttribute("min");
+  const next = new Date(Date.parse(`${today}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
+  const later = new Date(Date.parse(`${next}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
+  await leave.getByLabel("From").fill(next);
+  await leave.getByLabel("To (optional)").fill(later);
+  await leave.getByRole("button", { name: "Book leave" }).click();
+  await expect(leave.getByRole("listitem")).toHaveCount(1);
+  await expect(leave.getByRole("listitem")).toContainText(" to ");
+  await page.reload();
+  await expect(leave.getByRole("listitem")).toHaveCount(1);
+  await leave.getByRole("button", { name: /^Cancel leave/ }).click();
+  await expect(leave.getByText("No leave booked.")).toBeVisible();
+});
+
+test("the daily email can be turned on, and the pause page needs a valid link", async ({ page }) => {
+  await signIn(page, uniqueLogin("mira"), "/settings");
+  const email = page.getByRole("region", { name: "Daily email" });
+  // The mock GitHub shares an email, so the switch is there.
+  await email.getByRole("switch", { name: "Daily email" }).click();
+  await expect(email.getByRole("switch", { name: "Daily email" })).toBeChecked();
+  await email.getByLabel("Send it at").selectOption("18");
+  await page.goto("/emails/pause?token=forged.token");
+  await page.getByRole("button", { name: "Pause emails" }).click();
+  await expect(page.getByRole("heading", { name: "This link didn’t work" })).toBeVisible();
+});

@@ -60,6 +60,10 @@ async def ensure(
     existing = await get(session, identity.user_id)
     if existing is not None:
         await _grant_configured_admin(session, existing, identity, admin_logins)
+        # The sign-in hook knows the current email; requests without one leave it alone.
+        if identity.email and existing.email != identity.email:
+            existing.email = identity.email
+            await session.flush()
         return existing, False
 
     base = handle_candidate(identity)
@@ -80,6 +84,7 @@ async def ensure(
                 handle=handle,
                 display_name=identity.name or identity.login or handle,
                 avatar_url=identity.image,
+                email=identity.email,
                 roles=roles,
             )
             .on_conflict_do_nothing()

@@ -153,6 +153,8 @@ class ChallengeOut(Model):
 
 #: What the player does day to day (onboarding); it only shapes suggestions.
 JobRole = Literal["backend", "sre", "frontend", "data", "student", "other"]
+#: Local hours the daily email can go out at (devgrill.domain.digest.SEND_HOURS).
+DigestHour = Literal[8, 9, 13, 18, 21]
 
 
 class Prefs(Model):
@@ -166,6 +168,9 @@ class Prefs(Model):
     job_role: JobRole | None = None
     #: Onboarding was finished or skipped: sign-in stops offering it.
     onboarded: bool = False
+    #: The daily email (opt-in): today's drill and your streak, at most once a day.
+    email_digest: bool = False
+    digest_hour: DigestHour = 9
 
 
 class PrefsPatch(Input):
@@ -177,6 +182,8 @@ class PrefsPatch(Input):
     timezone: Timezone | None = None
     job_role: JobRole | None = None
     onboarded: StrictBool | None = None
+    email_digest: StrictBool | None = None
+    digest_hour: DigestHour | None = None
 
 
 class Me(Model):
@@ -189,6 +196,8 @@ class Me(Model):
     roles: list[str]
     prefs: Prefs
     is_public: bool
+    #: GitHub shared an email address (needed for the daily email; the address isn't shown).
+    has_email: bool = False
     created_at: datetime
 
 
@@ -250,6 +259,8 @@ class StreakOut(Model):
     last_day: date | None
     #: Active days in the heatmap window (oldest first), for the profile's activity grid.
     days: list[date]
+    #: On-call leave days in the same window.
+    leave_days: list[date] = Field(default_factory=list)
     window_start: date
 
 
@@ -859,6 +870,21 @@ class OnboardingOut(Model):
     results: list[QuickfireAnswerOut]
     #: Tracks that got a starting rating (tracks already rated by play keep theirs).
     seeded_tracks: list[str]
+
+
+class LeaveOut(Model):
+    #: Booked leave from today on.
+    days: list[date]
+
+
+class LeaveIn(Input):
+    """The leave from today on, replacing what was booked (past leave can't change)."""
+
+    days: list[date] = Field(max_length=31)
+
+
+class EmailPauseOut(Model):
+    paused: bool
 
 
 class ShareCardOut(Model):

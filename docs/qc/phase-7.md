@@ -1,6 +1,6 @@
 # Phase 7 QC report: content, progression and onboarding
 
-Date: 2026-10-27 · Result: **IN PROGRESS** (waves 7A to 7C done) · Decision: ADR 017.
+Date: 2026-10-27 · Result: **IN PROGRESS** (waves 7A to 7D done) · Decision: ADR 017.
 
 Phase 7 runs in waves, each tested and committed on its own:
 
@@ -9,8 +9,8 @@ Phase 7 runs in waves, each tested and committed on its own:
 | 7A | Daily rotation, pro mode, public profile opt-in, primers, library filters, share card | Done |
 | 7B | `/try` guest tutorial with progressive unlocks and tips | Done |
 | 7C | Quick Fire cards and onboarding calibration | Done |
-| 7D | Streak freezes and on-call leave, email digests (Mailpit) | Next |
-| 7E | Admin console: RBAC, audit log, review queue, publish and retire | |
+| 7D | Streak freezes and on-call leave, email digests (Mailpit) | Done |
+| 7E | Admin console: RBAC, audit log, review queue, publish and retire | Next |
 | 7F | Content sprint toward 20 drills, the Ledger app | |
 | 7G | Case files | |
 
@@ -114,6 +114,44 @@ Phase 7 runs in waves, each tested and committed on its own:
 - **Migration 0006:** round-tripped, and `alembic check` is clean.
 - **By hand:** Quick Fire at 390 px.
 
+## Wave 7D: what was built
+
+- **Streaks (ADR 017):**
+  - freezes are earned (1 per 7 days in a row, or 4 weeks in weekly mode; 2 at most) and spent
+    automatically;
+  - on-call leave days are neutral;
+  - any Quick Fire answer counts as the day's activity;
+  - everything is still derived from activity.
+- **Settings:**
+  - "On-call leave": book a date range up to 90 days ahead, or cancel it.
+  - "Daily email": opt-in, with a send time. GitHub must share an email.
+- **The profile's activity grid:** shows leave as dashed cells, with the count in its text.
+- **The daily email:**
+  - today's drill and your streak, in plain words with no guilt;
+  - sent by an hourly Temporal sweep;
+  - at most once per local day (enforced by the database), never in quiet hours (22:00 to
+    08:00);
+  - a one-tap pause page, plus RFC 8058 one-click unsubscribe.
+
+  Checked by hand in Mailpit (rendering and headers).
+- **Migration 0007:** `leave_days`, `notifications_sent` and `profiles.email`. Round-tripped,
+  and `alembic check` is clean.
+
+## Checks run (wave 7D)
+
+- **Python:** 362 tests pass.
+  - New streak and digest property tests: DST in four zones, freezes, leave, quiet hours, at
+    most one email per local day.
+  - New API tests: leave range rules, Quick Fire activity, pause tokens, one-tap pause.
+  - A digest sweep integration test: once in its hour, never in quiet hours, opt-outs and
+    missing emails skipped.
+- **Contract (Schemathesis):** passes. Business-rule refusals are 400.
+- **e2e:** 65 of 65 passed across two runs, 1 skipped.
+  - New: booking and cancelling leave; turning on the daily email; a forged pause link.
+  - `/emails/pause` is added to the WCAG sweep.
+  - Two signed-in accessibility tests failed on the first run with a Postgres connection
+    timeout under parallel load. They passed on rerun.
+
 ## Gate checklist (docs/PLAN.md, Phase 7), so far
 
 - [ ] All 20 scenarios pass `devgrill-content test` nightly (7F).
@@ -122,7 +160,7 @@ Phase 7 runs in waves, each tested and committed on its own:
 - [ ] Daily rollover across time zones; share card with no spoilers; pre-warm pool.
   - Done in 7A: the rollover and the share card.
   - Owed: the pre-warm pool, and the card in dark mode (OG images are light only).
-- [ ] Streak logic property-tested; notification caps (7D).
+- [x] Streak logic property-tested (time zones, DST, freezes, leave days); notification caps enforced (7D).
 - [ ] Admin RBAC and audit log (7E).
 - [ ] Design QC and the ethical-gamification checklist.
 
