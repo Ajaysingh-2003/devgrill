@@ -542,6 +542,20 @@ export type CacheStats = {
 };
 
 /**
+ * CalibrationAnswer
+ */
+export type CalibrationAnswer = {
+    /**
+     * Card Id
+     */
+    card_id: string;
+    /**
+     * Choice
+     */
+    choice: 'a' | 'b' | 'c' | 'd';
+};
+
+/**
  * ChallengeKind
  */
 export type ChallengeKind = 'daily' | 'weekly';
@@ -1254,6 +1268,36 @@ export type NudgeOut = {
 };
 
 /**
+ * OnboardingIn
+ */
+export type OnboardingIn = {
+    /**
+     * Answers
+     */
+    answers?: Array<CalibrationAnswer>;
+    experience_level: ExperienceLevel;
+    /**
+     * Job Role
+     */
+    job_role?: 'backend' | 'sre' | 'frontend' | 'data' | 'student' | 'other' | null;
+};
+
+/**
+ * OnboardingOut
+ */
+export type OnboardingOut = {
+    me: Me;
+    /**
+     * Results
+     */
+    results: Array<QuickfireAnswerOut>;
+    /**
+     * Seeded Tracks
+     */
+    seeded_tracks: Array<string>;
+};
+
+/**
  * PageOut
  */
 export type PageOut = {
@@ -1393,9 +1437,17 @@ export type PostmortemReviewOut = {
  */
 export type Prefs = {
     /**
+     * Job Role
+     */
+    job_role?: 'backend' | 'sre' | 'frontend' | 'data' | 'student' | 'other' | null;
+    /**
      * Motion
      */
     motion?: 'system' | 'reduce' | 'full';
+    /**
+     * Onboarded
+     */
+    onboarded?: boolean;
     /**
      * Pro Mode
      */
@@ -1417,9 +1469,17 @@ export type Prefs = {
  */
 export type PrefsPatch = {
     /**
+     * Job Role
+     */
+    job_role?: 'backend' | 'sre' | 'frontend' | 'data' | 'student' | 'other' | null;
+    /**
      * Motion
      */
     motion?: 'system' | 'reduce' | 'full' | null;
+    /**
+     * Onboarded
+     */
+    onboarded?: boolean | null;
     /**
      * Pro Mode
      */
@@ -1580,6 +1640,100 @@ export type QueryOut = {
      * Truncated
      */
     truncated?: boolean;
+};
+
+/**
+ * QuickfireAnswerIn
+ */
+export type QuickfireAnswerIn = {
+    /**
+     * Choice
+     */
+    choice: 'a' | 'b' | 'c' | 'd';
+};
+
+/**
+ * QuickfireAnswerOut
+ */
+export type QuickfireAnswerOut = {
+    /**
+     * Answer
+     */
+    answer: string;
+    /**
+     * Card Id
+     */
+    card_id: string;
+    /**
+     * Correct
+     */
+    correct: boolean;
+    /**
+     * Explanation Md
+     */
+    explanation_md: string;
+};
+
+/**
+ * QuickfireCardOut
+ *
+ * A card as the player sees it: never the answer.
+ */
+export type QuickfireCardOut = {
+    /**
+     * Evidence
+     */
+    evidence: Array<string>;
+    /**
+     * Id
+     */
+    id: string;
+    kind: QuickfireKind;
+    /**
+     * Options
+     */
+    options: Array<QuickfireOptionOut>;
+    /**
+     * Prompt
+     */
+    prompt: string;
+    /**
+     * Track Slug
+     */
+    track_slug: string;
+    /**
+     * Track Title
+     */
+    track_title: string;
+};
+
+/**
+ * QuickfireDeck
+ */
+export type QuickfireDeck = {
+    /**
+     * Cards
+     */
+    cards: Array<QuickfireCardOut>;
+};
+
+/**
+ * QuickfireKind
+ */
+export type QuickfireKind = 'log' | 'graph' | 'diff' | 'config';
+
+/**
+ * QuickfireOptionOut
+ */
+export type QuickfireOptionOut = {
+    /**
+     * Key
+     */
+    key: string;
+    /**
+     * Text
+     */
+    text: string;
 };
 
 /**
@@ -5477,6 +5631,69 @@ export type ClaimGuestResponses = {
 
 export type ClaimGuestResponse = ClaimGuestResponses[keyof ClaimGuestResponses];
 
+export type FinishOnboardingData = {
+    body: OnboardingIn;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+    };
+    path?: never;
+    query?: never;
+    url: '/v1/me/onboarding';
+};
+
+export type FinishOnboardingErrors = {
+    /**
+     * Bad request (e.g. an invalid cursor).
+     */
+    400: Problem;
+    /**
+     * Missing or invalid credentials.
+     */
+    401: Problem;
+    /**
+     * Signed in, but not allowed.
+     */
+    403: Problem;
+    /**
+     * Not found.
+     */
+    404: Problem;
+    /**
+     * Conflict (e.g. a request with this Idempotency-Key is still running).
+     */
+    409: Problem;
+    /**
+     * The request is invalid; see `errors`.
+     */
+    422: Problem;
+    /**
+     * Rate limited; see Retry-After.
+     */
+    429: Problem;
+    /**
+     * Server error.
+     */
+    500: Problem;
+    /**
+     * Temporarily unavailable.
+     */
+    503: Problem;
+};
+
+export type FinishOnboardingError = FinishOnboardingErrors[keyof FinishOnboardingErrors];
+
+export type FinishOnboardingResponses = {
+    /**
+     * Successful Response
+     */
+    200: OnboardingOut;
+};
+
+export type FinishOnboardingResponse = FinishOnboardingResponses[keyof FinishOnboardingResponses];
+
 export type MyProgressData = {
     body?: never;
     headers?: {
@@ -5736,6 +5953,197 @@ export type MyUsageResponses = {
 };
 
 export type MyUsageResponse = MyUsageResponses[keyof MyUsageResponses];
+
+export type CalibrationDeckData = {
+    body?: never;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+    };
+    path?: never;
+    query?: never;
+    url: '/v1/onboarding/calibration';
+};
+
+export type CalibrationDeckErrors = {
+    /**
+     * Bad request (e.g. an invalid cursor).
+     */
+    400: Problem;
+    /**
+     * Missing or invalid credentials.
+     */
+    401: Problem;
+    /**
+     * Signed in, but not allowed.
+     */
+    403: Problem;
+    /**
+     * Not found.
+     */
+    404: Problem;
+    /**
+     * Conflict (e.g. a request with this Idempotency-Key is still running).
+     */
+    409: Problem;
+    /**
+     * The request is invalid; see `errors`.
+     */
+    422: Problem;
+    /**
+     * Rate limited; see Retry-After.
+     */
+    429: Problem;
+    /**
+     * Server error.
+     */
+    500: Problem;
+    /**
+     * Temporarily unavailable.
+     */
+    503: Problem;
+};
+
+export type CalibrationDeckError = CalibrationDeckErrors[keyof CalibrationDeckErrors];
+
+export type CalibrationDeckResponses = {
+    /**
+     * Successful Response
+     */
+    200: QuickfireDeck;
+};
+
+export type CalibrationDeckResponse = CalibrationDeckResponses[keyof CalibrationDeckResponses];
+
+export type AnswerCardData = {
+    body: QuickfireAnswerIn;
+    path: {
+        /**
+         * Card Id
+         */
+        card_id: string;
+    };
+    query?: never;
+    url: '/v1/quickfire/cards/{card_id}/answer';
+};
+
+export type AnswerCardErrors = {
+    /**
+     * Bad request (e.g. an invalid cursor).
+     */
+    400: Problem;
+    /**
+     * Missing or invalid credentials.
+     */
+    401: Problem;
+    /**
+     * Signed in, but not allowed.
+     */
+    403: Problem;
+    /**
+     * Not found.
+     */
+    404: Problem;
+    /**
+     * Conflict (e.g. a request with this Idempotency-Key is still running).
+     */
+    409: Problem;
+    /**
+     * The request is invalid; see `errors`.
+     */
+    422: Problem;
+    /**
+     * Rate limited; see Retry-After.
+     */
+    429: Problem;
+    /**
+     * Server error.
+     */
+    500: Problem;
+    /**
+     * Temporarily unavailable.
+     */
+    503: Problem;
+};
+
+export type AnswerCardError = AnswerCardErrors[keyof AnswerCardErrors];
+
+export type AnswerCardResponses = {
+    /**
+     * Successful Response
+     */
+    200: QuickfireAnswerOut;
+};
+
+export type AnswerCardResponse = AnswerCardResponses[keyof AnswerCardResponses];
+
+export type QuickfireDeckData = {
+    body?: never;
+    path?: never;
+    query?: {
+        /**
+         * Track
+         */
+        track?: string | null;
+        /**
+         * Limit
+         */
+        limit?: number;
+    };
+    url: '/v1/quickfire/deck';
+};
+
+export type QuickfireDeckErrors = {
+    /**
+     * Bad request (e.g. an invalid cursor).
+     */
+    400: Problem;
+    /**
+     * Missing or invalid credentials.
+     */
+    401: Problem;
+    /**
+     * Signed in, but not allowed.
+     */
+    403: Problem;
+    /**
+     * Not found.
+     */
+    404: Problem;
+    /**
+     * Conflict (e.g. a request with this Idempotency-Key is still running).
+     */
+    409: Problem;
+    /**
+     * The request is invalid; see `errors`.
+     */
+    422: Problem;
+    /**
+     * Rate limited; see Retry-After.
+     */
+    429: Problem;
+    /**
+     * Server error.
+     */
+    500: Problem;
+    /**
+     * Temporarily unavailable.
+     */
+    503: Problem;
+};
+
+export type QuickfireDeckError = QuickfireDeckErrors[keyof QuickfireDeckErrors];
+
+export type QuickfireDeckResponses = {
+    /**
+     * Successful Response
+     */
+    200: QuickfireDeck;
+};
+
+export type QuickfireDeckResponse = QuickfireDeckResponses[keyof QuickfireDeckResponses];
 
 export type ListScenariosData = {
     body?: never;

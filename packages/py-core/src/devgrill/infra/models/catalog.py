@@ -271,9 +271,12 @@ class ApproachCandidate(Base):
 
 
 class QuickfireCard(Base):
+    """Seeded from content/quickfire/<track>.yaml (upserted by slug)."""
+
     __tablename__ = "quickfire_cards"
 
     id: Mapped[UuidPk]
+    slug: Mapped[str] = mapped_column(Text, unique=True)
     track_id: Mapped[uuid.UUID] = mapped_column(fk("tracks.id", ondelete="RESTRICT"), index=True)
     kind: Mapped[QuickfireKind] = mapped_column(pg_enum(QuickfireKind, "quickfire_kind"))
     prompt: Mapped[JsonObject]

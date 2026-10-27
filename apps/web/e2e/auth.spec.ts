@@ -52,8 +52,12 @@ test("sign-in never redirects off-site", async ({ page }) => {
     .context()
     .addCookies([{ name: "mock_user", value: uniqueLogin("dan"), url: "http://localhost:3999" }]);
   await startSignIn(page, "/sign-in?next=//evil.example/steal");
-  await page.waitForURL((url) => url.pathname === "/drills", { timeout: 20_000 });
+  // A new account stops at onboarding first, carrying the (made safe) destination.
+  await page.waitForURL((url) => url.pathname === "/onboarding", { timeout: 20_000 });
   expect(new URL(page.url()).host).toBe("localhost:3100");
+  expect(new URL(page.url()).searchParams.get("next")).toBe("/drills");
+  await page.getByRole("button", { name: "Skip for now" }).click();
+  await page.waitForURL((url) => url.pathname === "/drills", { timeout: 20_000 });
 });
 
 test("guest tokens are issued as an httpOnly cookie", async ({ page }) => {

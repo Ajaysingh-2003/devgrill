@@ -1,0 +1,161 @@
+# Quick Fire cards for the databases track (content/README.md has the rules).
+cards:
+  - slug: databases-missing-index
+    kind: log
+    level: warmup
+    prompt: "Checkout got slow right after the 14:05 deploy. What is the most likely cause?"
+    evidence:
+      - "14:05:12 INFO  deploy 9f2c1aa complete (checkout)"
+      - "14:06:40 WARN  seq scan on orders (rows=4,812,330)"
+      - "14:06:41 WARN  slow query 2,840 ms"
+      - "  SELECT * FROM orders WHERE user_id = $1"
+    options:
+      - { key: a, text: "The database is out of connections" }
+      - { key: b, text: "The deploy dropped the index on orders.user_id" }
+      - { key: c, text: "The orders table is locked by a backup" }
+      - { key: d, text: "Network latency to the database went up" }
+    answer: b
+    explanation: >-
+      A sequential scan over millions of rows for a lookup by user_id means Postgres has no index
+      to use, and it started with the deploy. Running out of connections or a lock would show as
+      waiting, not as a full table scan.
+
+  - slug: databases-too-many-clients
+    kind: log
+    level: warmup
+    prompt: "New requests fail but running ones finish. What is Postgres telling you?"
+    evidence:
+      - "FATAL:  sorry, too many clients already"
+      - "FATAL:  sorry, too many clients already"
+      - "max_connections = 100"
+      - "active connections: 100 (api: 96, cron: 4)"
+    options:
+      - { key: a, text: "Every connection slot is taken, so new ones are refused" }
+      - { key: b, text: "The disk is full and writes are rejected" }
+      - { key: c, text: "A query is deadlocked with another" }
+    answer: a
+    explanation: >-
+      "Too many clients" is the error for hitting max_connections, and the count shows all 100
+      slots in use. A full disk or a deadlock produces different errors and doesn't stop new
+      connections.
+
+  - slug: databases-deadlock
+    kind: log
+    level: core
+    prompt: "Two jobs update the same accounts. One keeps failing. Why?"
+    evidence:
+      - "ERROR:  deadlock detected"
+      - "DETAIL: Process 4121 waits for ShareLock on transaction 9917;"
+      - "  blocked by process 4188."
+      - "  Process 4188 waits for ShareLock on transaction 9912;"
+      - "  blocked by process 4121."
+    options:
+      - { key: a, text: "The table is missing a primary key" }
+      - { key: b, text: "The connection pool is too small" }
+      - { key: c, text: "Each job locks the same rows in a different order" }
+      - { key: d, text: "Autovacuum is holding a lock on the table" }
+    answer: c
+    explanation: >-
+      Each process waits for a lock the other holds, a cycle Postgres breaks by cancelling one.
+      That happens when two transactions take row locks in opposite orders. Locking rows in a
+      consistent order (for example by id) prevents it.
+
+  - slug: databases-idle-in-transaction
+    kind: graph
+    level: core
+    prompt: "Queries pile up behind a lock nobody seems to use. What is holding it?"
+    evidence:
+      - "pg_stat_activity"
+      - "pid   state                 xact_age  query"
+      - "811   idle in transaction   00:41:02  UPDATE carts SET ..."
+      - "902   active (Lock)         00:03:10  UPDATE carts SET ..."
+      - "905   active (Lock)         00:02:57  UPDATE carts SET ..."
+    options:
+      - { key: a, text: "A session opened a transaction and never committed it" }
+      - { key: b, text: "The carts table needs a vacuum" }
+      - { key: c, text: "Postgres is short of memory" }
+    answer: a
+    explanation: >-
+      Session 811 is idle inside a 41-minute transaction, so the row locks from its UPDATE are
+      still held, and the newer updates wait behind it. A vacuum or memory problem wouldn't show
+      as lock waits on the same rows.
+
+  - slug: databases-n-plus-one
+    kind: log
+    level: warmup
+    prompt: "The order history page takes 3 seconds. What does the query log show?"
+    evidence:
+      - "SELECT * FROM orders WHERE user_id = 42      1.1 ms"
+      - "SELECT * FROM items WHERE order_id = 9001    0.9 ms"
+      - "SELECT * FROM items WHERE order_id = 9002    0.9 ms"
+      - "SELECT * FROM items WHERE order_id = 9003    1.0 ms"
+      - "... 2,996 more like this for one page load"
+    options:
+      - { key: a, text: "One slow query is missing an index" }
+      - { key: b, text: "The page runs one query per order instead of one for all" }
+      - { key: c, text: "The database server is overloaded" }
+    answer: b
+    explanation: >-
+      Each query is fast, but the page runs thousands of them, one per order. Fetching the items
+      for all orders in one query (a join or an IN list) fixes it. No single query is slow, so an
+      index won't help.
+
+  - slug: databases-migration-not-null
+    kind: diff
+    level: core
+    prompt: "This migration ran fine in staging and then the deploy failed. Why?"
+    evidence:
+      - "+ ALTER TABLE users"
+      - "+   ADD COLUMN plan text NOT NULL;"
+      - ""
+      - 'ERROR:  column "plan" of relation "users"'
+      - "  contains null values"
+    options:
+      - { key: a, text: "The column name is a reserved word" }
+      - { key: b, text: "Staging used a newer Postgres version" }
+      - { key: c, text: "Existing rows get null, which NOT NULL rejects" }
+    answer: c
+    explanation: >-
+      Adding a NOT NULL column with no default gives every existing row a null, so it fails on
+      any table with rows. Staging's users table was empty. Add a default, or add the column as
+      nullable, backfill, then set NOT NULL.
+
+  - slug: databases-autovacuum-bloat
+    kind: graph
+    level: hard
+    prompt: "A small sessions table keeps getting slower to scan. What explains the numbers?"
+    evidence:
+      - "relname    n_live_tup  n_dead_tup  last_autovacuum"
+      - "sessions   48,210      9,744,302   (never)"
+      - "table size: 6.1 GB"
+      - "autovacuum_enabled = false  (sessions)"
+    options:
+      - { key: a, text: "Too many live sessions for one table" }
+      - { key: b, text: "The table has too many indexes" }
+      - { key: c, text: "Replication is copying the whole table" }
+      - { key: d, text: "Dead rows are never cleaned up, so the table bloats" }
+    answer: d
+    explanation: >-
+      Almost ten million dead rows against 48 thousand live ones, and autovacuum turned off for
+      this table. Updates and deletes leave dead rows behind that only vacuum reclaims, so scans
+      read gigabytes of garbage.
+
+  - slug: databases-statement-timeout
+    kind: config
+    level: hard
+    prompt: "Reports fail at exactly 30 seconds, even on a quiet database. Why?"
+    evidence:
+      - "# reporting service"
+      - "DATABASE_URL=postgres://report@db/shop"
+      - "PGOPTIONS=-c statement_timeout=30s"
+      - ""
+      - "ERROR:  canceling statement due to statement timeout"
+    options:
+      - { key: a, text: "The report queries hit a 30-second limit set for them" }
+      - { key: b, text: "The load balancer drops idle connections" }
+      - { key: c, text: "The database restarts every 30 seconds" }
+    answer: a
+    explanation: >-
+      statement_timeout cancels any query that runs longer than the limit, and the error says so
+      directly. Long reports need a higher limit for that role, or faster queries. Dropped
+      connections would give a different error.

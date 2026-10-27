@@ -26,6 +26,7 @@ from devgrill.domain.enums import (
     ChallengeKind,
     Difficulty,
     ExperienceLevel,
+    QuickfireKind,
     ScenarioStatus,
     StreakMode,
 )
@@ -150,6 +151,10 @@ class ChallengeOut(Model):
 # ------------------------------------------------------------------------ profile
 
 
+#: What the player does day to day (onboarding); it only shapes suggestions.
+JobRole = Literal["backend", "sre", "frontend", "data", "student", "other"]
+
+
 class Prefs(Model):
     theme: Literal["system", "light", "dark"] = "system"
     motion: Literal["system", "reduce", "full"] = "system"
@@ -158,6 +163,9 @@ class Prefs(Model):
     streak_mode: StreakMode = StreakMode.DAILY
     #: IANA zone used for streak days; India-first default.
     timezone: Timezone = DEFAULT_TIMEZONE
+    job_role: JobRole | None = None
+    #: Onboarding was finished or skipped: sign-in stops offering it.
+    onboarded: bool = False
 
 
 class PrefsPatch(Input):
@@ -167,6 +175,8 @@ class PrefsPatch(Input):
     pro_mode: StrictBool | None = None
     streak_mode: StreakMode | None = None
     timezone: Timezone | None = None
+    job_role: JobRole | None = None
+    onboarded: StrictBool | None = None
 
 
 class Me(Model):
@@ -792,6 +802,63 @@ class PostmortemReviewOut(Model):
     blame: list[str] = Field(default_factory=list)
     feedback: str | None = None
     graded_at: datetime | None = None
+
+
+# --------------------------------------------------------------------------- Quick Fire
+
+
+AnswerKey = Literal["a", "b", "c", "d"]
+
+
+class QuickfireOptionOut(Model):
+    key: str
+    text: str
+
+
+class QuickfireCardOut(Model):
+    """A card as the player sees it: never the answer."""
+
+    id: uuid.UUID
+    track_slug: str
+    track_title: str
+    kind: QuickfireKind
+    prompt: str
+    evidence: list[str]
+    options: list[QuickfireOptionOut]
+
+
+class QuickfireDeck(Model):
+    cards: list[QuickfireCardOut]
+
+
+class QuickfireAnswerIn(Input):
+    choice: AnswerKey
+
+
+class QuickfireAnswerOut(Model):
+    card_id: uuid.UUID
+    correct: bool
+    answer: str
+    explanation_md: str
+
+
+class CalibrationAnswer(Input):
+    card_id: uuid.UUID
+    choice: AnswerKey
+
+
+class OnboardingIn(Input):
+    experience_level: ExperienceLevel
+    job_role: JobRole | None = None
+    #: The calibration cards answered (none if skipped); at most one counts per track.
+    answers: list[CalibrationAnswer] = Field(default_factory=list, max_length=6)
+
+
+class OnboardingOut(Model):
+    me: Me
+    results: list[QuickfireAnswerOut]
+    #: Tracks that got a starting rating (tracks already rated by play keep theirs).
+    seeded_tracks: list[str]
 
 
 class ShareCardOut(Model):

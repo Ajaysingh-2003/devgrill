@@ -18,7 +18,14 @@ export async function startSignIn(page: Page, url: string): Promise<void> {
 export async function signIn(page: Page, login: string, next = "/drills"): Promise<void> {
   await page.context().addCookies([{ name: "mock_user", value: login, url: IDP_URL }]);
   await startSignIn(page, `/sign-in?next=${encodeURIComponent(next)}`);
-  await page.waitForURL((url) => url.pathname === next, { timeout: 20_000 });
+  await page.waitForURL((url) => url.pathname === next || url.pathname === "/onboarding", {
+    timeout: 20_000,
+  });
+  // A new account is offered onboarding first: skip it (onboarding.spec.ts covers the rest).
+  if (new URL(page.url()).pathname === "/onboarding" && next !== "/onboarding") {
+    await page.getByRole("button", { name: "Skip for now" }).click();
+    await page.waitForURL((url) => url.pathname === next, { timeout: 20_000 });
+  }
   await expect(page.getByRole("link", { name: /Your profile/ })).toBeVisible();
 }
 

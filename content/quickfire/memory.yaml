@@ -1,0 +1,161 @@
+# Quick Fire cards for the memory track (content/README.md has the rules).
+cards:
+  - slug: memory-heap-climbs
+    kind: graph
+    level: warmup
+    prompt: "The service's memory looks like this between deploys. What is it?"
+    evidence:
+      - "time   rss"
+      - "Mon    410 MB  (deploy)"
+      - "Tue    780 MB"
+      - "Wed    1.2 GB"
+      - "Thu    1.6 GB"
+      - "traffic: flat all week"
+    options:
+      - { key: a, text: "Normal growth from more traffic" }
+      - { key: b, text: "A leak: memory grows and is never given back" }
+      - { key: c, text: "The garbage collector is turned off" }
+    answer: b
+    explanation: >-
+      Memory climbs steadily with flat traffic and only drops at a deploy, the shape of a leak:
+      something keeps references it no longer needs. Traffic growth would follow the traffic,
+      and with no collector at all it would climb much faster.
+
+  - slug: memory-oomkilled
+    kind: log
+    level: warmup
+    prompt: "A pod keeps restarting with no error in the app's own logs. What does Kubernetes say?"
+    evidence:
+      - "Last State:  Terminated"
+      - "  Reason:    OOMKilled"
+      - "  Exit Code: 137"
+      - "Limits:      memory: 512Mi"
+      - "Restart Count: 14"
+    options:
+      - { key: a, text: "The app crashes on a bad request" }
+      - { key: b, text: "A health check fails and restarts it" }
+      - { key: c, text: "It goes over its 512 Mi memory limit and is killed" }
+      - { key: d, text: "The node is being drained" }
+    answer: c
+    explanation: >-
+      OOMKilled with exit code 137 means the kernel killed the process for exceeding its memory
+      limit, which is why the app logs nothing. Find what uses the memory, or raise the limit if
+      the usage is legitimate.
+
+  - slug: memory-unbounded-cache
+    kind: diff
+    level: core
+    prompt: "Memory grows forever after this change. Which line is responsible?"
+    evidence:
+      - "+_seen = {}"
+      - " def price(sku, region, currency):"
+      - "+    key = (sku, region, currency, time.time())"
+      - "+    if key not in _seen:"
+      - "+        _seen[key] = compute_price(sku, region, currency)"
+      - "+    return _seen[key]"
+    options:
+      - { key: a, text: "compute_price allocates too much" }
+      - { key: b, text: "The key includes the current time, so every call adds an entry" }
+      - { key: c, text: "Dictionaries in Python never shrink" }
+    answer: b
+    explanation: >-
+      Adding time.time() to the key makes every call unique, so the dict never gets a hit and
+      grows with every request. Drop the time from the key and give the cache a size limit, for
+      example with functools.lru_cache.
+
+  - slug: memory-gc-thrash
+    kind: log
+    level: core
+    prompt: "A JVM service answers slowly, then stops. What do the GC logs show?"
+    evidence:
+      - "[GC (Allocation Failure) 3.9G->3.8G(4.0G), 2.11 secs]"
+      - "[Full GC (Ergonomics) 3.9G->3.9G(4.0G), 6.84 secs]"
+      - "[Full GC (Ergonomics) 3.9G->3.9G(4.0G), 7.02 secs]"
+      - "java.lang.OutOfMemoryError: Java heap space"
+    options:
+      - { key: a, text: "The heap is nearly full of live objects and GC frees nothing" }
+      - { key: b, text: "The garbage collector settings are too aggressive" }
+      - { key: c, text: "The machine is swapping to disk" }
+    answer: a
+    explanation: >-
+      Each full collection takes seconds and frees almost nothing (3.9G to 3.9G), so the heap is
+      full of objects still in use. The pauses come first, then the OutOfMemoryError. A heap
+      dump shows what holds the memory.
+
+  - slug: memory-regex-backtracking
+    kind: log
+    level: hard
+    prompt: "One request pins a CPU core for minutes. What does the profile show?"
+    evidence:
+      - "100.0%  re._compile ... match"
+      - "pattern: ^(a+)+$"
+      - 'input:   "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaab"'
+      - "elapsed: 212 s (still running)"
+    options:
+      - { key: a, text: "The input is too long for the server" }
+      - { key: b, text: "The regex engine has a memory leak" }
+      - { key: c, text: "Nested repetition makes the regex try every split" }
+      - { key: d, text: "The request is stuck waiting for the database" }
+    answer: c
+    explanation: >-
+      (a+)+ can split a run of a's in exponentially many ways, and the final b forces the engine
+      to try them all before failing. Rewrite the pattern without nested repetition, or use a
+      regex engine with linear time and a timeout.
+
+  - slug: memory-file-descriptors
+    kind: log
+    level: core
+    prompt: "After a few days the service can't open files or connections. Why?"
+    evidence:
+      - "OSError: [Errno 24] Too many open files"
+      - "ulimit -n: 1024"
+      - "ls /proc/4121/fd | wc -l: 1024"
+      - "lsof: 1,002 x /var/data/export.csv (deleted)"
+    options:
+      - { key: a, text: "The disk is full" }
+      - { key: b, text: "Too many users are connected" }
+      - { key: c, text: "The export file is corrupted" }
+      - { key: d, text: "Files are opened and never closed, using up the limit" }
+    answer: d
+    explanation: >-
+      Over a thousand handles point at the same export file, so the code opens it without
+      closing it, and the process hits its 1,024 limit. Close files with a with block (or
+      try/finally); raising the limit only delays it.
+
+  - slug: memory-event-listeners
+    kind: log
+    level: hard
+    prompt: "A Node service slows down and grows memory over the day. What is the warning about?"
+    evidence:
+      - "(node) MaxListenersExceededWarning: Possible EventEmitter"
+      - "  memory leak detected. 11 'price' listeners added to"
+      - "  [PriceFeed]. Use emitter.setMaxListeners() to increase"
+      - "listeners on PriceFeed after 6 h: 48,112"
+    options:
+      - { key: a, text: "Each request adds a listener and never removes it" }
+      - { key: b, text: "The price feed sends too many events" }
+      - { key: c, text: "setMaxListeners is set too low" }
+    answer: a
+    explanation: >-
+      The listener count keeps rising, so code adds one per request or connection without
+      removing it. Each one stays in memory and runs on every event, which also slows things
+      down. Remove the listener when done; raising the limit only hides the warning.
+
+  - slug: memory-thread-starvation
+    kind: graph
+    level: warmup
+    prompt: "Requests time out but CPU is low. What does the server's thread pool show?"
+    evidence:
+      - "http threads: max 200, busy 200, queued 3,410"
+      - "busy threads waiting in: HTTP call to tax-service"
+      - "tax-service p99: 30 s (normally 80 ms)"
+      - "cpu: 9%"
+    options:
+      - { key: a, text: "The server needs more CPU" }
+      - { key: b, text: "All threads wait on a slow downstream call" }
+      - { key: c, text: "The garbage collector pauses the threads" }
+    answer: b
+    explanation: >-
+      Every thread is busy waiting on tax-service, which slowed from 80 ms to 30 s, so new
+      requests queue even though the CPU is idle. A short timeout on that call (and a circuit
+      breaker) frees the threads.

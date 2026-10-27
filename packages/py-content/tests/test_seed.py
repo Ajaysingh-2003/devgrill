@@ -12,7 +12,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from devgrill.domain.enums import ScenarioStatus
 from devgrill.infra.models import Scenario, ScenarioVersion, Topic, Track
-from devgrill_content.seed import ContentError, load_scenarios, load_tracks, seed
+from devgrill_content.seed import (
+    ContentError,
+    load_quickfire,
+    load_scenarios,
+    load_tracks,
+    seed,
+)
 
 CONTENT = Path(__file__).resolve().parents[3] / "content"
 
@@ -33,6 +39,29 @@ def test_folder_must_match_slug(tmp_path: Path) -> None:
     src.rename(tmp_path / "content/scenarios/caching/renamed")
     with pytest.raises(ContentError, match="must match its folder"):
         load_scenarios(tmp_path / "content")
+
+
+def test_every_published_track_has_quickfire_cards() -> None:
+    tracks = load_tracks(CONTENT)
+    cards = load_quickfire(CONTENT, tracks)
+    published = {t.slug for t in tracks.tracks if t.status == "published"}
+    assert published <= {track for track, _ in cards}
+
+
+def test_quickfire_slugs_are_unique_and_tracks_known(tmp_path: Path) -> None:
+    shutil.copytree(CONTENT, tmp_path / "content")
+    root = tmp_path / "content"
+    tracks = load_tracks(root)
+    caching = yaml.safe_load((root / "quickfire/caching.yaml").read_text(encoding="utf-8"))
+    queues = yaml.safe_load((root / "quickfire/queues.yaml").read_text(encoding="utf-8"))
+    queues["cards"].append(caching["cards"][0])
+    (root / "quickfire/queues.yaml").write_text(yaml.safe_dump(queues), encoding="utf-8")
+    with pytest.raises(ContentError, match="is also in"):
+        load_quickfire(root, tracks)
+    (root / "quickfire/queues.yaml").unlink()
+    (root / "quickfire/nope.yaml").write_text(yaml.safe_dump(caching), encoding="utf-8")
+    with pytest.raises(ContentError, match="no track 'nope'"):
+        load_quickfire(root, tracks)
 
 
 async def _count(session: AsyncSession, model: type) -> int:

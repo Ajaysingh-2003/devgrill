@@ -650,22 +650,3 @@ export const ADMIN_ROWS = [
     flag: null,
   },
 ] as const;
-
-export const QUICKFIRE = {
-  run: { remainingSec: 154, strikes: 1, answered: 7, score: 6 },
-  card: {
-    kind: "log" as const,
-    prompt: "Checkout latency doubled after the 14:05 deploy. What is the most likely cause?",
-    evidence: [
-      "14:05:12 INFO  deploy 9f2c1aa complete (checkout)",
-      "14:06:40 WARN  db: seq scan on orders (rows=4,812,330)",
-      "14:06:41 WARN  slow query 2,840ms SELECT * FROM orders WHERE user_id = $1",
-    ],
-    options: [
-      { id: "a", label: "The deploy dropped an index on orders.user_id" },
-      { id: "b", label: "The database is out of connections" },
-      { id: "c", label: "A cache stampede on user sessions" },
-      { id: "d", label: "DNS resolution is slow" },
-    ],
-  },
-};

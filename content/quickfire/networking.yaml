@@ -1,0 +1,156 @@
+# Quick Fire cards for the networking track (content/README.md has the rules).
+cards:
+  - slug: networking-dns-nxdomain
+    kind: log
+    level: warmup
+    prompt: "Calls to the payments API fail right after a config change. What does the error say?"
+    evidence:
+      - "ERROR payments call failed"
+      - "  getaddrinfo ENOTFOUND paymnets.internal"
+      - "config: PAYMENTS_HOST=paymnets.internal"
+    options:
+      - { key: a, text: "The payments service is down" }
+      - { key: b, text: "The host name is misspelled, so DNS can't find it" }
+      - { key: c, text: "The TLS certificate expired" }
+    answer: b
+    explanation: >-
+      ENOTFOUND means DNS has no record for the name, and the config says "paymnets", a typo. A
+      down service would refuse or time out instead. Fix the name, and validate config before it
+      ships.
+
+  - slug: networking-tls-expired
+    kind: log
+    level: warmup
+    prompt: "Every HTTPS call to the partner API started failing at midnight. Why?"
+    evidence:
+      - "ssl.SSLCertVerificationError: certificate verify failed:"
+      - "  certificate has expired (_ssl.c:1006)"
+      - "notAfter=Oct 26 23:59:59 2026 GMT"
+    options:
+      - { key: a, text: "The partner's certificate expired at midnight" }
+      - { key: b, text: "Our CA bundle is missing" }
+      - { key: c, text: "The partner blocked our IP" }
+    answer: a
+    explanation: >-
+      The error says the certificate has expired, and its end date is midnight. A missing CA
+      bundle fails as an unknown issuer, and a block would refuse or time out. The partner has to
+      renew it; turning off verification is not the fix.
+
+  - slug: networking-health-check-path
+    kind: diff
+    level: core
+    prompt: "Right after this deploy, the load balancer returns 503 for every request. Why?"
+    evidence:
+      - "lb target group: health check GET /healthz"
+      - '-@app.get("/healthz")'
+      - '+@app.get("/health")'
+      - ' def health(): return {"ok": True}'
+      - "targets healthy: 0 of 6"
+    options:
+      - { key: a, text: "The app crashes on start" }
+      - { key: b, text: "The load balancer is overloaded" }
+      - { key: c, text: "The health check path no longer exists, so every target is marked down" }
+      - { key: d, text: "DNS points at the old servers" }
+    answer: c
+    explanation: >-
+      The deploy renamed /healthz to /health, but the load balancer still checks /healthz, gets
+      404 and marks all six targets unhealthy, so it has nowhere to send traffic. Keep the old
+      path or change the check in the same release.
+
+  - slug: networking-timeout-too-long
+    kind: config
+    level: core
+    prompt: "When search is slow, checkout hangs too. Which setting makes that worse?"
+    evidence:
+      - "# checkout.yaml"
+      - "search:"
+      - "  url: http://search.internal"
+      - "  timeout: 60s"
+      - "  retries: 2"
+      - "checkout request budget: 3s"
+    options:
+      - { key: a, text: "The search URL uses plain HTTP" }
+      - { key: b, text: "Two retries is too many" }
+      - { key: c, text: "Search is called on every request" }
+      - { key: d, text: "The 60 s timeout is far longer than checkout's 3 s budget" }
+    answer: d
+    explanation: >-
+      Checkout has 3 s to answer, but it waits up to 60 s for search, three times over with
+      retries, so a slow search holds checkout's threads for minutes. Set the timeout inside the
+      caller's budget and show results without search if it is late.
+
+  - slug: networking-connection-reset-idle
+    kind: log
+    level: hard
+    prompt: "The first request after a quiet period fails, the retry works. What is going on?"
+    evidence:
+      - "03:14:07 ERROR ECONNRESET reading from orders-api"
+      - "03:14:07 INFO  retry ok (new connection)"
+      - "load balancer idle timeout: 60 s"
+      - "client keep-alive idle timeout: 300 s"
+    options:
+      - { key: a, text: "orders-api crashes when idle" }
+      - { key: b, text: "The client reuses a connection the load balancer already closed" }
+      - { key: c, text: "Night-time DNS changes" }
+    answer: b
+    explanation: >-
+      The load balancer drops idle connections after 60 s, but the client keeps them for 300 s
+      and reuses a dead one, which gets reset. Keep the client's idle timeout shorter than the
+      load balancer's.
+
+  - slug: networking-circuit-breaker-open
+    kind: log
+    level: core
+    prompt: "Recommendations vanished from product pages, but no errors reach users. What happened?"
+    evidence:
+      - "WARN breaker recs-api: 52% failures in 30 s, OPEN"
+      - "INFO recs-api call skipped (breaker open), showing none"
+      - "INFO breaker recs-api: HALF_OPEN, trial call failed"
+    options:
+      - { key: a, text: "recs-api is failing, so calls to it are skipped for now" }
+      - { key: b, text: "Recommendations were turned off by a flag" }
+      - { key: c, text: "Product pages are served from an old cache" }
+    answer: a
+    explanation: >-
+      The circuit breaker opened after half the calls failed, so pages skip recommendations
+      instead of waiting on a broken service, and its trial call still fails. The breaker is
+      working; recs-api is the thing to fix.
+
+  - slug: networking-mtu-black-hole
+    kind: log
+    level: hard
+    prompt: "Small API calls work over the new VPN, large ones hang. What does the capture show?"
+    evidence:
+      - "GET /health        200   312 bytes    40 ms"
+      - "GET /orders?page=1 200   1,180 bytes  52 ms"
+      - "GET /orders/export  -    hangs, no response"
+      - "tcpdump: 1514-byte segments resent, never acked"
+      - "ICMP frag-needed: blocked by firewall"
+    options:
+      - { key: a, text: "The export endpoint has a bug" }
+      - { key: b, text: "The VPN limits bandwidth" }
+      - { key: c, text: "Full-size packets are dropped and the warning is blocked" }
+      - { key: d, text: "The server runs out of memory on big responses" }
+    answer: c
+    explanation: >-
+      Small responses get through, but full-size 1,514-byte packets are resent forever: the VPN
+      path has a smaller packet size and the ICMP message that would say so is blocked. Allow
+      that ICMP or lower the MTU or MSS on the tunnel.
+
+  - slug: networking-port-exhaustion
+    kind: graph
+    level: warmup
+    prompt: 'Outgoing calls fail with "cannot assign requested address". Why?'
+    evidence:
+      - "connections to db-proxy:5432 in TIME_WAIT: 28,120"
+      - "ip_local_port_range: 32768-60999 (28,232 ports)"
+      - "client: new connection per query, closed after"
+    options:
+      - { key: a, text: "The database is refusing connections" }
+      - { key: b, text: "Short-lived connections used up the local ports" }
+      - { key: c, text: "The firewall blocks port 5432" }
+    answer: b
+    explanation: >-
+      Opening and closing a connection per query leaves each one in TIME_WAIT for a while, and
+      28 thousand of them have used up almost every local port. Reuse connections with a pool
+      instead of opening a new one each time.

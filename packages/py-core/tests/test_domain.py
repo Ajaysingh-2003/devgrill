@@ -178,3 +178,19 @@ def test_consecutive_dailies_differ() -> None:
         ]
         assert all(a != b for a, b in itertools.pairwise(picks))
         assert set(picks) == set(pool)  # the whole rotation gets played
+
+
+def test_calibration_starts_from_experience_and_moves_one_step() -> None:
+    from devgrill.domain import calibration
+    from devgrill.domain.enums import ExperienceLevel
+
+    out = calibration.starting_ratings(
+        ExperienceLevel.Y2_5, ["caching", "queues", "memory"], {"caching": True, "queues": False}
+    )
+    base = calibration.BASE[ExperienceLevel.Y2_5]
+    assert out["caching"].rating == base + calibration.STEP
+    assert out["queues"].rating == base - calibration.STEP
+    assert out["memory"].rating == base
+    # Loosely held: answered tracks a little surer than experience alone, both unsure.
+    assert out["caching"].rd == calibration.RD_ANSWERED < out["memory"].rd < 350
+    assert calibration.starting_ratings(None, ["x"], {})["x"].rating == 1500.0

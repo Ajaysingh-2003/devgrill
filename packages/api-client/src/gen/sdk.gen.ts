@@ -2,7 +2,7 @@
 
 import type { Client, ClientMeta, Options as Options2, RequestResult, ServerSentEventsResult, TDataShape } from './client';
 import { client } from './client.gen';
-import type { AbandonAttemptData, AbandonAttemptErrors, AbandonAttemptResponses, AdminAiCostsData, AdminAiCostsErrors, AdminAiCostsResponses, AdminApproachCandidatesData, AdminApproachCandidatesErrors, AdminApproachCandidatesResponses, AdminReviewCandidateData, AdminReviewCandidateErrors, AdminReviewCandidateResponses, AdminScenariosData, AdminScenariosErrors, AdminScenariosResponses, AttemptEventsData, AttemptEventsErrors, AttemptEventsResponses, CacheInsightsData, CacheInsightsErrors, CacheInsightsResponses, CanPlayData, CanPlayErrors, CanPlayResponses, ClaimGuestData, ClaimGuestErrors, ClaimGuestResponses, CreateGuestTokenData, CreateGuestTokenErrors, CreateGuestTokenResponses, CreateWsTicketData, CreateWsTicketErrors, CreateWsTicketResponses, DailyChallengeData, DailyChallengeErrors, DailyChallengeResponses, DbInsightsData, DbInsightsErrors, DbInsightsResponses, DbQueryData, DbQueryErrors, DbQueryResponses, DeclareMitigatedData, DeclareMitigatedErrors, DeclareMitigatedResponses, DeployChangesData, DeployChangesErrors, DeployChangesResponses, DeployData, DeployErrors, DeployResponses, ExtendAttemptData, ExtendAttemptErrors, ExtendAttemptResponses, GetApproachesData, GetApproachesErrors, GetApproachesResponses, GetAttemptData, GetAttemptErrors, GetAttemptResponses, GetDebriefData, GetDebriefErrors, GetDebriefResponses, GetMeData, GetMeErrors, GetMeResponses, GetPostmortemData, GetPostmortemErrors, GetPostmortemResponses, GetScenarioData, GetScenarioErrors, GetScenarioResponses, GetTrackData, GetTrackErrors, GetTrackResponses, GetWorkspaceData, GetWorkspaceErrors, GetWorkspaceResponses, HealthzData, HealthzResponses, ListDeploysData, ListDeploysErrors, ListDeploysResponses, ListFilesData, ListFilesErrors, ListFilesResponses, ListHintsData, ListHintsErrors, ListHintsResponses, ListScenariosData, ListScenariosErrors, ListScenariosResponses, ListTracksData, ListTracksErrors, ListTracksResponses, MyAttemptsData, MyAttemptsErrors, MyAttemptsResponses, MyProgressData, MyProgressErrors, MyProgressResponses, MyRatingsData, MyRatingsErrors, MyRatingsResponses, MyStreakData, MyStreakErrors, MyStreakResponses, MyUsageData, MyUsageErrors, MyUsageResponses, NudgeData, NudgeErrors, NudgeResponses, PatchMeData, PatchMeErrors, PatchMeResponses, PostMessageData, PostMessageErrors, PostMessageResponses, PublicProfileData, PublicProfileErrors, PublicProfileResponses, ReadFileData, ReadFileErrors, ReadFileResponses, ReadyzData, ReadyzErrors, ReadyzResponses, ResetAttemptData, ResetAttemptErrors, ResetAttemptResponses, RestartServiceData, RestartServiceErrors, RestartServiceResponses, ReviewPostmortemData, ReviewPostmortemErrors, ReviewPostmortemResponses, RollbackData, RollbackErrors, RollbackResponses, SandboxStatusData, SandboxStatusErrors, SandboxStatusResponses, SavePostmortemData, SavePostmortemErrors, SavePostmortemResponses, ShareCardData, ShareCardErrors, ShareCardResponses, StartAttemptData, StartAttemptErrors, StartAttemptResponses, SubmitPostmortemData, SubmitPostmortemErrors, SubmitPostmortemResponses, TakeHintData, TakeHintErrors, TakeHintResponses, TouchAttemptData, TouchAttemptErrors, TouchAttemptResponses, VerifyAttemptData, VerifyAttemptErrors, VerifyAttemptResponses, WeeklyChallengeData, WeeklyChallengeErrors, WeeklyChallengeResponses, WriteFileData, WriteFileErrors, WriteFileResponses } from './types.gen';
+import type { AbandonAttemptData, AbandonAttemptErrors, AbandonAttemptResponses, AdminAiCostsData, AdminAiCostsErrors, AdminAiCostsResponses, AdminApproachCandidatesData, AdminApproachCandidatesErrors, AdminApproachCandidatesResponses, AdminReviewCandidateData, AdminReviewCandidateErrors, AdminReviewCandidateResponses, AdminScenariosData, AdminScenariosErrors, AdminScenariosResponses, AnswerCardData, AnswerCardErrors, AnswerCardResponses, AttemptEventsData, AttemptEventsErrors, AttemptEventsResponses, CacheInsightsData, CacheInsightsErrors, CacheInsightsResponses, CalibrationDeckData, CalibrationDeckErrors, CalibrationDeckResponses, CanPlayData, CanPlayErrors, CanPlayResponses, ClaimGuestData, ClaimGuestErrors, ClaimGuestResponses, CreateGuestTokenData, CreateGuestTokenErrors, CreateGuestTokenResponses, CreateWsTicketData, CreateWsTicketErrors, CreateWsTicketResponses, DailyChallengeData, DailyChallengeErrors, DailyChallengeResponses, DbInsightsData, DbInsightsErrors, DbInsightsResponses, DbQueryData, DbQueryErrors, DbQueryResponses, DeclareMitigatedData, DeclareMitigatedErrors, DeclareMitigatedResponses, DeployChangesData, DeployChangesErrors, DeployChangesResponses, DeployData, DeployErrors, DeployResponses, ExtendAttemptData, ExtendAttemptErrors, ExtendAttemptResponses, FinishOnboardingData, FinishOnboardingErrors, FinishOnboardingResponses, GetApproachesData, GetApproachesErrors, GetApproachesResponses, GetAttemptData, GetAttemptErrors, GetAttemptResponses, GetDebriefData, GetDebriefErrors, GetDebriefResponses, GetMeData, GetMeErrors, GetMeResponses, GetPostmortemData, GetPostmortemErrors, GetPostmortemResponses, GetScenarioData, GetScenarioErrors, GetScenarioResponses, GetTrackData, GetTrackErrors, GetTrackResponses, GetWorkspaceData, GetWorkspaceErrors, GetWorkspaceResponses, HealthzData, HealthzResponses, ListDeploysData, ListDeploysErrors, ListDeploysResponses, ListFilesData, ListFilesErrors, ListFilesResponses, ListHintsData, ListHintsErrors, ListHintsResponses, ListScenariosData, ListScenariosErrors, ListScenariosResponses, ListTracksData, ListTracksErrors, ListTracksResponses, MyAttemptsData, MyAttemptsErrors, MyAttemptsResponses, MyProgressData, MyProgressErrors, MyProgressResponses, MyRatingsData, MyRatingsErrors, MyRatingsResponses, MyStreakData, MyStreakErrors, MyStreakResponses, MyUsageData, MyUsageErrors, MyUsageResponses, NudgeData, NudgeErrors, NudgeResponses, PatchMeData, PatchMeErrors, PatchMeResponses, PostMessageData, PostMessageErrors, PostMessageResponses, PublicProfileData, PublicProfileErrors, PublicProfileResponses, QuickfireDeckData, QuickfireDeckErrors, QuickfireDeckResponses, ReadFileData, ReadFileErrors, ReadFileResponses, ReadyzData, ReadyzErrors, ReadyzResponses, ResetAttemptData, ResetAttemptErrors, ResetAttemptResponses, RestartServiceData, RestartServiceErrors, RestartServiceResponses, ReviewPostmortemData, ReviewPostmortemErrors, ReviewPostmortemResponses, RollbackData, RollbackErrors, RollbackResponses, SandboxStatusData, SandboxStatusErrors, SandboxStatusResponses, SavePostmortemData, SavePostmortemErrors, SavePostmortemResponses, ShareCardData, ShareCardErrors, ShareCardResponses, StartAttemptData, StartAttemptErrors, StartAttemptResponses, SubmitPostmortemData, SubmitPostmortemErrors, SubmitPostmortemResponses, TakeHintData, TakeHintErrors, TakeHintResponses, TouchAttemptData, TouchAttemptErrors, TouchAttemptResponses, VerifyAttemptData, VerifyAttemptErrors, VerifyAttemptResponses, WeeklyChallengeData, WeeklyChallengeErrors, WeeklyChallengeResponses, WriteFileData, WriteFileErrors, WriteFileResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -411,6 +411,20 @@ export const claimGuest = <ThrowOnError extends boolean = false>(options: Option
 });
 
 /**
+ * Finish Onboarding
+ *
+ * Save experience and role, check the calibration answers, seed starting ratings.
+ */
+export const finishOnboarding = <ThrowOnError extends boolean = false>(options: Options<FinishOnboardingData, ThrowOnError>): RequestResult<FinishOnboardingResponses, FinishOnboardingErrors, ThrowOnError> => (options.client ?? client).post<FinishOnboardingResponses, FinishOnboardingErrors, ThrowOnError>({
+    url: '/v1/me/onboarding',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
  * My Progress
  *
  * Solved and attempted counts and mastery per track and topic.
@@ -437,6 +451,34 @@ export const myStreak = <ThrowOnError extends boolean = false>(options?: Options
  * Live incidents and sandbox minutes left this period; whether free starts are paused.
  */
 export const myUsage = <ThrowOnError extends boolean = false>(options?: Options<MyUsageData, ThrowOnError>): RequestResult<MyUsageResponses, MyUsageErrors, ThrowOnError> => (options?.client ?? client).get<MyUsageResponses, MyUsageErrors, ThrowOnError>({ url: '/v1/me/usage', ...options });
+
+/**
+ * Calibration Deck
+ *
+ * One card per track for the optional calibration (skippable).
+ */
+export const calibrationDeck = <ThrowOnError extends boolean = false>(options?: Options<CalibrationDeckData, ThrowOnError>): RequestResult<CalibrationDeckResponses, CalibrationDeckErrors, ThrowOnError> => (options?.client ?? client).get<CalibrationDeckResponses, CalibrationDeckErrors, ThrowOnError>({ url: '/v1/onboarding/calibration', ...options });
+
+/**
+ * Answer Card
+ *
+ * Whether `choice` is right, with the answer and why.
+ */
+export const answerCard = <ThrowOnError extends boolean = false>(options: Options<AnswerCardData, ThrowOnError>): RequestResult<AnswerCardResponses, AnswerCardErrors, ThrowOnError> => (options.client ?? client).post<AnswerCardResponses, AnswerCardErrors, ThrowOnError>({
+    url: '/v1/quickfire/cards/{card_id}/answer',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Quickfire Deck
+ *
+ * Random cards for a run, from one track or all of them. Answers are checked one by one.
+ */
+export const quickfireDeck = <ThrowOnError extends boolean = false>(options?: Options<QuickfireDeckData, ThrowOnError>): RequestResult<QuickfireDeckResponses, QuickfireDeckErrors, ThrowOnError> => (options?.client ?? client).get<QuickfireDeckResponses, QuickfireDeckErrors, ThrowOnError>({ url: '/v1/quickfire/deck', ...options });
 
 /**
  * List Scenarios

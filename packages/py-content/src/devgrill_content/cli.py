@@ -101,7 +101,7 @@ def validate(root: Path, slug: str | None = None) -> int:
     from devgrill.sandbox.content import ContentError, load_approaches, load_bundle, load_yaml
     from devgrill_content.patchcheck import check_fault, check_scenario
     from devgrill_content.scenario_test import load_solution
-    from devgrill_content.seed import load_tracks
+    from devgrill_content.seed import load_quickfire, load_tracks
 
     errors: list[str] = []
 
@@ -113,7 +113,9 @@ def validate(root: Path, slug: str | None = None) -> int:
             return None
 
     # Tracks with their primers (content/primers/<track>/<topic>.md).
-    attempt("tracks.yaml", lambda: load_tracks(root))
+    tracks = attempt("tracks.yaml", lambda: load_tracks(root))
+    if tracks is not None:
+        attempt("quickfire", lambda: load_quickfire(root, tracks))
     apps = []
     for folder in sorted((root / "base-apps").glob("*/base-app.yaml")):
         loaded = attempt(
@@ -339,7 +341,8 @@ async def _seed(root: Path) -> int:
     print(
         f"seed: {report.tracks} tracks, {report.topics} topics, "
         f"{report.scenarios_new} new scenarios, {report.versions_new} new versions, "
-        f"{report.unchanged} unchanged, {report.approaches} approaches"
+        f"{report.unchanged} unchanged, {report.approaches} approaches, "
+        f"{report.cards} Quick Fire cards"
     )
     return 0
 

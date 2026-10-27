@@ -22,6 +22,7 @@ from devgrill.domain.enums import (
     Difficulty,
     FaultKind,
     ProbeKind,
+    QuickfireKind,
     ScenarioStatus,
     TrackStatus,
 )
@@ -620,3 +621,47 @@ class TrackSpec(_Strict):
 
 class TracksFile(_Strict):
     tracks: list[TrackSpec]
+
+
+# --------------------------------------------------------------------------- Quick Fire
+
+OptionKey = Literal["a", "b", "c", "d"]
+QuickfireLevel = Literal["warmup", "core", "hard"]
+#: A card's starting difficulty (Glicko rating), from its level; play moves it from there.
+LEVEL_RATING: dict[QuickfireLevel, float] = {"warmup": 1300.0, "core": 1500.0, "hard": 1700.0}
+
+
+class QuickfireOption(_Strict):
+    key: OptionKey
+    text: str = Field(min_length=1, max_length=80)
+
+
+class QuickfireCardSpec(_Strict):
+    """One Quick Fire card (content/quickfire/<track>.yaml): evidence, a question, one answer.
+
+    Sized for a phone: short lines of evidence, three or four short options.
+    """
+
+    slug: Slug
+    kind: QuickfireKind
+    level: QuickfireLevel = "core"
+    prompt: str = Field(min_length=10, max_length=140)
+    evidence: list[Annotated[str, Field(max_length=72)]] = Field(min_length=2, max_length=10)
+    options: list[QuickfireOption] = Field(min_length=3, max_length=4)
+    answer: OptionKey
+    explanation: str = Field(min_length=20, max_length=400)
+
+    @model_validator(mode="after")
+    def _one_answer(self) -> QuickfireCardSpec:
+        keys = [o.key for o in self.options]
+        if keys != ["a", "b", "c", "d"][: len(keys)]:
+            raise ValueError("option keys must be a, b, c (and d), in order")
+        if self.answer not in keys:
+            raise ValueError(f"answer {self.answer!r} is not one of the options")
+        if not self.prompt.rstrip().endswith("?"):
+            raise ValueError("the prompt is a question: end it with '?'")
+        return self
+
+
+class QuickfireFile(_Strict):
+    cards: list[QuickfireCardSpec] = Field(min_length=1)

@@ -40,7 +40,8 @@ async def ratings_with_history(
         await session.execute(
             select(Track, SkillRating)
             .join(SkillRating, SkillRating.track_id == Track.id)
-            .where(SkillRating.user_id == user_id)
+            # Calibration's starting points (no games yet) aren't shown as ratings.
+            .where(SkillRating.user_id == user_id, SkillRating.games > 0)
             .order_by(Track.position)
         )
     ).all()

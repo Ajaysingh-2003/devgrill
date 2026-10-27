@@ -931,6 +931,32 @@
         "title": "CacheStats",
         "type": "object"
       },
+      "CalibrationAnswer": {
+        "additionalProperties": false,
+        "properties": {
+          "card_id": {
+            "format": "uuid",
+            "title": "Card Id",
+            "type": "string"
+          },
+          "choice": {
+            "enum": [
+              "a",
+              "b",
+              "c",
+              "d"
+            ],
+            "title": "Choice",
+            "type": "string"
+          }
+        },
+        "required": [
+          "card_id",
+          "choice"
+        ],
+        "title": "CalibrationAnswer",
+        "type": "object"
+      },
       "ChallengeKind": {
         "enum": [
           "daily",
@@ -2114,6 +2140,74 @@
         "title": "NudgeOut",
         "type": "object"
       },
+      "OnboardingIn": {
+        "additionalProperties": false,
+        "properties": {
+          "answers": {
+            "items": {
+              "$ref": "#/components/schemas/CalibrationAnswer"
+            },
+            "maxItems": 6,
+            "title": "Answers",
+            "type": "array"
+          },
+          "experience_level": {
+            "$ref": "#/components/schemas/ExperienceLevel"
+          },
+          "job_role": {
+            "anyOf": [
+              {
+                "enum": [
+                  "backend",
+                  "sre",
+                  "frontend",
+                  "data",
+                  "student",
+                  "other"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Job Role"
+          }
+        },
+        "required": [
+          "experience_level"
+        ],
+        "title": "OnboardingIn",
+        "type": "object"
+      },
+      "OnboardingOut": {
+        "properties": {
+          "me": {
+            "$ref": "#/components/schemas/Me"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/QuickfireAnswerOut"
+            },
+            "title": "Results",
+            "type": "array"
+          },
+          "seeded_tracks": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Seeded Tracks",
+            "type": "array"
+          }
+        },
+        "required": [
+          "me",
+          "results",
+          "seeded_tracks"
+        ],
+        "title": "OnboardingOut",
+        "type": "object"
+      },
       "PageOut": {
         "properties": {
           "severity": {
@@ -2416,6 +2510,25 @@
       },
       "Prefs": {
         "properties": {
+          "job_role": {
+            "anyOf": [
+              {
+                "enum": [
+                  "backend",
+                  "sre",
+                  "frontend",
+                  "data",
+                  "student",
+                  "other"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Job Role"
+          },
           "motion": {
             "default": "system",
             "enum": [
@@ -2425,6 +2538,11 @@
             ],
             "title": "Motion",
             "type": "string"
+          },
+          "onboarded": {
+            "default": false,
+            "title": "Onboarded",
+            "type": "boolean"
           },
           "pro_mode": {
             "default": false,
@@ -2461,6 +2579,25 @@
       "PrefsPatch": {
         "additionalProperties": false,
         "properties": {
+          "job_role": {
+            "anyOf": [
+              {
+                "enum": [
+                  "backend",
+                  "sre",
+                  "frontend",
+                  "data",
+                  "student",
+                  "other"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Job Role"
+          },
           "motion": {
             "anyOf": [
               {
@@ -2476,6 +2613,17 @@
               }
             ],
             "title": "Motion"
+          },
+          "onboarded": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Onboarded"
           },
           "pro_mode": {
             "anyOf": [
@@ -2819,6 +2967,149 @@
           }
         },
         "title": "QueryOut",
+        "type": "object"
+      },
+      "QuickfireAnswerIn": {
+        "additionalProperties": false,
+        "properties": {
+          "choice": {
+            "enum": [
+              "a",
+              "b",
+              "c",
+              "d"
+            ],
+            "title": "Choice",
+            "type": "string"
+          }
+        },
+        "required": [
+          "choice"
+        ],
+        "title": "QuickfireAnswerIn",
+        "type": "object"
+      },
+      "QuickfireAnswerOut": {
+        "properties": {
+          "answer": {
+            "title": "Answer",
+            "type": "string"
+          },
+          "card_id": {
+            "format": "uuid",
+            "title": "Card Id",
+            "type": "string"
+          },
+          "correct": {
+            "title": "Correct",
+            "type": "boolean"
+          },
+          "explanation_md": {
+            "title": "Explanation Md",
+            "type": "string"
+          }
+        },
+        "required": [
+          "card_id",
+          "correct",
+          "answer",
+          "explanation_md"
+        ],
+        "title": "QuickfireAnswerOut",
+        "type": "object"
+      },
+      "QuickfireCardOut": {
+        "description": "A card as the player sees it: never the answer.",
+        "properties": {
+          "evidence": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Evidence",
+            "type": "array"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/QuickfireKind"
+          },
+          "options": {
+            "items": {
+              "$ref": "#/components/schemas/QuickfireOptionOut"
+            },
+            "title": "Options",
+            "type": "array"
+          },
+          "prompt": {
+            "title": "Prompt",
+            "type": "string"
+          },
+          "track_slug": {
+            "title": "Track Slug",
+            "type": "string"
+          },
+          "track_title": {
+            "title": "Track Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "track_slug",
+          "track_title",
+          "kind",
+          "prompt",
+          "evidence",
+          "options"
+        ],
+        "title": "QuickfireCardOut",
+        "type": "object"
+      },
+      "QuickfireDeck": {
+        "properties": {
+          "cards": {
+            "items": {
+              "$ref": "#/components/schemas/QuickfireCardOut"
+            },
+            "title": "Cards",
+            "type": "array"
+          }
+        },
+        "required": [
+          "cards"
+        ],
+        "title": "QuickfireDeck",
+        "type": "object"
+      },
+      "QuickfireKind": {
+        "enum": [
+          "log",
+          "graph",
+          "diff",
+          "config"
+        ],
+        "title": "QuickfireKind",
+        "type": "string"
+      },
+      "QuickfireOptionOut": {
+        "properties": {
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "text"
+        ],
+        "title": "QuickfireOptionOut",
         "type": "object"
       },
       "Quota": {
@@ -11527,6 +11818,146 @@
         ]
       }
     },
+    "/v1/me/onboarding": {
+      "post": {
+        "description": "Save experience and role, check the calibration answers, seed starting ratings.",
+        "operationId": "finish_onboarding",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OnboardingIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OnboardingOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad request (e.g. an invalid cursor)."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing or invalid credentials."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Signed in, but not allowed."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not found."
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict (e.g. a request with this Idempotency-Key is still running)."
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "The request is invalid; see `errors`."
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Rate limited; see Retry-After."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Server error."
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Temporarily unavailable."
+          }
+        },
+        "summary": "Finish Onboarding",
+        "tags": [
+          "quickfire"
+        ]
+      }
+    },
     "/v1/me/progress": {
       "get": {
         "description": "Solved and attempted counts and mastery per track and topic.",
@@ -12069,6 +12500,414 @@
         "tags": [
           "attempts",
           "me"
+        ]
+      }
+    },
+    "/v1/onboarding/calibration": {
+      "get": {
+        "description": "One card per track for the optional calibration (skippable).",
+        "operationId": "calibration_deck",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QuickfireDeck"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad request (e.g. an invalid cursor)."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing or invalid credentials."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Signed in, but not allowed."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not found."
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict (e.g. a request with this Idempotency-Key is still running)."
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "The request is invalid; see `errors`."
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Rate limited; see Retry-After."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Server error."
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Temporarily unavailable."
+          }
+        },
+        "summary": "Calibration Deck",
+        "tags": [
+          "quickfire"
+        ]
+      }
+    },
+    "/v1/quickfire/cards/{card_id}/answer": {
+      "post": {
+        "description": "Whether `choice` is right, with the answer and why.",
+        "operationId": "answer_card",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "card_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Card Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/QuickfireAnswerIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QuickfireAnswerOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad request (e.g. an invalid cursor)."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing or invalid credentials."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Signed in, but not allowed."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not found."
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict (e.g. a request with this Idempotency-Key is still running)."
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "The request is invalid; see `errors`."
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Rate limited; see Retry-After."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Server error."
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Temporarily unavailable."
+          }
+        },
+        "summary": "Answer Card",
+        "tags": [
+          "quickfire"
+        ]
+      }
+    },
+    "/v1/quickfire/deck": {
+      "get": {
+        "description": "Random cards for a run, from one track or all of them. Answers are checked one by one.",
+        "operationId": "quickfire_deck",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "track",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Track"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 50,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QuickfireDeck"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad request (e.g. an invalid cursor)."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing or invalid credentials."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Signed in, but not allowed."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not found."
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict (e.g. a request with this Idempotency-Key is still running)."
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "The request is invalid; see `errors`."
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Rate limited; see Retry-After."
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Server error."
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Temporarily unavailable."
+          }
+        },
+        "summary": "Quickfire Deck",
+        "tags": [
+          "quickfire"
         ]
       }
     },

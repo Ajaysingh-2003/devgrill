@@ -1,0 +1,156 @@
+# Quick Fire cards for the concurrency track (content/README.md has the rules).
+cards:
+  - slug: concurrency-lost-update
+    kind: diff
+    level: warmup
+    prompt: "Stock counts drift lower than real sales under load. What is wrong with this code?"
+    evidence:
+      - " def sell(product_id):"
+      - "     stock = db.get_stock(product_id)"
+      - "     db.set_stock(product_id, stock - 1)"
+    options:
+      - { key: a, text: "Two requests read the same stock, and one update is lost" }
+      - { key: b, text: "The stock column has the wrong type" }
+      - { key: c, text: "The database rounds numbers" }
+    answer: a
+    explanation: >-
+      Read, then write, is not atomic: two sales read 10 and both write 9. Do it in one
+      statement (UPDATE ... SET stock = stock - 1) or lock the row while reading.
+
+  - slug: concurrency-overbooked-seats
+    kind: log
+    level: core
+    prompt: "A flight shows 182 bookings for 180 seats. How did that happen?"
+    evidence:
+      - "12:00:01.204 req-A  SELECT count(*) bookings = 179"
+      - "12:00:01.206 req-B  SELECT count(*) bookings = 179"
+      - "12:00:01.208 req-A  INSERT booking (seat 180)"
+      - "12:00:01.209 req-B  INSERT booking (seat 181)"
+    options:
+      - { key: a, text: "The count query has a bug" }
+      - { key: b, text: "Both requests checked before either one booked" }
+      - { key: c, text: "A replica returned an old count" }
+      - { key: d, text: "The seat limit changed during the sale" }
+    answer: b
+    explanation: >-
+      Both requests saw 179 and both decided there was room: a check-then-act race. Make the
+      check and the insert one atomic step, for example with a lock on the flight row or a
+      constraint the database enforces.
+
+  - slug: concurrency-missing-await
+    kind: log
+    level: core
+    prompt: "Some saves silently don't happen in this Node service. What does the log suggest?"
+    evidence:
+      - "INFO  request 81 done in 4 ms (status 200)"
+      - "WARN  (node) UnhandledPromiseRejection:"
+      - "  Error: connection terminated (saveProfile)"
+      - "INFO  request 82 done in 3 ms (status 200)"
+    options:
+      - { key: a, text: "The database rejects the profile format" }
+      - { key: b, text: "The response is cached by a proxy" }
+      - { key: c, text: "The save isn't awaited, so its error is never handled" }
+    answer: c
+    explanation: >-
+      The request answers 200 in a few milliseconds while saveProfile fails later as an
+      unhandled rejection: the code doesn't wait for the save. Await it so failures reach the
+      handler and the client hears about them.
+
+  - slug: concurrency-double-click-charge
+    kind: log
+    level: warmup
+    prompt: "A customer was charged twice for one order. What do the logs show?"
+    evidence:
+      - "10:42:07.110 POST /pay order=771 card=****4242"
+      - "10:42:07.390 POST /pay order=771 card=****4242"
+      - "10:42:08.020 charge ok order=771 amount=1,499"
+      - "10:42:08.300 charge ok order=771 amount=1,499"
+    options:
+      - { key: a, text: "The payment provider retried the charge" }
+      - { key: b, text: "Two pay requests for the same order were both charged" }
+      - { key: c, text: "The order total was doubled" }
+    answer: b
+    explanation: >-
+      Two requests for order 771 arrived 280 ms apart, likely a double click, and each made its
+      own charge. Send an idempotency key with the charge, or refuse a second payment for an
+      order that is already being paid.
+
+  - slug: concurrency-thread-unsafe-map
+    kind: log
+    level: hard
+    prompt: "A Java service hangs with 100% CPU after a traffic spike. What does the thread dump show?"
+    evidence:
+      - '"worker-12" RUNNABLE'
+      - "  at java.util.HashMap.putVal(HashMap.java:630)"
+      - '"worker-31" RUNNABLE'
+      - "  at java.util.HashMap.putVal(HashMap.java:630)"
+      - "shared: static Map<String, Rate> RATES = new HashMap<>()"
+    options:
+      - { key: a, text: "The heap is full and the garbage collector is busy" }
+      - { key: b, text: "Threads are blocked waiting for a lock" }
+      - { key: c, text: "The service is downloading new rates" }
+      - { key: d, text: "Threads write one plain HashMap at once and corrupt it" }
+    answer: d
+    explanation: >-
+      Many threads write to a shared HashMap that isn't safe for concurrent use. Its internals
+      can get corrupted, leaving threads spinning inside put. They are RUNNABLE, not blocked,
+      which rules out a lock. Use ConcurrentHashMap.
+
+  - slug: concurrency-lock-timeout
+    kind: config
+    level: core
+    prompt: 'Jobs fail with "could not acquire lock" only when two run at once. What explains it?'
+    evidence:
+      - "# scheduler.yaml"
+      - "jobs:"
+      - "  nightly-invoices: { every: 10m, lock: invoices, lock_wait: 0s }"
+      - "  invoice-retry:    { every: 10m, lock: invoices, lock_wait: 0s }"
+    options:
+      - { key: a, text: "Both jobs share one lock and give up instantly if it's taken" }
+      - { key: b, text: "The scheduler runs each job twice" }
+      - { key: c, text: "The lock name has a typo" }
+    answer: a
+    explanation: >-
+      Both jobs use the "invoices" lock on the same schedule, and lock_wait 0s means the second
+      fails at once instead of waiting. That may be intended, but then it shouldn't count as a
+      failure, or the jobs should wait or run at different times.
+
+  - slug: concurrency-cache-check-race
+    kind: diff
+    level: hard
+    prompt: "Under load, one expensive report is built 30 times at once. Why?"
+    evidence:
+      - " def report(day):"
+      - '     cached = cache.get(f"report:{day}")'
+      - "     if cached:"
+      - "         return cached"
+      - "     data = build_report(day)   # 20 s"
+      - '     cache.set(f"report:{day}", data)'
+    options:
+      - { key: a, text: "The cache key changes every request" }
+      - { key: b, text: "Every request that misses builds the report itself" }
+      - { key: c, text: "The report is never stored in the cache" }
+    answer: b
+    explanation: >-
+      For the 20 s it takes to build, every request misses and starts its own build. Let one
+      request build it while others wait (a lock or a single-flight helper), or rebuild it in
+      the background before it expires.
+
+  - slug: concurrency-pool-deadlock
+    kind: log
+    level: warmup
+    prompt: "All workers are stuck and none is busy. What is the thread pool doing?"
+    evidence:
+      - "pool size: 8, active: 8, queued: 211"
+      - "worker-1 waiting on future (subtask submitted to same pool)"
+      - "worker-2 waiting on future (subtask submitted to same pool)"
+      - "... workers 3-8 the same"
+    options:
+      - { key: a, text: "The pool is too big for the machine" }
+      - { key: b, text: "A database query is slow" }
+      - { key: c, text: "Each task waits on a subtask that can't get a free worker" }
+    answer: c
+    explanation: >-
+      All eight workers wait for subtasks queued in the same pool, and no worker is free to run
+      them, so nothing moves. Run subtasks on a separate pool, or don't block a worker on work
+      queued behind it.

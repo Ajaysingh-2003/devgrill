@@ -1,0 +1,162 @@
+# Quick Fire cards for the queues track (content/README.md has the rules).
+cards:
+  - slug: queues-consumer-lag-growing
+    kind: graph
+    level: warmup
+    prompt: "Order emails arrive later and later today. What does the queue show?"
+    evidence:
+      - "time   produced/s  consumed/s  lag"
+      - "09:00  120         120         0"
+      - "12:00  410         150         1,100,000"
+      - "15:00  390         150         4,300,000"
+    options:
+      - { key: a, text: "The consumer is down" }
+      - { key: b, text: "Messages come in faster than consumers can handle them" }
+      - { key: c, text: "Messages are being lost before the queue" }
+    answer: b
+    explanation: >-
+      Consumers still process 150 a second, so they are up, but producers send more than twice
+      that, and the lag keeps growing. Add consumers (and partitions if needed) or make each
+      message cheaper to handle.
+
+  - slug: queues-poison-message
+    kind: log
+    level: core
+    prompt: "The consumer is up but the queue stopped moving. What is happening?"
+    evidence:
+      - "INFO  consuming offset 88121 (partition 3)"
+      - "ERROR KeyError: 'currency' in handle_order"
+      - "INFO  consuming offset 88121 (partition 3)"
+      - "ERROR KeyError: 'currency' in handle_order"
+      - "INFO  consuming offset 88121 (partition 3)"
+    options:
+      - { key: a, text: "One bad message fails forever and blocks the partition" }
+      - { key: b, text: "The broker is out of disk" }
+      - { key: c, text: "The consumer can't reach the broker" }
+      - { key: d, text: "Two consumers fight over the partition" }
+    answer: a
+    explanation: >-
+      The same offset fails with the same error again and again, so nothing behind it gets
+      processed. Retry a few times, then move the message to a dead-letter queue and keep going,
+      and fix the handler for the missing field.
+
+  - slug: queues-rebalance-storm
+    kind: log
+    level: hard
+    prompt: "The consumer group keeps rebalancing and little gets done. Why?"
+    evidence:
+      - "WARN consumer poll timeout has expired."
+      - "  Time between poll() calls exceeded max.poll.interval.ms"
+      - "  (300000). Leaving group."
+      - "INFO  batch of 500 records took 412 s to process"
+      - "INFO  group rebalancing (generation 1,208)"
+    options:
+      - { key: a, text: "The broker restarts every few minutes" }
+      - { key: b, text: "There are more consumers than partitions" }
+      - { key: c, text: "The network between consumer and broker is flaky" }
+      - { key: d, text: "A batch takes longer than the poll limit, so consumers get kicked" }
+    answer: d
+    explanation: >-
+      Processing 500 records takes 412 s, longer than the 300 s allowed between polls, so the
+      consumer is removed from the group and everyone rebalances. Fetch smaller batches or speed
+      up the handler so each poll comes in time.
+
+  - slug: queues-unacked-redelivery
+    kind: log
+    level: core
+    prompt: "Each order is processed two or three times. What explains it?"
+    evidence:
+      - "consumer: handled order 5512 in 41 s"
+      - "broker:   delivery tag 991 not acked within 30 s,"
+      - "          requeueing (redelivered=true)"
+      - "consumer: handled order 5512 in 39 s"
+    options:
+      - { key: a, text: "The producer sends every order twice" }
+      - { key: b, text: "Handling takes longer than the ack timeout, so it is redelivered" }
+      - { key: c, text: "The queue is mirrored to two brokers" }
+    answer: b
+    explanation: >-
+      The broker waits 30 s for an acknowledgement, the handler takes about 40 s, so the message
+      goes back on the queue and is handled again. Raise the timeout or speed up the handler, and
+      make handling safe to repeat anyway.
+
+  - slug: queues-auto-ack-loss
+    kind: config
+    level: warmup
+    prompt: "When a worker crashes, the jobs it was holding vanish. Which setting explains it?"
+    evidence:
+      - "# worker.yaml"
+      - "queue: invoices"
+      - "prefetch: 50"
+      - "auto_ack: true"
+    options:
+      - { key: a, text: "prefetch is too high" }
+      - { key: b, text: "The queue name is wrong" }
+      - { key: c, text: "Messages are acknowledged on delivery, before the work is done" }
+    answer: c
+    explanation: >-
+      With auto_ack the broker forgets a message as soon as it hands it out, so a crash loses up
+      to 50 prefetched jobs. Acknowledge after the work succeeds so unfinished messages are
+      delivered again.
+
+  - slug: queues-single-hot-partition
+    kind: graph
+    level: hard
+    prompt: "Adding consumers didn't reduce the lag. What does the partition view say?"
+    evidence:
+      - "partition  lag        consumer"
+      - "0          120        c-1"
+      - "1          95         c-2"
+      - "2          3,904,551  c-3"
+      - "3          88         c-4"
+      - "key for all events: tenant_id (tenant 7 = 81% of traffic)"
+    options:
+      - { key: a, text: "Consumer c-3 runs on a slower machine" }
+      - { key: b, text: "One big tenant's events all land on one partition" }
+      - { key: c, text: "The topic has too many partitions" }
+      - { key: d, text: "The broker throttles partition 2" }
+    answer: b
+    explanation: >-
+      Messages are partitioned by tenant, and one tenant sends most of the traffic, so a single
+      partition, read by a single consumer, holds all the lag. Only one consumer reads a
+      partition, so more consumers can't help. A finer key spreads the load.
+
+  - slug: queues-retry-without-backoff
+    kind: diff
+    level: core
+    prompt: "After this change, a slow payments API makes the queue explode. Why?"
+    evidence:
+      - " def handle(msg):"
+      - "     try:"
+      - "         payments.charge(msg.order)"
+      - "     except Timeout:"
+      - "-        queue.publish(msg, delay=backoff(msg.tries))"
+      - "+        queue.publish(msg)"
+    options:
+      - { key: a, text: "Failed messages are retried at once, again and again" }
+      - { key: b, text: "The message loses its order id" }
+      - { key: c, text: "Timeouts are no longer caught" }
+    answer: a
+    explanation: >-
+      The delay was removed, so every timeout republishes the message immediately. While payments
+      is slow, the same messages loop as fast as workers can take them and add load to the
+      struggling API. Keep the growing delay and a retry limit.
+
+  - slug: queues-dlq-filling
+    kind: graph
+    level: warmup
+    prompt: "The main queue looks healthy, but customers miss refunds. Where did they go?"
+    evidence:
+      - "queue             depth"
+      - "refunds           0"
+      - "refunds.dead      18,224   (+600/hour since 11:00)"
+      - "11:00 deploy refunds-worker 3.4.0"
+    options:
+      - { key: a, text: "The refunds were never published" }
+      - { key: b, text: "The broker deleted old messages" }
+      - { key: c, text: "Since the deploy, refunds fail and go to the dead-letter queue" }
+    answer: c
+    explanation: >-
+      The dead-letter queue started growing at the 11:00 deploy, so the new worker version
+      rejects refunds after its retries. An empty main queue only means messages leave it, not
+      that they succeed. Alert on dead-letter depth too.

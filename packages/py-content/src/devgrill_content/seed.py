@@ -7,6 +7,8 @@
 - A version's probes, hints and rubric are stored with it (verify results point at the
   probes; versions seeded before phase 5 get theirs filled in).
 - Known approaches (`approaches/*.yaml`, never the cheats) are upserted by key for the debrief.
+- Quick Fire cards (`quickfire/<track>.yaml`) are upserted by slug. A card keeps the rating
+  play has given it; cards no longer in content are removed.
 """
 
 from __future__ import annotations
@@ -20,17 +22,26 @@ from pathlib import Path
 
 import yaml
 from pydantic import ValidationError
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from devgrill.domain.enums import ApproachOutcome, ScenarioStatus
-from devgrill.domain.spec import ApproachSpec, ScenarioSpec, TopicSpec, TracksFile
+from devgrill.domain.spec import (
+    LEVEL_RATING,
+    ApproachSpec,
+    QuickfireCardSpec,
+    QuickfireFile,
+    ScenarioSpec,
+    TopicSpec,
+    TracksFile,
+)
 from devgrill.infra.models import (
     Approach,
     BaseApp,
     Hint,
     Probe,
+    QuickfireCard,
     Rubric,
     Scenario,
     ScenarioVersion,
@@ -51,6 +62,7 @@ class SeedReport:
     versions_new: int = 0
     unchanged: int = 0
     approaches: int = 0
+    cards: int = 0
     problems: list[str] = field(default_factory=list)
 
 
@@ -89,6 +101,26 @@ def load_tracks(root: Path) -> TracksFile:
         raise ContentError(f"{path}: {exc}") from exc
 
 
+def load_quickfire(root: Path, tracks: TracksFile) -> list[tuple[str, QuickfireCardSpec]]:
+    """Every Quick Fire card with its track (the file's name). Slugs are unique across files."""
+    known = {t.slug for t in tracks.tracks}
+    cards: list[tuple[str, QuickfireCardSpec]] = []
+    seen: dict[str, Path] = {}
+    for path in sorted((root / "quickfire").glob("*.yaml")):
+        if path.stem not in known:
+            raise ContentError(f"{path}: no track {path.stem!r} in tracks.yaml")
+        try:
+            data = QuickfireFile.model_validate(yaml.safe_load(path.read_text(encoding="utf-8")))
+        except (yaml.YAMLError, ValidationError) as exc:
+            raise ContentError(f"{path}: {exc}") from exc
+        for card in data.cards:
+            if card.slug in seen:
+                raise ContentError(f"{path}: card {card.slug!r} is also in {seen[card.slug].name}")
+            seen[card.slug] = path
+            cards.append((path.stem, card))
+    return cards
+
+
 def load_scenarios(root: Path) -> list[tuple[Path, ScenarioSpec]]:
     specs: list[tuple[Path, ScenarioSpec]] = []
     for path in sorted((root / "scenarios").glob("*/*/scenario.yaml")):
@@ -111,6 +143,7 @@ def content_hash(spec: ScenarioSpec) -> str:
 async def seed(session: AsyncSession, root: Path, *, now: datetime | None = None) -> SeedReport:
     tracks_file = load_tracks(root)
     scenarios = load_scenarios(root)
+    cards = load_quickfire(root, tracks_file)
     stamp = now or datetime.now(UTC)
     report = SeedReport()
 
@@ -244,8 +277,38 @@ async def seed(session: AsyncSession, root: Path, *, now: datetime | None = None
         scenario.current_version_id = version.id
         report.versions_new += 1
 
+    await _quickfire(session, cards, track_ids)
+    report.cards = len(cards)
     await session.flush()
     return report
+
+
+async def _quickfire(
+    session: AsyncSession,
+    cards: list[tuple[str, QuickfireCardSpec]],
+    track_ids: dict[str, uuid.UUID],
+) -> None:
+    for track, card in cards:
+        content = {
+            "track_id": track_ids[track],
+            "kind": card.kind,
+            "prompt": {"text": card.prompt, "evidence": card.evidence},
+            "options": [o.model_dump() for o in card.options],
+            "answer": card.answer,
+            "explanation_md": card.explanation,
+        }
+        stmt = insert(QuickfireCard).values(
+            slug=card.slug, rating=LEVEL_RATING[card.level], **content
+        )
+        # The rating is only set on insert: after that, play owns it.
+        await session.execute(
+            stmt.on_conflict_do_update(
+                index_elements=["slug"], set_={k: stmt.excluded[k] for k in content}
+            )
+        )
+    await session.execute(
+        delete(QuickfireCard).where(QuickfireCard.slug.not_in([c.slug for _, c in cards]))
+    )
 
 
 async def _version_rows(session: AsyncSession, version_id: uuid.UUID, spec: ScenarioSpec) -> None:

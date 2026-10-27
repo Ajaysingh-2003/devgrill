@@ -1,6 +1,6 @@
 # Phase 7 QC report: content, progression and onboarding
 
-Date: 2026-10-27 · Result: **IN PROGRESS** (waves 7A and 7B done) · Decision: ADR 017.
+Date: 2026-10-27 · Result: **IN PROGRESS** (waves 7A to 7C done) · Decision: ADR 017.
 
 Phase 7 runs in waves, each tested and committed on its own:
 
@@ -8,8 +8,8 @@ Phase 7 runs in waves, each tested and committed on its own:
 | --- | --- | --- |
 | 7A | Daily rotation, pro mode, public profile opt-in, primers, library filters, share card | Done |
 | 7B | `/try` guest tutorial with progressive unlocks and tips | Done |
-| 7C | Quick Fire cards and onboarding calibration | Next |
-| 7D | Streak freezes and on-call leave, email digests (Mailpit) | |
+| 7C | Quick Fire cards and onboarding calibration | Done |
+| 7D | Streak freezes and on-call leave, email digests (Mailpit) | Next |
 | 7E | Admin console: RBAC, audit log, review queue, publish and retire | |
 | 7F | Content sprint toward 20 drills, the Ledger app | |
 | 7G | Case files | |
@@ -82,6 +82,37 @@ Phase 7 runs in waves, each tested and committed on its own:
     workspace has a tutorial variant at `/incident/demo?tutorial=1`).
   - `/try` and the tutorial workspace are added to the WCAG sweep in both themes.
 - **By hand:** `/try` and the tutorial workspace at 1280 px.
+
+## Wave 7C: what was built
+
+- **48 Quick Fire cards:** eight per published track, in `content/quickfire/`, validated by the
+  content loader (strict schema, unique slugs, known tracks) and seeded by slug (migration 0006).
+- **Quick Fire API:**
+  - `GET /v1/quickfire/deck`: random cards, without answers;
+  - `POST /v1/quickfire/cards/{id}/answer`: right or wrong, the answer and why.
+- **`/quickfire`:** now real.
+  - Three minutes and three strikes.
+  - Keys 1 to 4 answer and Enter moves on.
+  - Each answer is revealed with icon, label and colour, plus the explanation.
+  - An end card offers "Play again".
+- **Onboarding (`/onboarding`):**
+  - experience and role;
+  - then an optional six-card calibration, one card per track;
+  - "Skip for now" works at the first step.
+
+  Sign-in offers it once to new accounts. Starting ratings follow ADR 017: hidden until a
+  rated game, and never overwriting a track already rated.
+
+## Checks run (wave 7C)
+
+- **Python:** new API tests (the deck hides answers, the answer check, onboarding seeds once
+  and needs an account), a calibration domain test and content loader tests.
+- **e2e:** 61 passed, 1 skipped.
+  - New: the onboarding flow end to end, with its database rows checked.
+  - New: a Quick Fire run by keyboard.
+  - The sign-in helper skips onboarding for other tests.
+- **Migration 0006:** round-tripped, and `alembic check` is clean.
+- **By hand:** Quick Fire at 390 px.
 
 ## Gate checklist (docs/PLAN.md, Phase 7), so far
 

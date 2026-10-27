@@ -469,3 +469,73 @@ async def test_share_card_is_public_and_spoiler_free(api: TestClient, seeded: As
     open_attempt = await _attempt(seeded, slug, guest_hash="h", state=AttemptState.ACTIVE)
     assert api.get(f"/v1/share/{open_attempt.id}").json()["code"] == "share_not_found"
     assert api.get(f"/v1/share/{uuid.uuid4()}").status_code == 404
+
+
+# ---------------------------------------------------------------------- Quick Fire and onboarding
+
+
+def test_quickfire_deck_hides_answers_and_checks_them(
+    api: TestClient, seeded: AsyncSession
+) -> None:
+    deck = api.get("/v1/quickfire/deck", params={"track": "caching", "limit": 5})
+    assert deck.status_code == 200
+    cards = deck.json()["cards"]
+    assert len(cards) == 5
+    assert {c["track_slug"] for c in cards} == {"caching"}
+    assert all("answer" not in c and "explanation_md" not in c for c in cards)
+
+    card = cards[0]
+    results = [
+        api.post(f"/v1/quickfire/cards/{card['id']}/answer", json={"choice": o["key"]}).json()
+        for o in card["options"]
+    ]
+    assert sum(r["correct"] for r in results) == 1
+    assert len({r["answer"] for r in results}) == 1
+    assert results[0]["explanation_md"]
+    missing = api.post(f"/v1/quickfire/cards/{uuid.uuid4()}/answer", json={"choice": "a"})
+    assert missing.json()["code"] == "card_not_found"
+
+
+def test_onboarding_seeds_starting_ratings_once(
+    api: TestClient, seeded: AsyncSession, auth
+) -> None:  # type: ignore[no-untyped-def]
+    headers = auth(uuid.uuid4(), login="newcomer")
+    assert api.get("/v1/me", headers=headers).json()["prefs"]["onboarded"] is False
+    deck = api.get("/v1/onboarding/calibration", headers=headers).json()["cards"]
+    tracks = [c["track_slug"] for c in deck]
+    assert len(tracks) == len(set(tracks)) == 6  # one per published track
+
+    # Find each card's answer (as a player would after answering), then answer the first right.
+    answers = []
+    for i, c in enumerate(deck):
+        key = api.post(f"/v1/quickfire/cards/{c['id']}/answer", json={"choice": "a"}).json()
+        right = key["answer"]
+        wrong = next(o["key"] for o in c["options"] if o["key"] != right)
+        answers.append({"card_id": c["id"], "choice": right if i == 0 else wrong})
+    done = api.post(
+        "/v1/me/onboarding",
+        json={"experience_level": "2-5", "job_role": "backend", "answers": answers},
+        headers=headers,
+    )
+    assert done.status_code == 200
+    body = done.json()
+    assert body["me"]["experience_level"] == "2-5"
+    assert body["me"]["prefs"]["onboarded"] is True
+    assert body["me"]["prefs"]["job_role"] == "backend"
+    assert [r["correct"] for r in body["results"]] == [True] + [False] * 5
+    assert len(body["seeded_tracks"]) == 6
+
+    # Starting points, not ratings: nothing shows until a rated game.
+    assert api.get("/v1/me/ratings", headers=headers).json() == []
+    # Again: nothing new is seeded, so calibration can't be farmed.
+    again = api.post(
+        "/v1/me/onboarding",
+        json={"experience_level": "5+", "answers": []},
+        headers=headers,
+    )
+    assert again.json()["seeded_tracks"] == []
+
+
+def test_onboarding_needs_an_account(api: TestClient, seeded: AsyncSession) -> None:
+    assert api.get("/v1/onboarding/calibration").status_code == 401
+    assert api.post("/v1/me/onboarding", json={"experience_level": "0-2"}).status_code == 401

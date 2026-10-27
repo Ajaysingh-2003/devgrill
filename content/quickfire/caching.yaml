@@ -1,0 +1,158 @@
+# Quick Fire cards for the caching track (content/README.md has the rules).
+cards:
+  - slug: caching-maxmemory-evictions
+    kind: graph
+    level: warmup
+    prompt: "The hit rate falls every evening as traffic grows. What does Redis show?"
+    evidence:
+      - "used_memory        3.99G"
+      - "maxmemory          4.00G"
+      - "maxmemory-policy   allkeys-lru"
+      - "evicted_keys/s     18 -> 2,410"
+      - "keyspace_hits%     91 -> 58"
+    options:
+      - { key: a, text: "Redis is down and clients fall back to the database" }
+      - { key: b, text: "The cache is full, so keys are evicted before reuse" }
+      - { key: c, text: "Keys are written with the wrong prefix" }
+    answer: b
+    explanation: >-
+      Memory sits at the limit and evictions climb as the hit rate drops: the working set no
+      longer fits. If Redis were down there would be no hit rate at all. More memory, shorter
+      lifetimes for cold keys or caching less fixes it.
+
+  - slug: caching-slow-keys-command
+    kind: log
+    level: core
+    prompt: "Every few minutes all Redis calls stall for a second. What is the cause?"
+    evidence:
+      - "SLOWLOG GET 3"
+      - "1) id 812  duration 1,204,551 us  KEYS user:*"
+      - "2) id 811  duration 1,198,004 us  KEYS user:*"
+      - "3) id 810  duration 1,211,870 us  KEYS user:*"
+      - "dbsize: 21,400,118"
+    options:
+      - { key: a, text: "The network to Redis drops packets" }
+      - { key: b, text: "Redis is saving a snapshot to disk" }
+      - { key: c, text: "A job runs KEYS on 21 million keys, which blocks Redis" }
+      - { key: d, text: "Too many clients are connected" }
+    answer: c
+    explanation: >-
+      Redis runs commands one at a time, and KEYS walks the whole keyspace, so each call blocks
+      everyone for over a second. Use SCAN, which works in small batches, or keep an index of the
+      keys you need.
+
+  - slug: caching-negative-caching
+    kind: log
+    level: core
+    prompt: "A product was added an hour ago but still shows as not found. Why?"
+    evidence:
+      - "GET /products/7781  404  (cache hit)"
+      - "cache: product:7781 = NOT_FOUND  ttl=86400"
+      - "db: SELECT 1 FROM products WHERE id = 7781  -> 1 row"
+    options:
+      - { key: a, text: 'The "not found" answer was cached for a whole day' }
+      - { key: b, text: "The database replica has not caught up" }
+      - { key: c, text: "The product id is wrong in the link" }
+    answer: a
+    explanation: >-
+      The miss was cached as NOT_FOUND with a 24-hour lifetime before the product existed, and
+      the database now has the row. Cache "not found" for a short time only, or clear that key
+      when the product is created.
+
+  - slug: caching-thundering-expiry
+    kind: graph
+    level: hard
+    prompt: "Database load spikes on the hour, every hour. What do the cache keys share?"
+    evidence:
+      - "key               set_at    ttl"
+      - "price:1001        09:00:00  3600"
+      - "price:1002        09:00:00  3600"
+      - "price:1003        09:00:01  3600"
+      - "... 40,000 keys set within 2 s, all ttl 3600"
+      - "db_reads/s at 10:00:01  4,800 (normal 120)"
+    options:
+      - { key: a, text: "A cron job clears the cache every hour" }
+      - { key: b, text: "Keys were set together and all expire together" }
+      - { key: c, text: "The hourly backup slows the database" }
+      - { key: d, text: "Redis restarts on the hour" }
+    answer: b
+    explanation: >-
+      Forty thousand keys written in the same two seconds with the same lifetime expire in the
+      same second, and every one of them is reloaded from the database at once. Adding a little
+      random jitter to each lifetime spreads the reloads out.
+
+  - slug: caching-session-on-one-node
+    kind: config
+    level: warmup
+    prompt: "Users get logged out when traffic moves between servers. What is wrong?"
+    evidence:
+      - "# web.env (3 servers behind the load balancer)"
+      - "SESSION_STORE=memory"
+      - "LB_STICKY_SESSIONS=false"
+    options:
+      - { key: a, text: "The session cookie has expired" }
+      - { key: b, text: "Each server keeps sessions in its own memory" }
+      - { key: c, text: "The load balancer is out of capacity" }
+    answer: b
+    explanation: >-
+      With sessions in local memory and no sticky routing, the next request often lands on a
+      server that never saw the login. Store sessions somewhere shared, such as Redis, so any
+      server can read them.
+
+  - slug: caching-big-value
+    kind: log
+    level: core
+    prompt: "One endpoint is slow even on cache hits. What does the trace point to?"
+    evidence:
+      - "GET /catalog  1,920 ms"
+      - "  redis GET catalog:all    hit   38.2 MB   1,310 ms"
+      - "  json decode                            560 ms"
+    options:
+      - { key: a, text: "The cache misses and goes to the database" }
+      - { key: b, text: "Redis is out of memory" }
+      - { key: c, text: "One huge 38 MB value is fetched and decoded every time" }
+      - { key: d, text: "The JSON library has a bug" }
+    answer: c
+    explanation: >-
+      It is a hit, so the database isn't involved: the time goes into moving and decoding a 38 MB
+      value on every request. Cache smaller pieces (per page or per item) and fetch only what the
+      page needs.
+
+  - slug: caching-write-then-read-stale
+    kind: diff
+    level: hard
+    prompt: "After this change, users sometimes see their old address. Why?"
+    evidence:
+      - " def update_address(user, address):"
+      - "-    db.save(user.id, address)"
+      - '-    cache.delete(f"user:{user.id}")'
+      - '+    cache.delete(f"user:{user.id}")'
+      - "+    db.save(user.id, address)"
+    options:
+      - { key: a, text: "A read between delete and save puts the old value back" }
+      - { key: b, text: "The cache key format changed" }
+      - { key: c, text: "Deleting a key in Redis is asynchronous" }
+    answer: a
+    explanation: >-
+      The cache is now cleared before the database is updated. A request in that gap misses,
+      reads the old address from the database and caches it again. Update the database first,
+      then clear the cache.
+
+  - slug: caching-redis-connection-refused
+    kind: log
+    level: warmup
+    prompt: "Pages got slower and the logs fill with this. What happened?"
+    evidence:
+      - "WARN cache unavailable, reading from database"
+      - "  ConnectionRefusedError: [Errno 111] redis:6379"
+      - "WARN cache unavailable, reading from database"
+      - "  ConnectionRefusedError: [Errno 111] redis:6379"
+    options:
+      - { key: a, text: "Redis is full and evicting keys" }
+      - { key: b, text: "The cache keys expire too fast" }
+      - { key: c, text: "Nothing is listening on Redis's port" }
+    answer: c
+    explanation: >-
+      "Connection refused" means the host answered but nothing accepts connections on 6379, so
+      Redis is down or restarting. The app falls back to the database, which is why pages are
+      slower rather than broken.

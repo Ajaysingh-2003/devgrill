@@ -60,6 +60,34 @@ Topic primers live in `content/primers/<track>/<topic>.md`, not inline in tracks
 - **Rendering:** the web renders a small Markdown subset (headings, paragraphs, lists, bold,
   inline and fenced code) as React nodes, never as HTML.
 
+### Quick Fire answers are checked by the API
+
+- **Content:** cards are files in `content/quickfire/<track>.yaml`, upserted by slug (migration
+  0006 adds the slug).
+- **Rating:** a card's level only sets its starting rating; after that, play owns it.
+- **Answers:** a deck never carries the answers. Each answer goes to
+  `POST /v1/quickfire/cards/{id}/answer`, which returns whether it was right, the answer and
+  the explanation.
+- **Access:** Quick Fire needs no sandbox, so it is open to everyone (ADR 013).
+- **Runs:** runs are not stored yet. Run ratings and streak credit come with Phase 9's Quick Fire
+  and wave 7D's streaks.
+
+### Onboarding calibration seeds starting points, not ratings
+
+- **Flow:** onboarding asks for experience (required) and role (optional), then offers one card
+  per published track.
+- **Starting points:** `devgrill.domain.calibration` turns them into a starting rating per track:
+  - a base by experience (1350 to 1650);
+  - a 100-point step up or down per card;
+  - a high deviation (300 answered, 330 from experience alone).
+- **Never overwrites:** a track the player already has a rating for keeps it, so onboarding
+  can't be repeated to inflate a rating.
+- **Not shown:** starting points have no games, so they aren't shown as ratings (track pages,
+  profile and `/me/ratings` show tracks played at least once). They only shape the first rated
+  game.
+- **When it's offered:** sign-in offers onboarding once, to accounts with no experience level
+  that haven't skipped it (`prefs.onboarded`).
+
 ## Consequences
 
 - An old public link to a profile created after 0005 doesn't exist until its owner opts in.

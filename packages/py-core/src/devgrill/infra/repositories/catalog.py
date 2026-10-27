@@ -258,7 +258,10 @@ async def topic_progress(
 
 
 async def ratings(session: AsyncSession, user_id: uuid.UUID) -> dict[uuid.UUID, SkillRating]:
-    result = await session.execute(select(SkillRating).where(SkillRating.user_id == user_id))
+    # Rows from onboarding calibration (no games yet) are starting points, not ratings to show.
+    result = await session.execute(
+        select(SkillRating).where(SkillRating.user_id == user_id, SkillRating.games > 0)
+    )
     return {r.track_id: r for r in result.scalars()}
 
 
