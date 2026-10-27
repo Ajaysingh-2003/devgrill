@@ -29,7 +29,7 @@ export default function LandingPage() {
           </p>
           <div className="flex flex-wrap items-center gap-3">
             <Link
-              href="/drills"
+              href="/try"
               className="inline-flex h-11 items-center rounded-sm bg-brand px-5 text-body font-semibold text-on-brand hover:bg-brand-hover"
             >
               Try a 5-minute drill

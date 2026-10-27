@@ -25,7 +25,13 @@ async function Debrief({ params }: { params: PageProps<"/incident/[attemptId]/de
   if (result.response?.status === 409) redirect(`/incident/${attemptId}`);
   const viewer = await getViewer();
   // Pro mode: the result, without the celebration.
-  return <LiveDebrief d={await unwrap(Promise.resolve(result))} celebrate={!viewer?.prefs.pro_mode} />;
+  return (
+    <LiveDebrief
+      d={await unwrap(Promise.resolve(result))}
+      celebrate={!viewer?.prefs.pro_mode}
+      guest={!viewer}
+    />
+  );
 }
 
 /** T6 Debrief: Field Manual layer plus the one celebration moment. */

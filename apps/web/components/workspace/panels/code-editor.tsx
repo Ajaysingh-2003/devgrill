@@ -2,7 +2,7 @@
 
 import { python } from "@codemirror/lang-python";
 import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
-import { EditorState } from "@codemirror/state";
+import { EditorState, Prec } from "@codemirror/state";
 import { EditorView, keymap } from "@codemirror/view";
 import { tags } from "@lezer/highlight";
 import { basicSetup } from "codemirror";
@@ -62,10 +62,13 @@ export default function CodeEditor({
           syntaxHighlighting(highlight),
           theme,
           EditorView.contentAttributes.of({ "aria-label": `Source of ${path}` }),
-          keymap.of([
-            { key: "Mod-s", preventDefault: true, run: () => (handlers.current.onSave(), true) },
-            { key: "Mod-Enter", preventDefault: true, run: () => (handlers.current.onDeploy(), true) },
-          ]),
+          // Highest precedence: basicSetup's default keymap binds Mod-Enter to "insert blank line".
+          Prec.highest(
+            keymap.of([
+              { key: "Mod-s", preventDefault: true, run: () => (handlers.current.onSave(), true) },
+              { key: "Mod-Enter", preventDefault: true, run: () => (handlers.current.onDeploy(), true) },
+            ]),
+          ),
           EditorView.updateListener.of((update) => {
             if (update.docChanged) handlers.current.onChange(update.state.doc.toString());
           }),

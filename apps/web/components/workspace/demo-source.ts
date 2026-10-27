@@ -79,7 +79,7 @@ const DEMO_PROBES = [
   { key: "budget", title: "Within budget", status: "passed" as const, detail: "within budget" },
 ];
 
-export function createDemoSource(): WorkspaceSource {
+export function createDemoSource({ tutorial = false } = {}): WorkspaceSource {
   const s = scenario(INCIDENT.scenario)!;
   const now = Date.now();
   const activeAt = now - 492_000;
@@ -87,7 +87,7 @@ export function createDemoSource(): WorkspaceSource {
     attempt: {
       id: DEMO_ID,
       scenario_slug: s.slug,
-      mode: "oncall",
+      mode: tutorial ? "tutorial" : "oncall",
       state: "active",
       started_at: new Date(activeAt - 30_000).toISOString(),
       active_at: new Date(activeAt).toISOString(),

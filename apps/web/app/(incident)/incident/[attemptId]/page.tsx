@@ -10,9 +10,16 @@ export const metadata: Metadata = { title: "Drill" };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-async function WorkspaceRoute({ params }: { params: PageProps<"/incident/[attemptId]">["params"] }) {
+async function WorkspaceRoute({
+  params,
+  searchParams,
+}: {
+  params: PageProps<"/incident/[attemptId]">["params"];
+  searchParams: PageProps<"/incident/[attemptId]">["searchParams"];
+}) {
   const { attemptId } = await params;
-  if (attemptId === DEMO_ID) return <DemoWorkspace />;
+  // The demo also shows the guest tutorial's step-by-step tools (?tutorial=1), for its tests.
+  if (attemptId === DEMO_ID) return <DemoWorkspace tutorial={(await searchParams).tutorial === "1"} />;
   if (!UUID.test(attemptId)) notFound();
   // Owned by the caller (user or guest), else 404: another player's incident doesn't exist.
   const info = await unwrap(getWorkspace({ client: await api(), path: { attempt_id: attemptId } }));
@@ -22,10 +29,10 @@ async function WorkspaceRoute({ params }: { params: PageProps<"/incident/[attemp
 }
 
 /** T5 incident workspace (full-bleed; no app top bar). */
-export default function IncidentPage({ params }: PageProps<"/incident/[attemptId]">) {
+export default function IncidentPage({ params, searchParams }: PageProps<"/incident/[attemptId]">) {
   return (
     <Suspense fallback={<p className="p-6 text-body text-fg-muted">Opening the drill…</p>}>
-      <WorkspaceRoute params={params} />
+      <WorkspaceRoute params={params} searchParams={searchParams} />
     </Suspense>
   );
 }

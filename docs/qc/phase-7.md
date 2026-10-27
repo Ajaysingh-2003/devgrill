@@ -1,14 +1,14 @@
 # Phase 7 QC report: content, progression and onboarding
 
-Date: 2026-10-27 · Result: **IN PROGRESS** (wave 7A done) · Decision: ADR 017.
+Date: 2026-10-27 · Result: **IN PROGRESS** (waves 7A and 7B done) · Decision: ADR 017.
 
 Phase 7 runs in waves, each tested and committed on its own:
 
 | Wave | Scope | Status |
 | --- | --- | --- |
 | 7A | Daily rotation, pro mode, public profile opt-in, primers, library filters, share card | Done |
-| 7B | `/try` guest tutorial with progressive unlocks and tips | Next |
-| 7C | Quick Fire cards and onboarding calibration | |
+| 7B | `/try` guest tutorial with progressive unlocks and tips | Done |
+| 7C | Quick Fire cards and onboarding calibration | Next |
 | 7D | Streak freezes and on-call leave, email digests (Mailpit) | |
 | 7E | Admin console: RBAC, audit log, review queue, publish and retire | |
 | 7F | Content sprint toward 20 drills, the Ledger app | |
@@ -52,11 +52,42 @@ Phase 7 runs in waves, each tested and committed on its own:
 - **Content:** `devgrill-content validate`: 12 scenarios, 0 problems. The seed loads 27 primers.
 - **By hand:** `/drills` at 1280 and 390 px, the share page, and the share image.
 
+## Wave 7B: what was built
+
+- **`/try`:** a no-account page that starts ttl-zero in tutorial mode, signing in a guest when
+  nobody is signed in. The landing page's "Try a 5-minute drill" now opens it.
+- **Tools unlock step by step** (tutorial mode only):
+  - Overview and Logs first;
+  - Cache once Logs has been opened;
+  - Code and Deploys once Cache has been opened;
+  - the terminal stays locked ("unlocks in a later tutorial").
+
+  Locking is guidance: the API accepts any action the scenario allows.
+- **The incident lead's tips:** one per step ("Start with the page", "Follow a request", "Ask
+  what changed", "Prove it"), dismissible and shown once.
+  - **Progress:** advances on what the player does.
+  - **Persistence:** saved per attempt in localStorage, with memory as the fallback.
+  - **Announcement:** polite, with no motion.
+- **Clock:** hidden by default in the tutorial, as in guided mode.
+- **Results page for guests:** "Keep this win" leads to GitHub sign-in, and the run is claimed
+  on sign-in.
+- **Deviation from PLAN §8.3:** the plan's tutorial was "Terminal and Logs, an OOM, a one-command
+  fix". The tutorial drill is ttl-zero, whose fix is a config change and a deploy, so the
+  tutorial unlocks Code and Deploys instead of the terminal.
+
+## Checks run (wave 7B)
+
+- **e2e:** 59 passed, 1 skipped.
+  - New: tools unlock step by step, tips advance and stay dismissed after a reload (the demo
+    workspace has a tutorial variant at `/incident/demo?tutorial=1`).
+  - `/try` and the tutorial workspace are added to the WCAG sweep in both themes.
+- **By hand:** `/try` and the tutorial workspace at 1280 px.
+
 ## Gate checklist (docs/PLAN.md, Phase 7), so far
 
 - [ ] All 20 scenarios pass `devgrill-content test` nightly (7F).
 - [ ] Each scenario playtested by someone other than its author (7F).
-- [ ] Time-to-first-win on `/try` (7B).
+- [ ] Time-to-first-win on `/try`: the flow is built (7B). It still needs 5 new users, median under 5 minutes.
 - [ ] Daily rollover across time zones; share card with no spoilers; pre-warm pool.
   - Done in 7A: the rollover and the share card.
   - Owed: the pre-warm pool, and the card in dark mode (OG images are light only).
@@ -70,6 +101,12 @@ Phase 7 runs in waves, each tested and committed on its own:
   ("On", "Only you"). They are now labelled by their section headings.
 - **Worker imports:** the rollover workflow imported infrastructure inside the workflow sandbox.
   Those imports now pass through, and the existing worker test caught it.
+- **Ctrl+Enter deploy (found by CI's real-sandbox flow on the 7A push):** the dependency
+  refresh deduplicated `@codemirror/view`.
+  - **Cause:** `codemirror`'s `basicSetup` had been bound to its own copy, so its keymaps never
+    fired. Once live, its Mod-Enter ("insert blank line") shadowed the editor's deploy shortcut.
+  - **Fix:** the editor's keymap is now `Prec.highest`.
+  - **Test:** a demo e2e test checks Ctrl+Enter on every run. It fails without the fix.
 
 ## Owed
 

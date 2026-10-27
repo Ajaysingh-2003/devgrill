@@ -13,7 +13,7 @@ export function LiveWorkspace({ info, briefingHref }: { info: WorkspaceOut; brie
 }
 
 /** The design shell with canned data: design QC, accessibility and keyboard tests. */
-export function DemoWorkspace() {
-  const [source] = useState(() => createDemoSource());
+export function DemoWorkspace({ tutorial = false }: { tutorial?: boolean }) {
+  const [source] = useState(() => createDemoSource({ tutorial }));
   return <Workspace source={source} briefingHref="/drills/caching/big-sale-meltdown" />;
 }

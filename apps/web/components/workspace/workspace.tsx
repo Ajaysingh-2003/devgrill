@@ -59,6 +59,7 @@ import { LogsPanel } from "./panels/logs";
 import { OverviewPanel } from "./panels/overview";
 import { SCREEN_READER_EVENT, TerminalPanel } from "./panels/terminal";
 import { SidePanel } from "./side-panel";
+import { TutorialTip, useTutorial } from "./tutorial";
 
 const TOOLS: (Tool & { key: string })[] = [
   { id: "overview", key: "overview", label: "Overview", icon: Gauge },
@@ -92,16 +93,25 @@ function Shell({ briefingHref }: { briefingHref: string }) {
   const { info, actions } = useSource();
   const incident = useIncident();
   const router = useRouter();
-  const unlocked = new Set<string>(info.unlocked_tools);
+  const tutorialMode = info.attempt.mode === "tutorial";
+  // Start on the first of the scenario's tools (Overview, which the tutorial also opens with).
+  const [tool, setTool] = useState(
+    () => TOOLS.find((t) => (info.unlocked_tools as string[]).includes(t.key))?.id ?? "overview",
+  );
+  const tutorial = useTutorial(info.attempt.id, tutorialMode, tool, incident);
+  // The scenario's tools, narrowed step by step in the tutorial.
+  const unlocked = new Set<string>(
+    info.unlocked_tools.filter((t) => tutorial.unlocked === null || tutorial.unlocked.has(t)) as string[],
+  );
   const tools = TOOLS.map((t) => ({ ...t, disabled: !unlocked.has(t.key) }));
-  const [tool, setTool] = useState(tools.find((t) => !t.disabled)?.id ?? "overview");
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [hintsOpen, setHintsOpen] = useState(false);
   const [verifyOpen, setVerifyOpen] = useState(false);
   const [confirm, setConfirm] = useState<"reset" | "leave" | null>(null);
   const [claim, setClaim] = useState("");
-  // Guided mode hides the clock by default (no pressure); on-call shows it (PLAN §8.4).
-  const [showClock, setShowClock] = useState(info.attempt.mode !== "guided");
+  // Guided mode and the tutorial hide the clock by default (no pressure); on-call shows it (PLAN §8.4).
+  const relaxed = info.attempt.mode === "guided" || tutorialMode;
+  const [showClock, setShowClock] = useState(!relaxed);
   const Active = PANELS[tool]!;
   const ended = ENDED.has(incident.state);
   const sev = Number(info.page?.severity.replace("SEV", "") ?? 3) as 1 | 2 | 3 | 4;
@@ -308,7 +318,7 @@ function Shell({ briefingHref }: { briefingHref: string }) {
             <span className="hidden truncate text-label text-fg-muted xl:inline">{info.page.title}</span>
           ) : null}
           {showClock ? <ElapsedClock activeAt={incident.activeAt} stopped={ended} /> : null}
-          {info.attempt.mode === "guided" ? (
+          {relaxed ? (
             <button
               type="button"
               onClick={() => setShowClock((v) => !v)}
@@ -401,12 +411,15 @@ function Shell({ briefingHref }: { briefingHref: string }) {
           >
             <ToolRail tools={tools} value={tool} onValueChange={setTool} panelId="tool-panel" />
           </aside>
-          <main id="main" inert={covered} className="min-w-0 flex-1">
-            <WorkspaceLayout
-              primary={<Active />}
-              secondary={unlocked.has("terminal") ? <TerminalPanel /> : <LockedTerminal />}
-              side={<SidePanel />}
-            />
+          <main id="main" inert={covered} className="flex min-w-0 flex-1 flex-col">
+            {tutorialMode ? <TutorialTip tutorial={tutorial} /> : null}
+            <div className="min-h-0 flex-1">
+              <WorkspaceLayout
+                primary={<Active />}
+                secondary={unlocked.has("terminal") ? <TerminalPanel /> : <LockedTerminal />}
+                side={<SidePanel />}
+              />
+            </div>
           </main>
           <BootOverlay />
           <EndedOverlay briefingHref={briefingHref} />

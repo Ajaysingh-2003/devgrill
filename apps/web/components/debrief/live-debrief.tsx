@@ -59,7 +59,16 @@ const POSTMORTEM_LINK = {
 } as const;
 
 /** T6 Debrief, live: what verify threw at the fix, the score, the investigation, what's next. */
-export function LiveDebrief({ d, celebrate: allowed = true }: { d: DebriefOut; celebrate?: boolean }) {
+export function LiveDebrief({
+  d,
+  celebrate: allowed = true,
+  guest = false,
+}: {
+  d: DebriefOut;
+  celebrate?: boolean;
+  /** Played without an account: offer to keep the result (it moves over on sign-in). */
+  guest?: boolean;
+}) {
   const resolved = d.attempt.state === "resolved";
   const probes = d.verify?.probes ?? [];
   const passed = probes.filter((p) => p.passed).length;
@@ -102,6 +111,7 @@ export function LiveDebrief({ d, celebrate: allowed = true }: { d: DebriefOut; c
             </p>
           </header>
         )}
+        {guest ? <KeepResult attemptId={d.attempt.id} resolved={resolved} /> : null}
         {resolved ? <ShareResult attemptId={d.attempt.id} title={d.scenario_title} /> : null}
         {!d.settled ? <Settling /> : null}
 
@@ -318,6 +328,33 @@ export function LiveDebrief({ d, celebrate: allowed = true }: { d: DebriefOut; c
         </div>
       </main>
     </>
+  );
+}
+
+/** For guests: sign in and this run (and any other guest runs) move to the new account. */
+function KeepResult({ attemptId, resolved }: { attemptId: string; resolved: boolean }) {
+  const next = encodeURIComponent(`/incident/${attemptId}/debrief`);
+  return (
+    <section
+      aria-labelledby="keep-title"
+      className="flex max-w-3xl flex-col gap-3 rounded-md border border-border bg-surface p-5 sm:flex-row sm:items-center"
+    >
+      <div className="flex flex-1 flex-col gap-1">
+        <h2 id="keep-title" className="text-body-lg font-semibold text-fg">
+          {resolved ? "Keep this win" : "Keep your progress"}
+        </h2>
+        <p className="text-body text-fg-muted">
+          Sign in and this run is saved to your account, along with any others you played here. Then pick your
+          next drill.
+        </p>
+      </div>
+      <Link
+        href={`/sign-in?next=${next}`}
+        className="inline-flex h-10 shrink-0 items-center rounded-sm bg-brand px-4 text-body font-semibold text-on-brand hover:bg-brand-hover"
+      >
+        Sign in with GitHub
+      </Link>
+    </section>
   );
 }
 

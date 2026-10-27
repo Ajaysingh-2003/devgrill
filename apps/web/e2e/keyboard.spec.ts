@@ -55,7 +55,46 @@ test("theme choice persists across reloads", async ({ page }) => {
   await expect(page.locator("html")).toHaveClass(/dark/);
 });
 
+test.describe("guest tutorial", () => {
+  test("tools unlock step by step, with a tip for each", async ({ page }) => {
+    await open(page, "/incident/demo?tutorial=1");
+    const rail = page.getByRole("complementary", { name: "Tools" });
+    await expect(page.getByText("Tip 1 of 4:")).toBeVisible();
+    await expect(rail.getByRole("tab", { name: /Cache/ })).toBeDisabled();
+    await expect(rail.getByRole("tab", { name: /Code/ })).toBeDisabled();
+    await expect(page.getByText("The terminal unlocks in a later tutorial")).toBeVisible();
+
+    await rail.getByRole("tab", { name: /Logs/ }).click();
+    await expect(page.getByText("Tip 2 of 4:")).toBeVisible();
+    await rail.getByRole("tab", { name: /Cache/ }).click();
+    await expect(rail.getByRole("tab", { name: /Code/ })).toBeEnabled();
+    // The demo's timeline already has a deploy, so it may go straight to the last tip.
+    const tip = page.getByText(/Tip [34] of 4:/);
+    await expect(tip).toBeVisible();
+
+    // Each tip shows once: dismissed, it stays gone after a reload.
+    await page.getByRole("button", { name: "Got it" }).click();
+    await expect(tip).toBeHidden();
+    await page.reload();
+    await page.waitForLoadState("networkidle");
+    await expect(rail.getByRole("tab", { name: /Code/ })).toBeEnabled();
+    await expect(page.getByText(/Tip \d of 4:/)).toBeHidden();
+  });
+});
+
 test.describe("incident workspace", () => {
+  test("Ctrl+Enter in the editor deploys (not a blank line)", async ({ page }) => {
+    await open(page, "/incident/demo");
+    await page.getByRole("complementary", { name: "Tools" }).getByRole("tab", { name: /Code/ }).click();
+    await page.getByRole("button", { name: "config/app.env" }).click();
+    const editor = page.locator(".cm-content");
+    await editor.click();
+    await page.keyboard.press("Control+End");
+    await page.keyboard.type("# reviewed");
+    await page.keyboard.press("Control+Enter");
+    await expect(page.getByText("api a91f3c2 is live (demo)")).toBeVisible();
+  });
+
   test("number keys switch tools, but not while typing", async ({ page }) => {
     await open(page, "/incident/demo");
     await page.getByRole("tab", { name: /Overview/ }).waitFor();
