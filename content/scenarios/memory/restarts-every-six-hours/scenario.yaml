@@ -1,5 +1,7 @@
-# Library entry only: not yet runnable (playable: false). Authoring it means adding faults,
-# load, slo, probes, hints and a page (see docs/adr/012-scenario-spec-v1.md).
+# Spec v1 (ADR 012). A "performance" deploy added a per-process memo that is never emptied and
+# is keyed by the second, so it grows with traffic until the kernel kills the worker. At normal
+# traffic that took six hours; at sale traffic it takes a minute or two. The app never sees the
+# requests that die with a killed worker, so this incident is paged on memory, not errors.
 schema: devgrill/scenario@1
 slug: restarts-every-six-hours
 title: Restarts every six hours
@@ -12,21 +14,178 @@ summary: Pods are OOM-killed on a schedule
 tags:
   - memory
   - leak
+  - python
 base_app: shopkart
-playable: false
 briefing:
-  story: Every six hours, like clockwork, product-api pods get OOM-killed and restart. Users notice a
-    burst of errors each time.
+  story: For a week, product-api workers have been killed for running out of memory about every six
+    hours. They come straight back, so nobody chased it. Today's sale traffic is several times normal,
+    and now it happens every couple of minutes.
   system:
+    - kind: lb
+      name: load-gen
+      note: sale traffic
+      role: path
     - kind: api
       name: product-api
-      note: Python, 4 pods
+      note: Python, 4 workers, 512 MB
       role: path
     - kind: cache
       name: redis
-      note: cache
+      note: product cache
       role: path
     - kind: db
       name: postgres
       note: products
       role: path
+  goals:
+    - title: Find what fills the memory
+      detail: Workers grow until they're killed, then start again. Work out what they keep.
+    - title: Keep memory flat under the sale
+      detail: API memory steady under load, with no bigger memory limit and no restarts on a timer.
+
+page:
+  severity: SEV3
+  title: "product-api: workers OOM-killed every few minutes, memory climbing"
+
+charts: [api_memory_bytes, p99_latency_ms, error_rate, request_rate, cache_hit_rate]
+
+faults:
+  - use: mem/leak-accelerated
+    at: T-1m
+
+load:
+  script: shop.js
+  vus: 30
+  params: { HOT_KEYS: "1042,1043,2210,77,9001" }
+
+deploy_history:
+  - message: "catalogue: add trail-running category"
+    minutes_before: 30240
+  - message: "product page: show stock badge"
+    minutes_before: 20160
+  - message: "perf: memoise product lookups per process"
+    minutes_before: 10080
+    from_fault: mem/leak-accelerated
+
+beats:
+  - persona: arjun
+    at: T+30s
+    say: "Another worker just got OOM-killed. I can bump the API's memory limit to 2 GB in a few minutes, or put a restart on a cron every hour. Which one?"
+  - persona: priya
+    at: T+3m
+    say: "Customers are seeing errors every couple of minutes during the sale. Support's asking if this is the database again."
+  - persona: arjun
+    when: "state:mitigated"
+    say: "Memory's flat. Was it really just the one change from last week? Worth writing down how it hid for so long."
+  - persona: priya
+    when: "state:resolved"
+    say: "Verified: memory stays flat under sale traffic and nothing restarts. Thank you. A short postmortem would help, especially why it took a sale to notice."
+
+constraints:
+  no_scale_up: [api]
+
+# Paged on memory growth: a leak keeps setting new highs (about 2.5 MB/s under sale
+# traffic); a healthy API is flat once its workers have warmed up.
+slo:
+  p99_latency_ms: 500
+  thresholds:
+    api_memory_growth: { lt: 500000 }
+  for_s: 30
+
+probes:
+  - key: steady-traffic
+    kind: load
+    title: Sale traffic
+    how: Replays sale traffic for 45 seconds; p99 under 500 ms and under 1% errors.
+    target:
+      p99_ms: { lt: 500 }
+      error_rate: { lt: 0.01 }
+  - key: memory-flat
+    kind: load
+    title: Memory stays flat
+    how: The API's memory, measured from outside, grows less than 32 MB over the replay.
+    target:
+      app_memory_growth_mb: { lt: 32 }
+  - key: price-freshness
+    kind: invariant
+    title: Prices stay fresh
+    how: Changes a hot product's price; the product page shows it within 5 seconds.
+    script: freshness.py
+    target:
+      visible_after_s: { lt: 5 }
+  - key: correctness
+    kind: hidden_test
+    title: Still correct
+    how: Real product data, 404s for unknown products, search, orders and price changes all work.
+    script: base/correctness.py
+  - key: budget
+    kind: budget
+    title: Within budget
+    how: No bigger memory limit for the API.
+    weight: 0.5
+
+hints:
+  tier1: "Errors come in bursts, and each burst lines up with a worker restart in the API's logs. Watch the API's memory between restarts: what does it do?"
+  tier2: "Memory climbs with traffic and only drops when a worker is killed. Something keeps every response it ever served. Look at what the deploy history says changed in how products are served."
+  tier3: "Last week's 'memoise product lookups' deploy added a per-process dict, keyed by product and second, that is never emptied. Roll it back, or remove the memo (Redis already caches products) and deploy."
+
+rubric:
+  - key: impact
+    max: 2
+    description: States the user impact and how it changed with traffic.
+    anchors:
+      "0": "No impact stated."
+      "1": "Workers restarted, without what users saw."
+      "2": "Error bursts at each worker kill, every few minutes under sale traffic versus every six hours before."
+  - key: root-cause
+    max: 4
+    description: Explains the unbounded, time-keyed memo and why its growth tracks traffic.
+    anchors:
+      "0": "Blames traffic, Redis or the memory limit."
+      "2": "Names the memo but not why it never stops growing."
+      "4": "The memo is keyed by product and second and never evicted, so every second of traffic adds entries to every worker; memory grows with traffic until the kernel kills the worker, which is why the sale made it constant."
+  - key: rejected-fixes
+    max: 2
+    description: Explains why a bigger limit or scheduled restarts only hide it.
+    anchors:
+      "0": "Recommends more memory or scheduled restarts as the fix."
+      "1": "Rejects one without saying why."
+      "2": "More memory only stretches the time to each kill; timed restarts drop requests on a schedule; both leave the leak."
+  - key: prevention
+    max: 2
+    description: Proposes guards against unbounded growth.
+    anchors:
+      "0": "No action items."
+      "1": "One vague action."
+      "2": "Bounded caches by default (size or TTL), alerting on memory growth rate, and a load test that runs long enough to show a leak."
+
+ttl_minutes: 30
+par_minutes: 8
+
+replay:
+  - when: api.restarted
+    mark: lost
+    note: A restart frees the memory, and the same traffic fills it again within minutes.
+  - when: deploy.viewed
+    match: "memo"
+    mark: clue
+    note: The memoise deploy keeps every response, keyed by the second, forever.
+  - when: api.rolledback
+    mark: clue
+    note: Rolling back the memoise deploy removes the leak.
+
+ai:
+  spoilers:
+    - "_?memo(i[sz](e|ed|ing|ation))?\\b"
+    - "keyed by (the )?(product and )?second"
+    - "never (evicted|emptied|cleared|freed)"
+    - "unbounded (dict|cache|memo)"
+    - "time\\.time"
+    - "per[- ]process (dict|cache)"
+  root_cause: >-
+    Last week's "memoise product lookups" deploy added a per-process dict keyed by (product id,
+    current second) that is never emptied. Every second of traffic adds entries to every worker,
+    so memory grows with traffic until the kernel kills the worker for exceeding its limit. At
+    normal traffic that took about six hours; at sale traffic it takes a minute or two, and each
+    kill drops the requests that worker was serving. Removing the memo (Redis already caches
+    products) or rolling back the deploy fixes it; a bigger limit or timed restarts only hide it.

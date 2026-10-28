@@ -4,9 +4,11 @@ have to read at 2 a.m., so the read path is obvious and the metrics are honest."
 from __future__ import annotations
 
 import logging
+import os
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request, Response
@@ -44,10 +46,57 @@ DB_POOL_IN_USE = Gauge(
     "db_pool_in_use", "Connections checked out of the pool", multiprocess_mode="livesum"
 )
 BUILD = Gauge("build_info", "Build", ["sha"], multiprocess_mode="max")
+MEMORY = Gauge(
+    "app_memory_bytes", "Resident memory of the API's workers", multiprocess_mode="livesum"
+)
+#: Memory that set a new high for its worker: flat once a healthy worker has warmed up,
+#: climbing for as long as something leaks.
+MEMORY_GROWTH = Counter("app_memory_growth_bytes", "New peak memory of the API's workers")
+_PAGE_BYTES = os.sysconf("SC_PAGE_SIZE")
+_memory_sampled_at = 0.0
+_memory_peak = 0
+
+
+def _sample_memory() -> None:
+    """This worker's resident memory (and any new high), at most once a second."""
+    global _memory_sampled_at, _memory_peak
+    now = time.monotonic()
+    if now - _memory_sampled_at < 1.0:
+        return
+    _memory_sampled_at = now
+    try:
+        # Resident minus shared: forked workers share pages, which a plain sum of RSS would
+        # count once per worker.
+        with open("/proc/self/statm", encoding="ascii") as statm:
+            _, resident, shared, *_ = (int(f) for f in statm.read().split())
+        private = (resident - shared) * _PAGE_BYTES
+        MEMORY.set(private)
+        if _memory_peak and private > _memory_peak:
+            MEMORY_GROWTH.inc(private - _memory_peak)
+        _memory_peak = max(_memory_peak, private)
+    except OSError:
+        pass
+
+
+def _forget_dead_workers() -> None:
+    """A worker the kernel killed never cleans up after itself: drop its live gauges, or
+    the totals would keep counting it."""
+    folder = os.environ.get("PROMETHEUS_MULTIPROC_DIR")
+    if not folder:
+        return
+    for path in Path(folder).glob("gauge_live*_*.db"):
+        try:
+            pid = int(path.stem.rsplit("_", 1)[1])
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            multiprocess.mark_process_dead(pid, folder)
+        except ValueError, PermissionError:
+            continue
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    _forget_dead_workers()
     BUILD.labels(sha=settings.GIT_SHA).set(1)
     db.pool.open()
     log.info("started", extra=fields(sha=settings.GIT_SHA, cache_ttl=settings.CACHE_TTL_SECONDS))
@@ -81,6 +130,7 @@ async def observe(request: Request, call_next: Any) -> Response:
     elapsed = time.perf_counter() - started
     stats = db.pool.get_stats()
     DB_POOL_IN_USE.set(stats.get("pool_size", 0) - stats.get("pool_available", 0))
+    _sample_memory()
     REQUESTS.labels(request.method, name, str(response.status_code)).inc()
     LATENCY.labels(name).observe(elapsed)
     if response.status_code >= 500 or elapsed > 1.0:

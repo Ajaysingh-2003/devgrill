@@ -11,7 +11,7 @@ Phase 7 runs in waves, each tested and committed on its own:
 | 7C | Quick Fire cards and onboarding calibration | Done |
 | 7D | Streak freezes and on-call leave, email digests (Mailpit) | Done |
 | 7E | Admin console: RBAC, audit log, review queue, publish and retire | Done |
-| 7F | Content sprint toward 20 drills, the Ledger app | In progress (1 of 4 drills) |
+| 7F | Content sprint toward 20 drills, the Ledger app | In progress (2 of 4 drills) |
 | 7G | Case files | |
 
 ## Wave 7A: what was built
@@ -253,6 +253,43 @@ The owner chose four drills first, each tested in real sandboxes and committed o
   - the blocker is visible in `pg_stat_activity` as `migrator`, idle in transaction with its
     ALTER TABLE;
   - one `pg_terminate_backend` brought uncached product pages back from 5 s 503s to 13 ms.
+
+### Drill 2: Restarts every six hours (memory/leaks, SEV3)
+
+**The incident:** last week's "memoise product lookups" deploy added a per-process dict, keyed
+by product and the current second, that is never emptied. Memory grows with traffic until the
+kernel kills the worker.
+- At normal traffic that took six hours. At sale traffic it's about every 100 seconds: a
+  readable sawtooth, measured at 2.5 MB/s with a kill every 100 s.
+- **Mitigate and fix in one step:** roll back, remove the memo, or bound it.
+- **Traps:** a bigger memory limit or timed restarts (both in the beats) only hide it.
+
+**Design notes from measuring it:**
+- **Paged on memory growth, not errors.** A killed worker takes its in-flight requests with
+  it, unseen by the app's own error metrics.
+  - The API now counts new per-worker memory highs (`app_memory_growth_bytes_total`). It's
+    flat once warm and climbs for as long as something leaks.
+  - The SLO pages on growth above 0.5 MB/s. A plain memory threshold failed: the sawtooth dips
+    under any line for half of each cycle.
+- **The API's memory chart** reports private memory (resident minus shared). A plain RSS sum
+  counted pages the forked workers share once per worker: 578 MB against Docker's 390 MB.
+  Workers also clear the gauges of OOM-killed workers at startup.
+- **The leak was slowed tenfold,** from a kill every 10 to 20 s to one about every 100 s. It
+  was also rewritten as a believable change (a memo with a view histogram for a "trending"
+  widget). The old code's comment said "never evicted", which gave the answer away, and it
+  returned the padding inside the product JSON.
+- **Verify trusts Docker's view:** `memory-flat` sums the rises in the API container's memory
+  during the replay, so a crash part way doesn't hide a leak. Healthy runs measured 3 to 7 MB
+  against a 32 MB limit.
+
+**Checks:**
+- **`devgrill-content test --approaches` in Docker:** the reference fix and all four
+  approaches gave their declared outcomes.
+  - Roll back, remove the memo and cap the memo: all full.
+  - The cheat that silences the growth metric: caught. The Overview would look flat, but
+    Docker measured 96 MB of growth.
+- **By hand with `devgrill-content up`:** the sawtooth seen from Docker and from the gauge,
+  with worker deaths in the API's logs.
 
 ## Gate checklist (docs/PLAN.md, Phase 7), so far
 

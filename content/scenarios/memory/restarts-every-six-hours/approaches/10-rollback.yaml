@@ -1,0 +1,16 @@
+schema: devgrill/approach@1
+key: rollback
+name: Roll back the memoise deploy
+outcome: full
+idea: >-
+  Deploy the commit before last week's "memoise product lookups" change. The memo goes, memory
+  stays flat, and Redis keeps serving repeat reads as it did before.
+steps:
+  - rollback_to: "product page: show stock badge"
+    service: api
+pros:
+  - Removes the leak in one step
+cons:
+  - Anything else in that deploy goes too (the trending widget's view counts)
+match:
+  rollback: true

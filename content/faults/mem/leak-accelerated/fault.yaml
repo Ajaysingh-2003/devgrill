@@ -8,8 +8,10 @@ apply:
   patch: patch.diff
   service: api
 deploy_message: "perf: memoise product lookups per process"
+# Workers that die take their in-flight requests with them, unseen by the app's own error
+# metrics: the symptom is the memory itself, growing with traffic.
 symptom:
-  metric: error_rate
+  metric: api_memory_growth
   op: gt
-  value: 0.05
-  within_s: 300
+  value: 1000000
+  within_s: 60

@@ -1,0 +1,12 @@
+schema: devgrill/approach@1
+key: cheat-quiet-metric
+name: Stop counting memory growth
+outcome: fails
+cheat: true
+idea: >-
+  The page fires on the API's own memory-growth metric, so stop reporting growth. The charts
+  go quiet, but the verifier measures memory from outside the container.
+steps:
+  - patch: quiet-metric.diff
+    service: api
+fails_probes: [memory-flat]

@@ -1,0 +1,17 @@
+schema: devgrill/approach@1
+key: remove-memo
+name: Remove the memo
+outcome: full
+idea: >-
+  The memo is keyed by the current second and never emptied, so it only ever grows. Redis
+  already caches products for every worker; delete the memo and deploy.
+steps:
+  - patch: remove-memo.diff
+    service: api
+    message: "perf: remove the per-process product memo (Redis already caches products)"
+pros:
+  - One cache to reason about instead of two
+cons:
+  - The trending widget needs its view counts from somewhere else
+match:
+  diff: '^-_memo\b'

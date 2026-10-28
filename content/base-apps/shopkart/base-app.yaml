@@ -168,3 +168,13 @@ metrics:
     type: gauge
     job: redis-exporter
     metric: redis_memory_used_bytes
+  # Reported by the API about itself: fine for charts and paging, never for verify.
+  api_memory_bytes:
+    type: gauge
+    job: api
+    metric: app_memory_bytes
+  # Bytes per second of new peak memory across the API's workers: ~0 once warm, unless leaking.
+  api_memory_growth:
+    type: rate
+    job: api
+    metric: app_memory_growth_bytes_total

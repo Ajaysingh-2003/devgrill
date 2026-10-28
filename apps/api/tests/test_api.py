@@ -447,7 +447,13 @@ async def test_daily_rotation_only_has_playable_scenarios(seeded: AsyncSession) 
         ).all()
     )
     # Placeholders (playable: false) never become the Daily.
-    assert slugs == {"ttl-zero", "pool-party", "big-sale-meltdown", "the-3am-table-lock"}
+    assert slugs == {
+        "ttl-zero",
+        "pool-party",
+        "big-sale-meltdown",
+        "the-3am-table-lock",
+        "restarts-every-six-hours",
+    }
 
 
 async def test_share_card_is_public_and_spoiler_free(api: TestClient, seeded: AsyncSession) -> None:

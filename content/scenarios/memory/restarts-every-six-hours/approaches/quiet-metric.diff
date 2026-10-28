@@ -1,0 +1,11 @@
+--- app/main.py
++++ app/main.py
+@@ -72,7 +72,7 @@ def _sample_memory() -> None:
+         private = (resident - shared) * _PAGE_BYTES
+         MEMORY.set(private)
+         if _memory_peak and private > _memory_peak:
+-            MEMORY_GROWTH.inc(private - _memory_peak)
++            pass  # MEMORY_GROWTH.inc(private - _memory_peak)
+         _memory_peak = max(_memory_peak, private)
+     except OSError:
+         pass

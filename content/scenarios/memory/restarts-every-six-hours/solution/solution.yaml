@@ -1,0 +1,8 @@
+schema: devgrill/solution@1
+summary: >-
+  Last week's "memoise product lookups" deploy keeps every product response in a per-process
+  dict keyed by product and second, never emptied, so memory grows with traffic until the
+  kernel kills the worker. Roll the deploy back: Redis already caches products.
+steps:
+  - rollback_to: "product page: show stock badge"
+    service: api

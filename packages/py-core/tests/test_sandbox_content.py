@@ -89,7 +89,14 @@ def test_quantile_needs_q() -> None:
 
 
 @pytest.mark.parametrize(
-    "slug", ["ttl-zero", "big-sale-meltdown", "pool-party", "the-3am-table-lock"]
+    "slug",
+    [
+        "ttl-zero",
+        "big-sale-meltdown",
+        "pool-party",
+        "the-3am-table-lock",
+        "restarts-every-six-hours",
+    ],
 )
 def test_playable_scenarios_load_with_their_faults(slug: str) -> None:
     bundle = load_bundle(CONTENT, slug)

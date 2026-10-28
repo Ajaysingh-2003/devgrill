@@ -28,6 +28,11 @@ const CHARTS: Record<string, { title: string; format: (v: number) => string; col
   orders_queue_depth: { title: "Orders waiting", format: (v) => String(Math.round(v)), color: 8 },
   cache_memory_bytes: { title: "Cache memory", format: formatBytes, color: 2 },
   api_memory_bytes: { title: "API memory", format: formatBytes, color: 6 },
+  api_memory_growth: {
+    title: "API memory growth",
+    format: (v) => `${(v / 1_048_576).toFixed(1)} MB/s`,
+    color: 4,
+  },
 };
 const MAX_CHARTS = 6;
 

@@ -1,0 +1,32 @@
+--- app/main.py
++++ app/main.py
+@@ -108,10 +108,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+ 
+ app = FastAPI(title="ShopKart", lifespan=lifespan)
+ 
+-# Per-process memo of product pages: a repeat read within the same second skips Redis and
+-# Postgres entirely. Each entry keeps that second's view histogram for the trending widget.
+-_memo: dict[tuple[int, int], tuple[dict[str, Any], list[int]]] = {}
+-
+ 
+ def _route_name(request: Request) -> str:
+     route = request.scope.get("route")
+@@ -176,10 +172,6 @@ def metrics() -> Response:
+ 
+ @app.get("/products/{product_id}")
+ def get_product(product_id: int) -> dict[str, Any]:
+-    memo_key = (product_id, int(time.time()))
+-    if memo_key in _memo:
+-        CACHE_OPS.labels("hit").inc()
+-        return _memo[memo_key][0]
+     product = cache.get(product_id)
+     if product is not None:
+         CACHE_OPS.labels("hit").inc()
+@@ -190,7 +182,6 @@ def get_product(product_id: int) -> dict[str, Any]:
+     if product is None:
+         raise HTTPException(404, "no such product")
+     cache.set(product_id, product)
+-    _memo[memo_key] = (product, [0] * 5_000)
+     return product
+ 
+ 
