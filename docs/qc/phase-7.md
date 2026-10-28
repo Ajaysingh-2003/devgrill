@@ -288,6 +288,9 @@ kernel kills the worker.
   - Roll back, remove the memo and cap the memo: all full.
   - The cheat that silences the growth metric: caught. The Overview would look flat, but
     Docker measured 96 MB of growth.
+  - **CI found a problem I fixed:** "cap the memo" at 256 entries grew 46 MB on GitHub's faster
+    runner, because the memo filled, cleared and refilled within the replay. It's bounded but
+    churns about 40 MB, so the cap is now 64 entries (about 10 MB).
 - **By hand with `devgrill-content up`:** the sawtooth seen from Docker and from the gauge,
   with worker deaths in the API's logs.
 

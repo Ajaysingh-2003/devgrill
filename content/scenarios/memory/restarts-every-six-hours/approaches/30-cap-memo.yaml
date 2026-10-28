@@ -3,12 +3,12 @@ key: cap-memo
 name: Cap the memo's size
 outcome: full
 idea: >-
-  Keep the memo but bound it: empty it once it holds 256 entries. Memory stops growing at the
+  Keep the memo but bound it: empty it once it holds 64 entries. Memory stops growing at the
   cap. A bounded cache is the right shape; here it duplicates what Redis already does.
 steps:
   - patch: cap-memo.diff
     service: api
-    message: "perf: bound the product memo to 256 entries per worker"
+    message: "perf: bound the product memo to 64 entries per worker"
 pros:
   - Smallest code change; memory is bounded
 cons:

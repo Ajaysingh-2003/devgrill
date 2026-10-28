@@ -4,7 +4,7 @@
      if product is None:
          raise HTTPException(404, "no such product")
      cache.set(product_id, product)
-+    if len(_memo) >= 256:  # bounded: never more than 256 entries per worker
++    if len(_memo) >= 64:  # bounded: never more than 64 entries per worker
 +        _memo.clear()
      _memo[memo_key] = (product, [0] * 5_000)
      return product
