@@ -22,7 +22,7 @@ from devgrill.domain.enums import AttemptMode, AttemptState, VerifyStatus
 from devgrill.infra import db
 from devgrill.infra.models import Attempt, AttemptEvent, ProbeResult, Scenario, VerifyRun
 from devgrill.sandbox.content import load_bundle
-from devgrill.sandbox.driver import ExecResult, MetricSnapshot
+from devgrill.sandbox.driver import ExecResult, MetricSnapshot, ResourceUsage
 from devgrill_content.seed import seed
 from devgrill_worker.sandbox_activities import (
     ProbeGroupInput,
@@ -48,6 +48,9 @@ class FakeDriver:
 
     async def start_load(self, handle: Any, bundle: Any) -> None:
         self.load.append("start")
+
+    async def usage(self, handle: Any, service: str | None = None) -> ResourceUsage:
+        return ResourceUsage(cpu_seconds=0.0, memory_bytes=200 * 1_048_576)  # steady memory
 
     async def metrics(self, handle: Any, bundle: Any) -> MetricSnapshot:
         return MetricSnapshot(datetime.now(UTC), {})

@@ -31,15 +31,25 @@ from devgrill.domain.enums import ProbeKind
 from devgrill.domain.spec import ProbeSpec, ProbeTarget
 from devgrill.sandbox.compose import ComposeDriver
 from devgrill.sandbox.content import Bundle
-from devgrill.sandbox.driver import SandboxError, SandboxHandle
+from devgrill.sandbox.driver import ExecResult, SandboxError, SandboxHandle
 from devgrill.sandbox.metrics import Scrape, evaluate_all, parse_text
 
 REPLAY_SECONDS = 45
 CHAOS_WARMUP_S = 10
 CHAOS_WINDOW_S = 30
+#: A hold_sql step's session name, so it can be ended when the window closes.
+HOLD_APP_NAME = "devgrill-chaos"
+#: Time a hold_sql step gets to take its locks.
+HOLD_START_S = 1.0
+_RELEASE_HOLDS_SQL = (
+    "SELECT pg_terminate_backend(pid) FROM pg_stat_activity"
+    " WHERE application_name = 'devgrill-chaos' AND pid <> pg_backend_pid()"
+)
 #: Backends flush their statistics at most once a second: wait that long before reading them.
 STATS_SETTLE_S = 1.5
 SAMPLE_EVERY_S = 2.0
+#: How often a replay samples the patchable services' memory (leak checks).
+MEMORY_SAMPLE_S = 5.0
 
 
 # One round trip: every scan of every user table, and when statistics were last reset. The
@@ -236,17 +246,23 @@ class Verifier:
         out = f"/probe/out/{probe.key}.json"
         before_db = await self.db_stats()
         before = await self.scrape()
-        await self.driver.probe(
-            self.handle,
-            [
-                "sh",
-                "-c",
-                self._k6_command(
-                    vus=self._vus(probe), duration_s=REPLAY_SECONDS, out=out, script=probe.script
-                ),
-            ],
-            timeout_s=REPLAY_SECONDS + 60,
+        replay = asyncio.create_task(
+            self.driver.probe(
+                self.handle,
+                [
+                    "sh",
+                    "-c",
+                    self._k6_command(
+                        vus=self._vus(probe),
+                        duration_s=REPLAY_SECONDS,
+                        out=out,
+                        script=probe.script,
+                    ),
+                ],
+                timeout_s=REPLAY_SECONDS + 60,
+            )
         )  # k6 exits non-zero when its own thresholds fail; the targets decide here
+        growth = await self._memory_growth_while(replay)
         after = await self.scrape()
         await asyncio.sleep(STATS_SETTLE_S)
         after_db = await self.db_stats()
@@ -261,7 +277,28 @@ class Verifier:
             measured["db_scans_per_s"] = round(scans / REPLAY_SECONDS, 2)
             measured["db_scans_per_request"] = round(scans / requests, 4) if requests else None
         measured.update(self._drift(app, k6, after.t - before.t))
+        measured["app_memory_growth_mb"] = growth
         return measured
+
+    async def _memory_growth_while(self, replay: asyncio.Task[ExecResult]) -> float | None:
+        """Memory the player's services gained while `replay` runs: the sum of every rise
+        between samples, so a leak still shows when a crash resets memory part way."""
+        services = self.bundle.base_app.patchable_services
+        last: dict[str, int] = {}
+        gained = 0
+        try:
+            while True:
+                for service in services:
+                    now = (await self.driver.usage(self.handle, service)).memory_bytes
+                    if service in last and now > last[service]:
+                        gained += now - last[service]
+                    last[service] = now
+                done, _ = await asyncio.wait({replay}, timeout=MEMORY_SAMPLE_S)
+                if done:
+                    break
+        finally:
+            await replay
+        return round(gained / 1_048_576, 1) if services else None
 
     @staticmethod
     def _drift(
@@ -289,9 +326,10 @@ class Verifier:
             self.driver.probe(self.handle, ["sh", "-c", command], timeout_s=duration + 60)
         )
         toxics: list[tuple[str, str]] = []
+        holds: list[asyncio.Task[ExecResult]] = []
         try:
             await asyncio.sleep(CHAOS_WARMUP_S)
-            toxics = await self._chaos_steps(probe)
+            toxics, holds = await self._chaos_steps(probe)
             clock = await self.driver.probe(self.handle, ["date", "+%s.%N"])
             chaos_at = float(clock.stdout.strip())
             await asyncio.sleep(CHAOS_WINDOW_S - SAMPLE_EVERY_S)
@@ -299,6 +337,8 @@ class Verifier:
                 if not await self.driver.toxic_exists(self.handle, self.bundle, proxy, name):
                     raise SandboxError(f"the chaos toxic on {proxy} was removed during the check")
         finally:
+            if holds:
+                await self._release_holds(holds)
             await replay
             for proxy, name in toxics:
                 await self.driver.toxic_delete(self.handle, self.bundle, proxy, name)
@@ -318,9 +358,12 @@ class Verifier:
             **{k: (float(v) if v is not None else None) for k, v in recovery.items()},
         }
 
-    async def _chaos_steps(self, probe: ProbeSpec) -> list[tuple[str, str]]:
+    async def _chaos_steps(
+        self, probe: ProbeSpec
+    ) -> tuple[list[tuple[str, str]], list[asyncio.Task[ExecResult]]]:
         app = self.bundle.base_app
         toxics: list[tuple[str, str]] = []
+        holds: list[asyncio.Task[ExecResult]] = []
         for index, step in enumerate(probe.steps):
             if step.del_key or step.flush_cache:
                 cache = app.cache_service
@@ -348,7 +391,44 @@ class Verifier:
                 name = f"dg-chaos-{probe.key}-{index}"
                 await self.driver.toxic(self.handle, self.bundle, name, dict(step.toxic))
                 toxics.append((str(step.toxic["proxy"]), name))
-        return toxics
+            elif step.hold_sql:
+                holds.append(await self._hold_sql(step.hold_sql))
+        return toxics, holds
+
+    def _psql(self, sql: str) -> tuple[str, list[str]]:
+        app = self.bundle.base_app
+        service = app.sql_service
+        if service is None:
+            raise SandboxError(f"{app.slug} has no database for a hold_sql step")
+        spec = app.services[service].sql
+        assert spec is not None
+        argv = ["env", f"PGAPPNAME={HOLD_APP_NAME}", "psql", "-U", spec.user, "-d", spec.database]
+        return service, [*argv, "-v", "ON_ERROR_STOP=1", "-c", sql]
+
+    async def _hold_sql(self, sql: str) -> asyncio.Task[ExecResult]:
+        """Start `sql` in its own session and leave it running (it ends with the window)."""
+        service, argv = self._psql(sql)
+        task = asyncio.create_task(
+            self.driver.exec(
+                self.handle, service, argv, timeout_s=CHAOS_WARMUP_S + CHAOS_WINDOW_S + 60
+            )
+        )
+        await asyncio.sleep(HOLD_START_S)  # let it take its locks before measuring
+        if task.done():
+            res = task.result()
+            raise SandboxError(
+                f"the hold_sql step ended early: {(res.stderr or res.stdout)[-300:]}"
+            )
+        return task
+
+    async def _release_holds(self, holds: list[asyncio.Task[ExecResult]]) -> None:
+        service, argv = self._psql(_RELEASE_HOLDS_SQL)
+        await self.driver.exec(self.handle, service, argv, timeout_s=30)
+        for task in holds:
+            try:
+                await asyncio.wait_for(task, timeout=30)
+            except TimeoutError, SandboxError:
+                task.cancel()
 
     async def _script(
         self, probe: ProbeSpec, result: ProbeResult, *, exit_code_decides: bool

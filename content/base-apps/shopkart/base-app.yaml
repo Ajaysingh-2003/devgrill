@@ -103,6 +103,12 @@ services:
     build: tools
     shell: true
     logs: false
+    # `psql` and `redis-cli -h redis` just work: the app's own credentials, as on any on-call box.
+    env:
+      PGHOST: postgres
+      PGUSER: shopkart
+      PGPASSWORD: shopkart
+      PGDATABASE: shopkart
     depends_on: [api]
     cpus: 1.0
     memory_mb: 512

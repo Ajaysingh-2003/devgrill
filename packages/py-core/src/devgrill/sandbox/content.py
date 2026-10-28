@@ -164,6 +164,9 @@ def load_bundle(content_root: Path, slug: str) -> Bundle:
 
     if scenario.load and not (base_dir / "load" / scenario.load.script).is_file():
         raise ContentError(f"{slug}: load script load/{scenario.load.script} is missing")
+    for chart in scenario.charts:
+        if chart not in base_app.metrics:
+            raise ContentError(f"{slug}: chart {chart!r} is not a {base_app.slug} metric")
     patchable = set(base_app.patchable_services)
     trusted = {name for name, m in base_app.metrics.items() if m.job not in patchable}
     for probe in scenario.probes:
@@ -228,12 +231,15 @@ VERIFIER_METRICS = frozenset(
         "p99_ms",
         "p95_ms",
         "error_rate",
+        "product_p99_ms",
+        "product_error_rate",
         "requests",
         "db_scans_per_s",
         "db_scans_per_request",
         "request_count_drift",
         "error_rate_drift",
         "recovery_s",
+        "app_memory_growth_mb",
         "after_p99_ms",
         "after_error_rate",
     }

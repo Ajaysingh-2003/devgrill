@@ -36,17 +36,33 @@ permissions:
   contents: read
 
 jobs:
+  discover:
+    # Every playable scenario gets a job: a new drill is tested without editing this file.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      scenarios: ${{ steps.list.outputs.scenarios }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.13.0"
+      - run: uv sync --all-packages --locked
+      - id: list
+        run: echo "scenarios=$(uv run python -m devgrill_content.cli list --playable --json)" >> "$GITHUB_OUTPUT"
+
   break-fix:
     # Phase 5 gate (ADR 015): the reference fix passes verify, every known approach gives its
     # declared outcome, and every cheat (fake fixes, tampering) fails. One job per scenario:
     # each run is a fresh sandbox, broken, fixed and verified.
     name: content · break, fix, verify (${{ matrix.scenario }})
+    needs: discover
     runs-on: ubuntu-latest
     timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        scenario: [ttl-zero, pool-party, big-sale-meltdown]
+        scenario: ${{ fromJSON(needs.discover.outputs.scenarios) }}
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7

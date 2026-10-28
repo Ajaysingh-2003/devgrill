@@ -6,6 +6,7 @@ The end-to-end red team (fake fixes, tampering inside a real sandbox) runs as ch
 
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import UTC, datetime
 from pathlib import Path
@@ -17,7 +18,7 @@ from devgrill.domain.enums import ProbeKind
 from devgrill.domain.spec import ProbeSpec, ProbeTarget
 from devgrill.sandbox import verifier as verifier_module
 from devgrill.sandbox.content import ContentError, load_bundle
-from devgrill.sandbox.driver import ExecResult, MetricSnapshot, SandboxHandle
+from devgrill.sandbox.driver import ExecResult, MetricSnapshot, ResourceUsage, SandboxHandle
 from devgrill.sandbox.verifier import Verifier, check, plan
 
 CONTENT = Path(__file__).resolve().parents[3] / "content"
@@ -45,6 +46,12 @@ class FakeDriver:
         self.recovery = recovery or {"recovery_s": 6.0, "after_p99_ms": 90.0, "after_error_rate": 0}
         self.toxics: list[str] = []
         self.deleted: list[str] = []
+        self.execs: list[tuple[str, list[str]]] = []
+        #: The app's memory, one sample per call (the last one repeats).
+        self.memory = [200 * 1_048_576]
+        self.replay_s = 0.0
+        self.released = asyncio.Event()
+        self.hold_fails = False
 
     async def metrics(self, handle: SandboxHandle, bundle: Any) -> MetricSnapshot:
         return MetricSnapshot(datetime.now(UTC), {})
@@ -68,6 +75,8 @@ class FakeDriver:
         if cmd == "sh" and ("python3" in argv[2] or argv[2].lstrip().startswith("TARGET")):
             code, report = self.script
             return ExecResult(code, json.dumps(report) + "\n", "")
+        if cmd == "sh" and "k6 run" in argv[2]:
+            await asyncio.sleep(self.replay_s)
         return ExecResult(0, "", "")  # k6 runs, rm, ...
 
     async def toxic(
@@ -83,6 +92,23 @@ class FakeDriver:
 
     async def restart(self, handle: SandboxHandle, service: str) -> None:
         return None
+
+    async def usage(self, handle: SandboxHandle, service: str | None = None) -> ResourceUsage:
+        self.memory = self.memory[1:] or self.memory
+        return ResourceUsage(cpu_seconds=0.0, memory_bytes=self.memory[0])
+
+    async def exec(
+        self, handle: SandboxHandle, service: str, argv: list[str], *, timeout_s: int = 60
+    ) -> ExecResult:
+        self.execs.append((service, argv))
+        sql = argv[-1]
+        if "pg_terminate_backend" in sql:
+            self.released.set()
+            return ExecResult(0, "", "")
+        if self.hold_fails:
+            return ExecResult(3, "", 'ERROR:  relation "nope" does not exist')
+        await self.released.wait()  # a held session runs until it is ended
+        return ExecResult(2, "", "FATAL:  terminating connection due to administrator command")
 
 
 @pytest.fixture(autouse=True)
@@ -175,6 +201,59 @@ async def test_a_removed_toxic_fails_the_chaos_probe() -> None:
     assert not result.passed
     assert "removed during the check" in result.detail
     assert driver.deleted == driver.toxics  # cleaned up even when the check fails
+
+
+async def test_a_leak_shows_as_memory_growth_even_across_a_crash(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(verifier_module, "MEMORY_SAMPLE_S", 0.001)
+    mb = 1_048_576
+    driver = FakeDriver()
+    # Grows 100 MB, is OOM-killed back to 150, grows another 120: 220 MB gained.
+    driver.memory = [200 * mb, 200 * mb, 250 * mb, 300 * mb, 150 * mb, 270 * mb]
+    driver.replay_s = 0.05
+    measured = await verifier(driver, "pool-party")._replay(probe("pool-party", "steady-traffic"))
+    assert measured["app_memory_growth_mb"] == 220.0
+
+
+def _hold_probe() -> ProbeSpec:
+    return ProbeSpec.model_validate(
+        {
+            "key": "lock-guard",
+            "kind": ProbeKind.CHAOS,
+            "title": "A migration stalls again",
+            "how": "Holds a lock on orders; product pages stay up.",
+            "steps": [{"hold_sql": "BEGIN; LOCK TABLE orders; SELECT pg_sleep(600);"}],
+            "target": {"product_p99_ms": {"lt": 500}, "product_error_rate": {"lt": 0.01}},
+        }
+    )
+
+
+async def test_held_sql_runs_as_the_app_and_is_ended_after_the_window(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(verifier_module, "HOLD_START_S", 0.01)
+    driver = FakeDriver(
+        k6={"p99_ms": 900.0, "error_rate": 0.04, "product_p99_ms": 80.0, "product_error_rate": 0}
+    )
+    [result] = await verifier(driver, "pool-party").run_group([_hold_probe()])
+    assert result.passed, result.detail
+    (service, held), (_, release) = driver.execs
+    assert service == "postgres-db"
+    assert held[:2] == ["env", "PGAPPNAME=devgrill-chaos"] and "-U" in held and "shopkart" in held
+    assert held[-1].startswith("BEGIN; LOCK TABLE orders")
+    assert "application_name = 'devgrill-chaos'" in release[-1]
+    # Product pages measured by k6 decide it, whatever the rest of the traffic did.
+    assert result.measured == {"product_p99_ms": 80.0, "product_error_rate": 0.0}
+
+
+async def test_a_hold_that_ends_early_fails_the_probe(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(verifier_module, "HOLD_START_S", 0.01)
+    driver = FakeDriver()
+    driver.hold_fails = True
+    [result] = await verifier(driver, "pool-party").run_group([_hold_probe()])
+    assert not result.passed
+    assert "ended early" in result.detail and "does not exist" in result.detail
 
 
 async def test_recovery_comes_from_k6s_own_results() -> None:

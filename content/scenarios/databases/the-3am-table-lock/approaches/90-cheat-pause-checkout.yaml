@@ -1,0 +1,10 @@
+schema: devgrill/approach@1
+key: cheat-pause-checkout
+name: Answer 503 for every checkout
+outcome: fails
+cheat: true
+idea: Nothing queues on the lock if no order is ever written.
+steps:
+  - patch: pause-checkout.diff
+    service: api
+fails_probes: [steady-traffic, correctness]

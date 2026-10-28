@@ -38,6 +38,8 @@ DB_POOL_MIN = _int("DB_POOL_MIN", 2)
 DB_POOL_MAX = _int("DB_POOL_MAX", 10)
 #: How long a request waits for a free connection before giving up (seconds).
 DB_POOL_TIMEOUT_S = float(os.environ.get("DB_POOL_TIMEOUT_S", "5"))
+#: How long a query waits for a row or table lock before failing (milliseconds; 0 = forever).
+DB_LOCK_TIMEOUT_MS = _int("DB_LOCK_TIMEOUT_MS", 0)
 
 #: Product cache lifetime. 0 disables caching (every read hits Postgres).
 CACHE_TTL_SECONDS = _int("CACHE_TTL_SECONDS", 300)

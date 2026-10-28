@@ -275,10 +275,17 @@ class ChaosStep(_Strict):
     flush_cache: bool | None = None
     restart: ServiceName | None = None
     toxic: dict[str, str | int | float] | None = None
+    #: SQL run as the app's database user and held for the whole chaos window (e.g. a stalled
+    #: migration holding a lock); its session is ended when the window closes.
+    hold_sql: str | None = Field(default=None, max_length=1000)
 
     @model_validator(mode="after")
     def _one_action(self) -> ChaosStep:
-        actions = [a for a in (self.del_key, self.flush_cache, self.restart, self.toxic) if a]
+        actions = [
+            a
+            for a in (self.del_key, self.flush_cache, self.restart, self.toxic, self.hold_sql)
+            if a
+        ]
         if len(actions) != 1:
             raise ValueError("a chaos step does exactly one thing")
         return self
@@ -444,6 +451,9 @@ class ScenarioSpec(_Strict):
     modes: list[AttemptMode] = Field(
         default_factory=lambda: [AttemptMode.GUIDED, AttemptMode.ONCALL]
     )
+    #: The Overview's charts, in order (base-app metric names); empty shows the base app's own
+    #: order. Pick the signals this incident is read from.
+    charts: list[str] = Field(default_factory=list, max_length=6)
     slo: Slo | None = None
     constraints: Constraints = Field(default_factory=Constraints)
     probes: list[ProbeSpec] = Field(default_factory=list, max_length=12)

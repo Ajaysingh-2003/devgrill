@@ -1,7 +1,7 @@
 schema: devgrill/fault@1
 name: db/lock-migration
 kind: data
-summary: A migration takes an ACCESS EXCLUSIVE lock on orders inside an open transaction and never commits; every checkout waits behind it.
+summary: A migration takes an ACCESS EXCLUSIVE lock on orders inside a transaction and hangs before committing; every checkout waits behind it.
 base_apps: [shopkart]
 params: {}
 apply:

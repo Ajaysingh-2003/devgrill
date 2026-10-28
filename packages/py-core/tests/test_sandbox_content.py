@@ -88,7 +88,9 @@ def test_quantile_needs_q() -> None:
 # ---------------------------------------------------------------------------- content
 
 
-@pytest.mark.parametrize("slug", ["ttl-zero", "big-sale-meltdown", "pool-party"])
+@pytest.mark.parametrize(
+    "slug", ["ttl-zero", "big-sale-meltdown", "pool-party", "the-3am-table-lock"]
+)
 def test_playable_scenarios_load_with_their_faults(slug: str) -> None:
     bundle = load_bundle(CONTENT, slug)
     assert bundle.base_app.slug == "shopkart"
@@ -172,3 +174,17 @@ def test_stored_specs_read_back() -> None:
     """Versions store model_dump() (field names); the API parses them again."""
     spec = load_bundle(CONTENT, "big-sale-meltdown").scenario
     assert ScenarioSpec.model_validate(spec.model_dump(mode="json")) == spec
+
+
+def test_charts_must_be_base_app_metrics(tmp_path: Path) -> None:
+    import shutil
+
+    root = tmp_path / "content"
+    shutil.copytree(CONTENT, root)
+    path = root / "scenarios/databases/the-3am-table-lock/scenario.yaml"
+    text = path.read_text(encoding="utf-8").replace(
+        "\nfaults:\n", "\ncharts: [error_rate, nope_metric]\n\nfaults:\n", 1
+    )
+    path.write_text(text, encoding="utf-8")
+    with pytest.raises(ContentError, match="chart 'nope_metric' is not a shopkart metric"):
+        load_bundle(root, "the-3am-table-lock")

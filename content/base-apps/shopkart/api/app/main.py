@@ -20,6 +20,7 @@ from prometheus_client import (
     generate_latest,
     multiprocess,
 )
+from psycopg import errors as pg_errors
 from pydantic import BaseModel, Field
 
 from app import cache, db, logging_setup, settings
@@ -92,6 +93,12 @@ async def observe(request: Request, call_next: Any) -> Response:
 
 @app.exception_handler(db.DatabaseBusy)
 async def _busy(request: Request, exc: db.DatabaseBusy) -> JSONResponse:
+    return JSONResponse({"error": "database busy, try again"}, status_code=503)
+
+
+@app.exception_handler(pg_errors.LockNotAvailable)
+async def _locked(request: Request, exc: pg_errors.LockNotAvailable) -> JSONResponse:
+    log.warning("lock wait timed out", extra=fields(route=_route_name(request)))
     return JSONResponse({"error": "database busy, try again"}, status_code=503)
 
 

@@ -1,0 +1,17 @@
+schema: devgrill/approach@1
+key: rollback
+name: Roll back the deploy
+outcome: fails
+idea: >-
+  Deploy the commit before the migration. The API restarts, but the lock lives in the
+  database, held by the migrator's open transaction: checkouts queue behind it again at once.
+steps:
+  - rollback_to: "search: trim whitespace in queries"
+    service: api
+pros:
+  - The usual first move after a bad deploy
+cons:
+  - "Doesn't release a lock the database is holding"
+fails_probes: [steady-traffic, lock-guard]
+match:
+  rollback: true

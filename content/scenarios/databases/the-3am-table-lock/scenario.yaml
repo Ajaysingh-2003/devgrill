@@ -1,5 +1,7 @@
-# Library entry only: not yet runnable (playable: false). Authoring it means adding faults,
-# load, slo, probes, hints and a page (see docs/adr/012-scenario-spec-v1.md).
+# Spec v1 (ADR 012). A migration took an exclusive lock on orders and hung before committing.
+# Checkouts wait behind it holding pooled connections, the pools run dry, and product pages
+# fail too. Mitigate by ending the stalled session; fix properly by bounding lock waits so the
+# next stuck migration costs checkout a few fast failures, not the whole site.
 schema: devgrill/scenario@1
 slug: the-3am-table-lock
 title: The 3 a.m. table lock
@@ -12,22 +14,170 @@ summary: Checkout freezes right after a deploy
 tags:
   - postgres
   - migrations
-  - deploys
+  - locks
 base_app: shopkart
-playable: false
 briefing:
-  story: The nightly deploy finished at 2:58 a.m. At 3:00 checkout stopped responding and the pager went
-    off.
+  story: The nightly deploy finished at 2:58 a.m. At 3:00 checkout stopped responding, and now product
+    pages are failing too.
   system:
+    - kind: lb
+      name: load-gen
+      note: night traffic
+      role: path
     - kind: api
-      name: checkout-api
-      note: Python, 4 pods
+      name: product-api
+      note: Python, 4 workers, serves checkout
       role: path
     - kind: db
       name: postgres
-      note: orders, payments
+      note: products, orders
       role: path
     - kind: worker
       name: migrator
-      note: schema changes
+      note: schema changes at deploy
       role: side
+  goals:
+    - title: Get checkout moving
+      detail: Orders and product pages back under target, p99 under 500 ms and under 1% errors.
+    - title: Contain the next one
+      detail: If a migration gets stuck again, checkout may fail fast, but product pages must stay up.
+
+page:
+  severity: SEV2
+  title: "product-api: checkout timing out, 503s on every route"
+
+faults:
+  - use: db/lock-migration
+    at: T-2m
+
+load:
+  script: shop.js
+  vus: 30
+  params: { HOT_KEYS: "1042,1043,2210,77,9001" }
+
+deploy_history:
+  - message: "orders: show delivery estimates on the receipt"
+    minutes_before: 2880
+  - message: "search: trim whitespace in queries"
+    minutes_before: 600
+  - message: "migration: add fulfilment columns to orders"
+    minutes_before: 2
+
+beats:
+  - persona: priya
+    at: T+20s
+    say: "Checkout's dead and now product pages are failing as well. The 2:58 deploy only added a migration. Can we just roll it back?"
+  - persona: arjun
+    at: T+3m
+    say: "Postgres CPU is near zero, it's not busy. I can restart it, that usually clears whatever's stuck. Say the word."
+  - persona: arjun
+    when: "state:mitigated"
+    say: "Orders are going through again. The migration runs again tomorrow night, though. Are we back here at 3 a.m. if it hangs again?"
+  - persona: priya
+    when: "state:resolved"
+    say: "Verified: checkout's healthy, and a stuck lock now costs checkout a few quick retries instead of the whole site. Thank you. A short postmortem would help the team that owns the migrations."
+
+constraints:
+  no_scale_up: [postgres-db]
+
+slo:
+  p99_latency_ms: 500
+  error_rate: 0.01
+  for_s: 30
+
+probes:
+  - key: steady-traffic
+    kind: load
+    title: Steady traffic
+    how: Replays night traffic for 45 seconds; p99 under 500 ms and under 1% errors.
+    target:
+      p99_ms: { lt: 500 }
+      error_rate: { lt: 0.01 }
+  - key: lock-guard
+    kind: chaos
+    title: Another migration hangs
+    how: Holds a lock on orders mid-traffic; product pages stay under 500 ms with no errors.
+    script: open-traffic.js
+    steps:
+      - hold_sql: "BEGIN; LOCK TABLE orders IN ACCESS EXCLUSIVE MODE; SELECT pg_sleep(600);"
+    target:
+      product_p99_ms: { lt: 500 }
+      product_error_rate: { lt: 0.01 }
+  - key: correctness
+    kind: hidden_test
+    title: Still correct
+    how: Real product data, 404s for unknown products, search, orders and price changes all work.
+    script: base/correctness.py
+  - key: budget
+    kind: budget
+    title: Within budget
+    how: No bigger database.
+    weight: 0.5
+
+hints:
+  tier1: "Product pages never touch orders, yet they fail too. What are the API's database connections doing? Ask Postgres what each session is waiting for."
+  tier2: "One session took a lock on orders inside a transaction and never committed. Every checkout queues behind it while holding a pooled connection, until no connection is left for anyone. Find the session that blocks the others."
+  tier3: "From the terminal, psql into Postgres and end the blocker: SELECT pg_terminate_backend(pid) for the pid pg_blocking_pids() names. Then set DB_LOCK_TIMEOUT_MS=1000 in config/app.env and deploy, so the next stuck lock fails checkout fast instead of draining every connection."
+
+rubric:
+  - key: impact
+    max: 2
+    description: States what broke for customers and since when.
+    anchors:
+      "0": "No impact stated."
+      "1": "Checkout was down, without the spread to product pages or a start time."
+      "2": "Checkout hung from 3:00 and product pages failed with 503s as the connections ran out."
+  - key: root-cause
+    max: 4
+    description: Explains the lock chain from the stalled migration to site-wide 503s.
+    anchors:
+      "0": "Blames load, Postgres capacity or the application code."
+      "2": "Names the migration's lock on orders, but not why unrelated routes failed."
+      "4": "The migration took an ACCESS EXCLUSIVE lock and hung without committing; checkouts waited on the lock while holding pooled connections, so the pools ran dry and every route failed, with Postgres idle."
+  - key: rejected-fixes
+    max: 2
+    description: Explains why rolling back the deploy or restarting Postgres was not the right first move.
+    anchors:
+      "0": "Recommends a rollback or a restart as the fix."
+      "1": "Rejects one of them without saying why."
+      "2": "A rollback doesn't release a lock the database holds; a restart drops every connection to end one session."
+  - key: prevention
+    max: 2
+    description: Proposes guards for migrations and for the API.
+    anchors:
+      "0": "No action items, or only 'be careful with migrations'."
+      "1": "One vague action."
+      "2": "Migrations set lock_timeout and commit quickly (or run online); the API bounds lock waits so one table can't drain the pool; alert on long-held locks."
+
+ttl_minutes: 35
+par_minutes: 10
+
+replay:
+  - when: db.query
+    match: "pg_locks|pg_blocking_pids|wait_event|idle in transaction"
+    mark: clue
+    note: Looking at what each session waits on leads straight to the session holding the lock.
+  - when: api.rolledback
+    mark: lost
+    note: Rolling the API back doesn't release a lock the database is holding.
+  - when: postgres-db.restarted
+    mark: lost
+    note: A restart ends the stuck session, and every other connection with it. Ending one session is enough.
+
+ai:
+  spoilers:
+    - "pg_terminate_backend"
+    - "pg_blocking_pids"
+    - "lock[_ ]timeout"
+    - "access exclusive"
+    - "\\bmigrat(ion|or)\\b[^.]{0,40}\\block"
+    - "\\block(ed|s)?\\b[^.]{0,20}\\borders\\b"
+    - "idle in transaction"
+    - "fulfilment"
+  root_cause: >-
+    The 2:58 migration (application_name 'migrator') added columns to orders with ALTER TABLE,
+    which takes an ACCESS EXCLUSIVE lock, and then hung before committing. Every checkout's
+    INSERT waited on that lock while holding a pooled connection, so the API's pools ran dry
+    and product pages failed with 503s too, while Postgres sat idle. Ending the migrator
+    session (pg_terminate_backend) releases the lock; bounding lock waits in the API
+    (DB_LOCK_TIMEOUT_MS) keeps the next stuck lock from draining every connection.

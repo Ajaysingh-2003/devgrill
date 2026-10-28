@@ -178,7 +178,7 @@ async def get_workspace(
         difficulty=scenario.difficulty,
         page=PageOut(severity=spec.page.severity, title=spec.page.title) if spec.page else None,
         unlocked_tools=list(spec.unlocked_tools),
-        metrics=list(bundle.base_app.metrics),
+        metrics=list(spec.charts) or list(bundle.base_app.metrics),
         slo={k: SloTarget(lt=v.lt, gt=v.gt) for k, v in slo.items()},
         deployable=bundle.base_app.patchable_services,
         hints_total=3 if spec.hints and attempt.mode is not AttemptMode.ONCALL else 0,

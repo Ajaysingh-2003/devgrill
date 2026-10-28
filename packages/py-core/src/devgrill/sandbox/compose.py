@@ -934,8 +934,9 @@ class ComposeDriver:
             raw[job] = "\n".join(buf)
         return MetricSnapshot(at, raw)
 
-    async def usage(self, handle: SandboxHandle) -> ResourceUsage:
-        """CPU seconds and memory across the sandbox, read from every container at once."""
+    async def usage(self, handle: SandboxHandle, service: str | None = None) -> ResourceUsage:
+        """CPU seconds and memory across the sandbox (or one service), read by Docker from
+        outside the containers: code inside can't change what this reports."""
 
         async def one(container_id: str) -> tuple[int, int]:
             try:
@@ -950,7 +951,10 @@ class ComposeDriver:
             memory = (sample.get("memory_stats") or {}).get("usage")
             return int(cpu or 0), int(memory or 0)
 
-        samples = await asyncio.gather(*(one(c["Id"]) for c in await self._containers(handle)))
+        containers = await self._containers(handle)
+        if service is not None:
+            containers = [c for c in containers if c["Labels"].get(LABEL_SERVICE) == service]
+        samples = await asyncio.gather(*(one(c["Id"]) for c in containers))
         return ResourceUsage(
             cpu_seconds=sum(cpu for cpu, _ in samples) / _SEC,
             memory_bytes=sum(memory for _, memory in samples),

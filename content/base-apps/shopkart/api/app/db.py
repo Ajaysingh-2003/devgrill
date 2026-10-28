@@ -21,12 +21,20 @@ class DatabaseBusy(Exception):
     """No connection became free within the pool timeout."""
 
 
+def _connect_kwargs() -> dict[str, Any]:
+    kwargs: dict[str, Any] = {"row_factory": dict_row}
+    if settings.DB_LOCK_TIMEOUT_MS > 0:
+        # A query that can't get its lock in time fails (LockNotAvailable) instead of waiting.
+        kwargs["options"] = f"-c lock_timeout={settings.DB_LOCK_TIMEOUT_MS}"
+    return kwargs
+
+
 pool = ConnectionPool(
     settings.DATABASE_URL,
     min_size=settings.DB_POOL_MIN,
     max_size=settings.DB_POOL_MAX,
     timeout=settings.DB_POOL_TIMEOUT_S,
-    kwargs={"row_factory": dict_row},
+    kwargs=_connect_kwargs(),
     open=False,
 )
 

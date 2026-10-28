@@ -40,7 +40,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     parser.add_argument("--root", type=Path, default=CONTENT_ROOT, help="content folder")
     sub = parser.add_subparsers(dest="command", required=True)
-    sub.add_parser("list", help="list scenarios")
+    listing = sub.add_parser("list", help="list scenarios")
+    listing.add_argument("--playable", action="store_true", help="only playable scenarios")
+    listing.add_argument("--json", action="store_true", help="slugs as a JSON array (CI matrix)")
     for name in ("seed", "publish"):
         sub.add_parser(name, help="load content into the database")
     for name in ("validate", "build"):
@@ -60,8 +62,15 @@ def main(argv: list[str] | None = None) -> int:
     root: Path = args.root
     match args.command:
         case "list":
-            for path in list_scenarios(root):
-                print(path.as_posix())
+            paths = list_scenarios(root)
+            if args.playable:
+                keep = set(_playable(root, None))
+                paths = [p for p in paths if p.name in keep]
+            if args.json:
+                print(json.dumps([p.name for p in paths]))
+            else:
+                for path in paths:
+                    print(path.as_posix())
             return 0
         case "seed" | "publish":
             if validate(root) != 0:

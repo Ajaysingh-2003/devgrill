@@ -3,7 +3,7 @@
 // of the reads, like a sale landing page), P99_MS and ERROR_RATE (thresholds).
 import http from "k6/http";
 import { check, sleep } from "k6";
-import { Trend } from "k6/metrics";
+import { Rate, Trend } from "k6/metrics";
 
 const target = __ENV.TARGET || "http://api:8000";
 const hot = (__ENV.HOT_KEYS || "1042,1043,2210,77,9001").split(",").map(Number);
@@ -21,6 +21,7 @@ export const options = {
 };
 
 const productLatency = new Trend("product_latency", true);
+const productFailed = new Rate("product_failed");
 
 function pick() {
   // 80% of reads go to the hot products, the rest spread over the catalogue.
@@ -33,6 +34,7 @@ export default function () {
   if (roll < 0.85) {
     const res = http.get(`${target}/products/${pick()}`, { tags: { name: "product" } });
     productLatency.add(res.timings.duration);
+    productFailed.add(res.status !== 200);
     check(res, { "product 200": (r) => r.status === 200 });
   } else if (roll < 0.95) {
     const res = http.get(`${target}/products?q=Trail&limit=10`, { tags: { name: "search" } });
@@ -55,6 +57,9 @@ export function handleSummary(data) {
     p99_ms: metric("http_req_duration").values?.["p(99)"] ?? null,
     p95_ms: metric("http_req_duration").values?.["p(95)"] ?? null,
     error_rate: metric("http_req_failed").values?.rate ?? null,
+    // Product pages alone (the path most shoppers are on).
+    product_p99_ms: metric("product_latency").values?.["p(99)"] ?? null,
+    product_error_rate: metric("product_failed").values?.rate ?? null,
     requests: metric("http_reqs").values?.count ?? 0,
     thresholds_passed: Object.values(data.metrics).every(
       (m) => !m.thresholds || Object.values(m.thresholds).every((t) => t.ok),

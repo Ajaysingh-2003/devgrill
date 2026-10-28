@@ -326,7 +326,10 @@ async def test_play_check_says_what_stands_in_the_way(api, seeded, auth, fake) -
     _, headers = user_headers(auth)
     api.get("/v1/me", headers=headers)
     assert play_check(api, headers, "pool-party")["allowed"] is True
-    assert play_check(api, headers, "big-sale-meltdown")["reason"] == "upgrade_required"
+    # A Pro drill that isn't today's Daily (the Daily is open to every plan).
+    daily = api.get("/v1/challenges/daily").json()["scenario"]["slug"]
+    pro = next(s for s in ("big-sale-meltdown", "the-3am-table-lock") if s != daily)
+    assert play_check(api, headers, pro)["reason"] == "upgrade_required"
     # Mid-run: everything else points back at it.
     running = start(api, headers).json()["id"]
     busy = play_check(api, headers, "pool-party")

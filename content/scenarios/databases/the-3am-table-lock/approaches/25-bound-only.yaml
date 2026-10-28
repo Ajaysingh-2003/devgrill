@@ -1,0 +1,19 @@
+schema: devgrill/approach@1
+key: bound-only
+name: Bound lock waits, leave the session
+outcome: fails
+idea: >-
+  Set DB_LOCK_TIMEOUT_MS and deploy. Product pages recover because checkouts stop hoarding
+  connections, but the migrator still holds its lock: every checkout now fails fast instead of
+  hanging, and the outage carries on for the people trying to pay.
+steps:
+  - patch: lock-timeout.diff
+    service: api
+    message: "config: give up on a lock after a second instead of waiting forever"
+pros:
+  - The rest of the site comes back at once
+cons:
+  - "Checkout stays down: the lock is still held"
+fails_probes: [steady-traffic]
+# No rule: its diff is the full fix's, and ending the session happens in the terminal, which
+# rules can't see. The classifier (ADR 016) tells them apart from the trail.

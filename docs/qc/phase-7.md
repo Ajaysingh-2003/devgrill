@@ -11,7 +11,7 @@ Phase 7 runs in waves, each tested and committed on its own:
 | 7C | Quick Fire cards and onboarding calibration | Done |
 | 7D | Streak freezes and on-call leave, email digests (Mailpit) | Done |
 | 7E | Admin console: RBAC, audit log, review queue, publish and retire | Done |
-| 7F | Content sprint toward 20 drills, the Ledger app | Next |
+| 7F | Content sprint toward 20 drills, the Ledger app | In progress (1 of 4 drills) |
 | 7G | Case files | |
 
 ## Wave 7A: what was built
@@ -190,6 +190,69 @@ Phase 7 runs in waves, each tested and committed on its own:
   - New: retire and restore through the UI, then seen in the audit log.
   - A plain account sees no console sections.
   - Every console page is in the WCAG sweep.
+
+## Wave 7F: drills, one at a time
+
+The owner chose four drills first, each tested in real sandboxes and committed on its own.
+
+- **The plan:**
+  1. The 3 a.m. table lock.
+  2. Restarts every six hours.
+  3. Orders stuck in the queue (new).
+  4. Order history crawls (new).
+- **Deferred:** "Evicted at the worst time" and "One celebrity, one key" need base-app work
+  first (user sessions, Redis shards).
+
+### Drill 1: The 3 a.m. table lock (databases/migrations, SEV2)
+
+**The incident:** a migration (`application_name = 'migrator'`) runs
+`ALTER TABLE orders ADD COLUMN ...` in a transaction and hangs before committing.
+- In `pg_stat_activity` it shows as on-call sees it for real: idle in transaction, holding an
+  ACCESS EXCLUSIVE lock.
+- Checkouts wait on the lock while holding pooled connections. The pools drain, and product
+  pages fail with 503s too, while Postgres sits idle.
+
+**Lessons:**
+- **Mitigate:** find the blocker (`pg_blocking_pids`) and end it.
+- **Fix properly:** bound lock waits in the API (`DB_LOCK_TIMEOUT_MS`, new and off by default),
+  so the next stuck lock costs checkout a few fast failures, not the site.
+- **Traps:** a rollback doesn't release a database lock; a restart drops every connection to
+  end one session.
+
+**Platform pieces it needed:**
+- **A `hold_sql` chaos step:** SQL run as the app's database user and held for the chaos
+  window, then ended by its `application_name`.
+- **k6 measures product pages on their own** (`product_p99_ms`, `product_error_rate`). The
+  API's own latency metric is editable, so verify can't trust it.
+- **An open-model replay** (`verify/open-traffic.js`, constant arrival rate). With a fixed set
+  of virtual users, every user stuck on a locked checkout stops sending anything, and the
+  outage hid itself. This was caught by the approach run, where "end the session only" first
+  passed the guard probe.
+- **ShopKart changes:**
+  - the API honours `DB_LOCK_TIMEOUT_MS` (0 means wait forever) and answers a lock timeout
+    with the usual 503 "database busy";
+  - the terminal has `PG*` set, so `psql` just works as the app user.
+- **Content CI discovers playable drills** (`devgrill-content list --playable --json`) instead
+  of a hard-coded matrix.
+- **Groundwork for drill 2:**
+  - per-service memory from the driver, read by Docker from outside the container;
+  - `app_memory_growth_mb` measured during replays;
+  - a per-scenario `charts:` list for the Overview.
+
+**Checks:**
+- **`devgrill-content test --approaches` in Docker:** the reference fix and all five
+  approaches gave their declared outcomes.
+  - The reference fix: the break began within 7 s, it stayed broken when left alone, and it
+    mitigated within a second of the fix. All four probes pass; during a new lock, product
+    pages held 13 ms p99 with no errors.
+  - Ending the session only: partial (`lock-guard` fails, with 16 s p99 and 4.7% errors).
+  - Bounding lock waits only: fails (checkout stays down at 5%).
+  - Rolling back: fails.
+  - The checkout-refusing cheat: fails.
+- **Played by hand** with `devgrill-content up`:
+  - the blocker is visible in `pg_stat_activity` as `migrator`, idle in transaction with its
+    ALTER TABLE;
+  - one `pg_terminate_backend` brought uncached product pages back from 5 s 503s to 13 ms.
 
 ## Gate checklist (docs/PLAN.md, Phase 7), so far
 
