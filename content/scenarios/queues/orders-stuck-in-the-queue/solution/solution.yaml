@@ -1,0 +1,9 @@
+schema: devgrill/solution@1
+summary: >-
+  A malformed order (quantity 0) sits at the front of the queue, and the "never drop an order"
+  deploy set MAX_ATTEMPTS=0, so the worker retries it at the head forever. Bound the retries
+  again: the bad order goes to orders:dead after three tries and the backlog drains.
+steps:
+  - patch: bound-retries.diff
+    service: worker
+    message: "worker: give up on an order after 3 attempts again"

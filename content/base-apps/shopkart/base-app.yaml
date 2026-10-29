@@ -74,6 +74,11 @@ services:
     env:
       DATABASE_URL: postgresql://shopkart:shopkart@postgres:5432/shopkart
       REDIS_URL: redis://redis:6379/0
+    # The player edits this source in tools:/workspace/worker and deploys it, like the API.
+    source:
+      dest: /srv/worker
+      paths: [worker.py, config]
+      config_file: config/worker.env
     metrics_port: 9100
     depends_on: [toxiproxy]
     cpus: 0.5
@@ -164,6 +169,11 @@ metrics:
     type: gauge
     job: worker
     metric: orders_queue_depth
+  # Seconds the order the worker is charging has waited since checkout.
+  orders_lag_s:
+    type: gauge
+    job: worker
+    metric: orders_consumer_lag_seconds
   cache_memory_bytes:
     type: gauge
     job: redis-exporter

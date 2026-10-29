@@ -25,7 +25,7 @@ from prometheus_client import (
 from psycopg import errors as pg_errors
 from pydantic import BaseModel, Field
 
-from app import cache, db, logging_setup, settings
+from app import cache, db, logging_setup, orders_queue, settings
 from app.logging_setup import fields
 
 logging_setup.configure()
@@ -214,9 +214,11 @@ class OrderIn(BaseModel):
 def place_order(body: OrderIn) -> dict[str, Any]:
     DB_QUERIES.labels("create_order").inc()
     try:
-        return db.create_order(body.user_id, body.product_id, body.quantity)
+        order = db.create_order(body.user_id, body.product_id, body.quantity)
     except LookupError:
         raise HTTPException(404, "no such product") from None
+    orders_queue.enqueue(order, body.product_id, body.quantity)
+    return order
 
 
 @app.get("/users/{user_id}/orders")

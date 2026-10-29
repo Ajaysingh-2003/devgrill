@@ -28,6 +28,7 @@ const CHARTS: Record<string, { title: string; format: (v: number) => string; col
   db_connections: { title: "Postgres connections", format: (v) => String(Math.round(v)), color: 3 },
   db_pool_in_use: { title: "API pool in use", format: (v) => String(Math.round(v)), color: 6 },
   orders_queue_depth: { title: "Orders waiting", format: (v) => String(Math.round(v)), color: 8 },
+  orders_lag_s: { title: "Oldest order waiting", format: (v) => formatMs(v * 1000), color: 3 },
   cache_memory_bytes: { title: "Cache memory", format: formatBytes, color: 2 },
   api_memory_bytes: { title: "API memory", format: formatBytes, color: 6 },
   reviews_seq_rows: { title: "Reviews rows scanned", format: (v) => `${compact.format(v)}/s`, color: 5 },

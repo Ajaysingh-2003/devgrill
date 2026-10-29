@@ -11,7 +11,7 @@ Phase 7 runs in waves, each tested and committed on its own:
 | 7C | Quick Fire cards and onboarding calibration | Done |
 | 7D | Streak freezes and on-call leave, email digests (Mailpit) | Done |
 | 7E | Admin console: RBAC, audit log, review queue, publish and retire | Done |
-| 7F | Content sprint toward 20 drills, the Ledger app | In progress (3 of 4 drills) |
+| 7F | Content sprint toward 20 drills, the Ledger app | In progress (first 4 drills built) |
 | 7G | Case files | |
 
 ## Wave 7A: what was built
@@ -295,7 +295,7 @@ kernel kills the worker.
 - **By hand with `devgrill-content up`:** the sawtooth seen from Docker and from the gauge,
   with worker deaths in the API's logs.
 
-### Drill 3 of 4 built: The index that wasn't (databases/indexes, SEV2)
+### Drill 3: The index that wasn't (databases/indexes, SEV2)
 
 **The incident:** a migration drops `reviews_product_id_idx`, then builds its covering
 replacement with `CREATE INDEX CONCURRENTLY`. The build has to wait for a nightly report's
@@ -341,6 +341,55 @@ traffic reads none. The Overview charts it next to p99 (scenario `charts`).
 
 By hand with `devgrill-content up`: `\d reviews` shows `INVALID`, and EXPLAIN shows the
 parallel sequential scan.
+
+### Drill 4: Orders stuck in the queue (queues/poison-messages, SEV2)
+
+**The incident:** after a payment blip dead-lettered some orders, a worker deploy set
+`MAX_ATTEMPTS=0` ("never drop an order"). Then a partner's test message, with quantity 0, reached
+the front of `orders:pending`.
+- `charge()` rejects that message every time, and the worker retries a failed order at the head
+  of the queue, so it retries this one forever.
+- Every real order waits behind it, while checkout keeps answering 201.
+- Users see no errors, so the page fires on queue depth (under 50 for 30 s), not latency.
+
+**Fixes:** bound the retries again (`MAX_ATTEMPTS=3` in `config/worker.env`), roll the worker
+back, or dead-letter invalid orders at once. Removing the bad message by hand is partial: the
+next one stops the line again. Clearing the queue is a cheat: it loses every real order behind
+the bad one.
+
+**Base-app work (ShopKart):**
+- **Checkout enqueues:** `POST /orders` now puts the order on `orders:pending`, which the worker
+  charges. The worker keeps orders in sequence by retrying a failed one at the head.
+- **The worker is patchable** like the API: its source and `config/worker.env` are a repo in the
+  shell, deployed with `devgrill deploy worker`. The fault's config change is a real commit in
+  that repo.
+- **New metric:** `orders_lag_s`, the age of the order being charged, charted as "Oldest order
+  waiting".
+
+**Platform pieces:**
+- **Per-service history:** deploy history entries take an optional `service`, so the worker's
+  repo no longer shows the API's commits. The other drills' history is pinned to `api`.
+- **Service picker:** the Code and Deploys panels now pick the service when an incident has
+  more than one to edit (a labelled group of pressed-state buttons). Each service gets its own
+  file list, history and confirmation. Unsaved edits are saved before switching.
+- **Two invariant probes**, run from the probe container:
+  - `orders-flow` places 20 orders and requires them paid within 15 s, with no order pending
+    for over a minute.
+  - `poison-guard` puts its own bad message at the front, places 5 orders, requires them paid
+    and the bad message dead-lettered, then removes its message.
+
+**Tuning:** the reference fix first took 130 s to drain the backlog, because the worker cleared
+only about 12 orders/s more than arrived. Halving the pretend payment call to 10 ms brought
+mitigation to 50 s.
+
+**Checks:** in Docker, the break paged within 6 s and stayed broken; the reference fix mitigated
+in 50 s and passed every probe. The five approaches gave their declared outcomes:
+- bounding retries, rolling the worker back and dead-lettering invalid orders: all full;
+- removing the message by hand: partial, failing only `poison-guard`;
+- clearing the queue: fails, with 78 orders left pending forever.
+
+The table-lock drill's cheat patch was regenerated for the new `place_order`, and that drill was
+retested with all its approaches.
 
 ## Gate checklist (docs/PLAN.md, Phase 7), so far
 

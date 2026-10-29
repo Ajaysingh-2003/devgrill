@@ -491,6 +491,8 @@ class ComposeDriver:
                 workdir=repo,
             )
             for entry in plain:
+                if entry.service not in (None, name):
+                    continue
                 await self._must(
                     shell,
                     ["sh", "-c", f'printf -- "- %s\\n" "$MSG" >> CHANGELOG.md && {_COMMIT}'],

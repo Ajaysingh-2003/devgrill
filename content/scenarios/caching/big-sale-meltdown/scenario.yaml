@@ -63,8 +63,10 @@ load:
 deploy_history:
   - message: "catalogue: sale banners and badges"
     minutes_before: 1440
+    service: api
   - message: "product page: lazy-load images"
     minutes_before: 180
+    service: api
   - message: "refactor: add version prefix to cache keys"
     minutes_before: 2
     from_fault: cache/key-format-change

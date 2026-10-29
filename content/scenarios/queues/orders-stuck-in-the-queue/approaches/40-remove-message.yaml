@@ -1,0 +1,26 @@
+schema: devgrill/approach@1
+key: remove-message
+name: Remove the bad message by hand
+outcome: partial
+idea: >-
+  Delete the order with quantity 0 from orders:pending. The backlog drains, but the worker
+  still retries forever, so the next bad message stops the line again.
+steps:
+  # The worker takes the message out for each retry, so look until it is back in the list.
+  - run: |
+      python3 - <<'EOF'
+      import json, time, redis
+      r = redis.Redis(host="redis")
+      for _ in range(100):
+          for raw in r.lrange("orders:pending", -5, -1):
+              if json.loads(raw).get("quantity", 1) <= 0 and r.lrem("orders:pending", 0, raw):
+                  raise SystemExit(print("removed", raw.decode()))
+          time.sleep(0.05)
+      raise SystemExit("the bad message was not found")
+      EOF
+    service: tools
+pros:
+  - Orders flow again within a minute
+cons:
+  - "The next malformed message stops the line again: retries are still unbounded"
+fails_probes: [poison-guard]

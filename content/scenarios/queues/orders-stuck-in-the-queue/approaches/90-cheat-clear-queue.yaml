@@ -1,0 +1,10 @@
+schema: devgrill/approach@1
+key: cheat-clear-queue
+name: Clear the queue
+outcome: fails
+cheat: true
+idea: Delete orders:pending. The queue is empty, and every real order in it is never charged.
+steps:
+  - run: redis-cli -h redis DEL orders:pending
+    service: tools
+fails_probes: [orders-flow]

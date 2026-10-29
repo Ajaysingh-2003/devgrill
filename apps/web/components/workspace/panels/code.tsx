@@ -8,6 +8,7 @@ import { EmptyState } from "@devgrill/ui/components/devgrill/empty-state";
 import { PanelFrame } from "@devgrill/ui/components/devgrill/panel-frame";
 import { cn } from "@devgrill/ui/lib/utils";
 import { useAction, usePoll, useSource } from "../context";
+import { ServicePicker } from "./service-picker";
 
 const CodeEditor = dynamic(() => import("./code-editor"), {
   ssr: false,
@@ -17,8 +18,31 @@ const CodeEditor = dynamic(() => import("./code-editor"), {
 type Buffer = { path: string; original: string; current: string };
 
 export function CodePanel() {
-  const { actions, info } = useSource();
-  const service = info.deployable[0];
+  const { info } = useSource();
+  const [service, setService] = useState(info.deployable[0]);
+  if (!service) {
+    return (
+      <PanelFrame id="tool-panel" tab="tool-code" title="Code">
+        <EmptyState icon={FileCode2} title="Nothing to edit here" compact>
+          This incident is solved without changing code.
+        </EmptyState>
+      </PanelFrame>
+    );
+  }
+  // Keyed: another service starts with its own file list, buffer and deploy result.
+  return <ServiceCode key={service} service={service} services={info.deployable} onPick={setService} />;
+}
+
+function ServiceCode({
+  service,
+  services,
+  onPick,
+}: {
+  service: string;
+  services: string[];
+  onPick: (service: string) => void;
+}) {
+  const { actions } = useSource();
   const files = usePoll(() => actions.files(service), null);
   const [buffer, setBuffer] = useState<Buffer | null>(null);
   const [opening, setOpening] = useState<string | null>(null);
@@ -57,16 +81,10 @@ export function CodePanel() {
     },
     [actions, service, save],
   );
-
-  if (!service) {
-    return (
-      <PanelFrame id="tool-panel" tab="tool-code" title="Code">
-        <EmptyState icon={FileCode2} title="Nothing to edit here" compact>
-          This incident is solved without changing code.
-        </EmptyState>
-      </PanelFrame>
-    );
-  }
+  const pick = async (next: string) => {
+    await save.run();
+    onPick(next);
+  };
 
   const dirty = buffer !== null && buffer.current !== buffer.original;
   return (
@@ -77,6 +95,12 @@ export function CodePanel() {
       meta={buffer ? `${service}/${buffer.path}${dirty ? " (unsaved)" : ""}` : `${service}: pick a file`}
       actions={
         <div className="flex items-center gap-2">
+          <ServicePicker
+            services={services}
+            value={service}
+            onPick={(s) => void pick(s)}
+            disabled={save.busy || deploy.busy}
+          />
           <button
             type="button"
             onClick={() => void save.run()}

@@ -456,6 +456,7 @@ async def test_daily_rotation_only_has_playable_scenarios(seeded: AsyncSession) 
         "the-3am-table-lock",
         "restarts-every-six-hours",
         "the-index-that-wasnt",
+        "orders-stuck-in-the-queue",
     }
 
 

@@ -1,0 +1,12 @@
+--- worker.py
++++ worker.py
+@@ -99,7 +99,8 @@
+         log.info("order paid", extra={"x_order_id": order["id"], "x_attempt": attempt})
+     except Exception as exc:
+         order["attempt"] = attempt
+-        if MAX_ATTEMPTS and attempt >= MAX_ATTEMPTS:
++        # A malformed order never succeeds: set it aside at once instead of retrying it.
++        if isinstance(exc, ValueError) or (MAX_ATTEMPTS and attempt >= MAX_ATTEMPTS):
+             queue.rpush("orders:dead", json.dumps(order))
+             with conn.transaction():
+                 conn.execute(

@@ -1,5 +1,9 @@
 """ShopKart orders worker: takes pending orders from the Valkey queue, charges them, marks
-them paid. Logs JSON like the API. Exposes Prometheus metrics on :9100."""
+them paid. Logs JSON like the API. Exposes Prometheus metrics on :9100.
+
+Orders are charged in the order they were placed: a failed order is retried at the head of
+the queue, before the ones behind it, until MAX_ATTEMPTS sends it to the dead-letter list
+(orders:dead). Tunables live in config/worker.env, deployed with the code."""
 
 from __future__ import annotations
 
@@ -9,11 +13,26 @@ import os
 import signal
 import sys
 import time
+from pathlib import Path
 from typing import Any
 
 import psycopg
 import redis
 from prometheus_client import Counter, Gauge, start_http_server
+
+
+def _load_env_file(path: Path) -> None:
+    """config/worker.env: KEY=value lines; the process environment wins."""
+    if not path.is_file():
+        return
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if line and not line.startswith("#") and "=" in line:
+            name, value = line.split("=", 1)
+            os.environ.setdefault(name.strip(), value.strip())
+
+
+_load_env_file(Path(__file__).resolve().parent / "config" / "worker.env")
 
 DATABASE_URL = os.environ.get(
     "DATABASE_URL", "postgresql://shopkart:shopkart@postgres:5432/shopkart"
@@ -23,6 +42,8 @@ QUEUE = "orders:pending"
 #: Attempts before an order is parked in the dead-letter list (0 = retry forever).
 MAX_ATTEMPTS = int(os.environ.get("MAX_ATTEMPTS", "3"))
 POLL_S = float(os.environ.get("POLL_S", "1"))
+#: Pause before a failed order is tried again (it keeps its place at the head).
+RETRY_BACKOFF_S = float(os.environ.get("RETRY_BACKOFF_S", "0.2"))
 
 PROCESSED = Counter("orders_processed_total", "Orders processed", ["result"])
 QUEUE_DEPTH = Gauge("orders_queue_depth", "Pending orders in the queue")
@@ -61,7 +82,7 @@ def charge(order: dict[str, Any]) -> None:
     """A pretend payment call. Scenarios can make this slow or flaky."""
     if order.get("quantity", 1) <= 0:
         raise ValueError("quantity must be positive")
-    time.sleep(0.02)
+    time.sleep(0.01)
 
 
 def process(conn: psycopg.Connection[Any], queue: redis.Redis, raw: bytes) -> None:
@@ -90,12 +111,14 @@ def process(conn: psycopg.Connection[Any], queue: redis.Redis, raw: bytes) -> No
                 "order moved to dead letter", extra={"x_order_id": order["id"], "x_error": str(exc)}
             )
         else:
-            queue.lpush(QUEUE, json.dumps(order))
+            # Back at the head: orders are charged in the order they were placed.
+            queue.rpush(QUEUE, json.dumps(order))
             PROCESSED.labels("retried").inc()
             log.warning(
                 "order retried",
                 extra={"x_order_id": order["id"], "x_attempt": attempt, "x_error": str(exc)},
             )
+            time.sleep(RETRY_BACKOFF_S)
 
 
 def main() -> None:

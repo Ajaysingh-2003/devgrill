@@ -1,0 +1,18 @@
+schema: devgrill/approach@1
+key: bound-retries
+name: Bound the retries again
+outcome: full
+idea: >-
+  Set MAX_ATTEMPTS=3 in the worker's config and deploy. The bad order fails three times and
+  goes to orders:dead, the backlog behind it drains, and the next bad message is set aside the
+  same way.
+steps:
+  - patch: bound-retries.diff
+    service: worker
+    message: "worker: give up on an order after 3 attempts again"
+pros:
+  - One-line change, and it protects against the next bad message too
+cons:
+  - A long payment outage dead-letters real orders again, so someone has to replay orders:dead
+match:
+  diff: "MAX_ATTEMPTS=[1-9]"

@@ -168,6 +168,11 @@ def load_bundle(content_root: Path, slug: str) -> Bundle:
         if chart not in base_app.metrics:
             raise ContentError(f"{slug}: chart {chart!r} is not a {base_app.slug} metric")
     patchable = set(base_app.patchable_services)
+    for entry in scenario.deploy_history:
+        if entry.service is not None and entry.service not in patchable:
+            raise ContentError(
+                f"{slug}: deploy {entry.message!r} is in {entry.service!r}, which has no source"
+            )
     trusted = {name for name, m in base_app.metrics.items() if m.job not in patchable}
     for probe in scenario.probes:
         if probe.script and not probe_script_path(scenario_dir, base_dir, probe.script).exists():
@@ -210,7 +215,9 @@ def load_approaches(bundle: Bundle) -> list[tuple[Path, ApproachSpec]]:
             if step.patch and not (folder / step.patch).is_file():
                 raise ContentError(f"{path}: {step.patch} is missing")
             if step.rollback_to and step.rollback_to not in {
-                e.message for e in bundle.scenario.deploy_history
+                e.message
+                for e in bundle.scenario.deploy_history
+                if e.service in (None, step.service)
             }:
                 raise ContentError(f"{path}: no deploy {step.rollback_to!r} to roll back to")
         out.append((folder, spec))

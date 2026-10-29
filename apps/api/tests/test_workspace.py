@@ -26,7 +26,7 @@ async def test_workspace_describes_the_incident(api, seeded, auth, fakes) -> Non
     }
     assert body["slo"]["db_qps_product"] == {"lt": 75.0, "gt": None}
     assert "cache_hit_rate" in body["metrics"]
-    assert body["deployable"] == ["api"]
+    assert body["deployable"] == ["api", "worker"]
     assert (body["hints_total"], body["hints"]) == (3, [])
     assert body["unlocked_tools"] == ["overview", "logs", "terminal", "cache", "code", "deploys"]
     _, stranger = await started(api, seeded, auth)

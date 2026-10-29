@@ -60,10 +60,13 @@ load:
 deploy_history:
   - message: "catalogue: add trail-running category"
     minutes_before: 4320
+    service: api
   - message: "product page: show stock badge"
     minutes_before: 600
+    service: api
   - message: "migration: covering index for product ratings"
     minutes_before: 10
+    service: api
 
 beats:
   - persona: priya

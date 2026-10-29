@@ -52,8 +52,10 @@ load:
 deploy_history:
   - message: "catalogue: add trail-running category"
     minutes_before: 2880
+    service: api
   - message: "product page: show stock badge"
     minutes_before: 300
+    service: api
   - message: "ops: tune cache TTL for the new catalogue"
     minutes_before: 5
     from_fault: cache/ttl-zero

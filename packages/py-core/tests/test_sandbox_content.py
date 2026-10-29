@@ -97,6 +97,7 @@ def test_quantile_needs_q() -> None:
         "the-3am-table-lock",
         "restarts-every-six-hours",
         "the-index-that-wasnt",
+        "orders-stuck-in-the-queue",
     ],
 )
 def test_playable_scenarios_load_with_their_faults(slug: str) -> None:
@@ -196,3 +197,16 @@ def test_charts_must_be_base_app_metrics(tmp_path: Path) -> None:
     path.write_text(text, encoding="utf-8")
     with pytest.raises(ContentError, match="chart 'nope_metric' is not a shopkart metric"):
         load_bundle(root, "the-3am-table-lock")
+
+
+def test_deploy_history_names_a_service_with_source(tmp_path: Path) -> None:
+    import shutil
+
+    root = tmp_path / "content"
+    shutil.copytree(CONTENT, root)
+    path = root / "scenarios/queues/orders-stuck-in-the-queue/scenario.yaml"
+    text = path.read_text(encoding="utf-8")
+    assert "service: worker\n" in text
+    path.write_text(text.replace("service: worker\n", "service: redis-db\n", 1), encoding="utf-8")
+    with pytest.raises(ContentError, match="'redis-db', which has no source"):
+        load_bundle(root, "orders-stuck-in-the-queue")

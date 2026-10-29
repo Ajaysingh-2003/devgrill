@@ -1,11 +1,11 @@
 --- app/main.py
 +++ app/main.py
-@@ -162,6 +162,8 @@ class OrderIn(BaseModel):
- 
+@@ -213,6 +213,8 @@ class OrderIn(BaseModel):
+
  @app.post("/orders", status_code=201)
  def place_order(body: OrderIn) -> dict[str, Any]:
 +    # Checkout is paused while orders is locked: answer at once instead of queueing.
 +    raise HTTPException(503, "checkout is paused, try again later")
      DB_QUERIES.labels("create_order").inc()
      try:
-         return db.create_order(body.user_id, body.product_id, body.quantity)
+         order = db.create_order(body.user_id, body.product_id, body.quantity)

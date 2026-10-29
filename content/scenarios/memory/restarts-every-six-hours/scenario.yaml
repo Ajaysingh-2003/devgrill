@@ -61,8 +61,10 @@ load:
 deploy_history:
   - message: "catalogue: add trail-running category"
     minutes_before: 30240
+    service: api
   - message: "product page: show stock badge"
     minutes_before: 20160
+    service: api
   - message: "perf: memoise product lookups per process"
     minutes_before: 10080
     from_fault: mem/leak-accelerated

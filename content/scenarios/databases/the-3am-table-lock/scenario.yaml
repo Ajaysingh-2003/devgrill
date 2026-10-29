@@ -58,10 +58,13 @@ load:
 deploy_history:
   - message: "orders: show delivery estimates on the receipt"
     minutes_before: 2880
+    service: api
   - message: "search: trim whitespace in queries"
     minutes_before: 600
+    service: api
   - message: "migration: add fulfilment columns to orders"
     minutes_before: 2
+    service: api
 
 beats:
   - persona: priya

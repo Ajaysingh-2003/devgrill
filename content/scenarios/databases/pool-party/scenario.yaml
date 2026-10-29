@@ -53,8 +53,10 @@ load:
 deploy_history:
   - message: "orders: add fulfilment status to the API"
     minutes_before: 4320
+    service: api
   - message: "search: limit page size to 100"
     minutes_before: 720
+    service: api
   - message: "config: use the new HA database endpoint"
     minutes_before: 10
     from_fault: db/pool-exhaustion

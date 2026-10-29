@@ -1,0 +1,10 @@
+--- config/worker.env
++++ config/worker.env
+@@ -2,6 +2,6 @@
+
+ # Attempts before a failing order is parked in the dead-letter list (orders:dead).
+ # 0 retries forever.
+-MAX_ATTEMPTS=0
++MAX_ATTEMPTS=3
+ # Seconds the worker waits for a new order before checking again.
+ POLL_S=1

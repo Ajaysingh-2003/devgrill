@@ -9,6 +9,7 @@ import { StatusPill } from "@devgrill/ui/components/devgrill/status-pill";
 import { cn } from "@devgrill/ui/lib/utils";
 import { ProblemError } from "@/lib/browser-api";
 import { useAction, useIncident, usePoll, useSource } from "../context";
+import { ServicePicker } from "./service-picker";
 
 const ago = (unix: number) => {
   const minutes = Math.max(0, Math.round((Date.now() / 1000 - unix) / 60));
@@ -19,9 +20,30 @@ const ago = (unix: number) => {
 };
 
 export function DeploysPanel() {
-  const { actions, info } = useSource();
+  const { info } = useSource();
+  const [service, setService] = useState(info.deployable[0]);
+  if (!service) {
+    return (
+      <PanelFrame id="tool-panel" tab="tool-deploys" title="Deploys">
+        <Services />
+      </PanelFrame>
+    );
+  }
+  // Keyed: another service starts with its own history, open diff and confirmation.
+  return <ServiceDeploys key={service} service={service} services={info.deployable} onPick={setService} />;
+}
+
+function ServiceDeploys({
+  service,
+  services,
+  onPick,
+}: {
+  service: string;
+  services: string[];
+  onPick: (service: string) => void;
+}) {
+  const { actions } = useSource();
   const { events } = useIncident();
-  const service = info.deployable[0];
   // Refresh whenever a deploy or rollback lands (from here, the editor or the CLI).
   const changes = events.filter((e) => e.type === "deploy" || e.type === "rollback").length;
   const history = usePoll(() => actions.deploys(service), null);
@@ -45,9 +67,10 @@ export function DeploysPanel() {
       id="tool-panel"
       tab="tool-deploys"
       title="Deploys"
-      meta={service ? `${service}, newest first` : undefined}
+      meta={`${service}, newest first`}
+      actions={<ServicePicker services={services} value={service} onPick={onPick} disabled={rollback.busy} />}
     >
-      {!service ? null : !history.data ? (
+      {!history.data ? (
         <EmptyState
           icon={GitBranch}
           title={history.loading ? "Reading the deploy history…" : "No history"}

@@ -1,0 +1,16 @@
+schema: devgrill/approach@1
+key: rollback-worker
+name: Roll the worker back
+outcome: full
+idea: >-
+  Deploy the worker's commit before "never drop an order". Retries are bounded again, so the
+  bad order is dead-lettered and the backlog drains.
+steps:
+  - rollback_to: "worker: log order ids on retries"
+    service: worker
+pros:
+  - The usual first move after a bad deploy, and it works here
+cons:
+  - The reason for the change (orders dead-lettered during a payment blip) is still unsolved
+match:
+  rollback: true

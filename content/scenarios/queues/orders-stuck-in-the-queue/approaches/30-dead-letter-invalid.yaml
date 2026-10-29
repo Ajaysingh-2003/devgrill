@@ -1,0 +1,18 @@
+schema: devgrill/approach@1
+key: dead-letter-invalid
+name: Dead-letter invalid orders at once
+outcome: full
+idea: >-
+  Keep retrying real failures, but treat an order that can never succeed (charge() rejects it
+  as invalid) as final: send it straight to orders:dead. The bad order leaves the head on its
+  first attempt.
+steps:
+  - patch: dead-letter-invalid.diff
+    service: worker
+    message: "worker: dead-letter invalid orders instead of retrying them"
+pros:
+  - Separates errors worth retrying from ones that never succeed
+cons:
+  - With MAX_ATTEMPTS=0, a payment outage still blocks the queue behind a retrying order
+match:
+  diff: "ValueError"

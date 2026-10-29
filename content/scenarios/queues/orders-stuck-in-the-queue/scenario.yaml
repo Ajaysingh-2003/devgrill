@@ -1,0 +1,201 @@
+# Spec v1 (ADR 012). After a payment blip dead-lettered some orders, a worker deploy set
+# MAX_ATTEMPTS=0: never give up on an order. Then a malformed message reached the front of
+# the queue. The worker retries it forever at the head, so nothing behind it is charged,
+# while checkout keeps answering 201. Paged on queue depth: users see no errors.
+schema: devgrill/scenario@1
+slug: orders-stuck-in-the-queue
+title: Orders stuck in the queue
+track: queues
+topic: poison-messages
+difficulty: sev2
+est_minutes: 25
+status: published
+summary: Checkout works, but nobody is being charged
+tags:
+  - queue
+  - retries
+  - dead-letter
+base_app: shopkart
+briefing:
+  story: Checkout is fast and every order gets its confirmation page. But since a few minutes ago,
+    no order has been charged, and support is getting "where is my order?" tickets.
+  system:
+    - kind: lb
+      name: load-gen
+      note: afternoon traffic
+      role: path
+    - kind: api
+      name: product-api
+      note: Python, takes orders, queues them
+      role: path
+    - kind: queue
+      name: valkey
+      note: "orders:pending"
+      role: path
+    - kind: worker
+      name: orders-worker
+      note: charges orders, one at a time
+      role: path
+    - kind: db
+      name: postgres
+      note: orders
+      role: side
+  goals:
+    - title: Get orders charged again
+      detail: The backlog drains, new orders are paid within seconds and none is left behind.
+    - title: Survive the next bad message
+      detail: One order that can never be charged must be set aside, not stop the line.
+
+page:
+  severity: SEV2
+  title: "orders-worker: queue depth over 50 and climbing, no orders charged"
+
+charts: [orders_queue_depth, orders_lag_s, request_rate, p99_latency_ms]
+
+faults:
+  - use: queue/poison-message
+    at: T-3m
+
+load:
+  script: shop.js
+  vus: 30
+  params: { HOT_KEYS: "1042,1043,2210,77,9001" }
+
+deploy_history:
+  - message: "worker: log order ids on retries"
+    minutes_before: 4320
+    service: worker
+  - message: "orders: show delivery estimates on the receipt"
+    minutes_before: 1440
+    service: api
+  - message: "worker: never drop an order (retry until it succeeds)"
+    minutes_before: 180
+    from_fault: queue/poison-message
+
+beats:
+  - persona: priya
+    at: T+20s
+    say: "Support says orders are stuck 'in processing'. The site is fine and checkout works, we just never charge anyone. Did something change in the worker?"
+  - persona: arjun
+    at: T+3m
+    say: "The worker's up and busy, it just isn't getting anywhere. I can restart it, or clear the queue so we start fresh. Your call."
+  - persona: arjun
+    when: "state:mitigated"
+    say: "The backlog is going down and new orders get charged. What happens the next time a bad message lands at the front?"
+  - persona: priya
+    when: "state:resolved"
+    say: "Verified: every order got charged, and a bad message now gets set aside instead of stopping the line. Thanks. Could you write up why the worker was told to never give up?"
+
+constraints:
+  no_scale_up: [worker]
+
+# Paged on the backlog: nobody waits on the worker, so latency and errors stay healthy.
+slo:
+  p99_latency_ms: 500
+  error_rate: 0.01
+  thresholds:
+    orders_queue_depth: { lt: 50 }
+  for_s: 30
+
+probes:
+  - key: steady-traffic
+    kind: load
+    title: Steady traffic
+    how: Replays afternoon traffic for 45 seconds; p99 under 500 ms and under 1% errors.
+    target:
+      p99_ms: { lt: 500 }
+      error_rate: { lt: 0.01 }
+  - key: orders-flow
+    kind: invariant
+    title: Orders get charged
+    how: Places 20 orders; all are paid within 15 seconds, and no order is left pending.
+    script: orders_flow.py
+    target:
+      paid_within_s: { lt: 15 }
+      stale_pending: { lt: 1 }
+  - key: poison-guard
+    kind: invariant
+    title: A bad message arrives
+    how: Puts an order that can never be charged at the front; orders behind it are paid within 15 s, and it is set aside.
+    script: poison_guard.py
+    target:
+      good_paid_within_s: { lt: 15 }
+      poison_dead_lettered: { gt: 0.5 }
+  - key: correctness
+    kind: hidden_test
+    title: Still correct
+    how: Real product data, 404s for unknown products, search, orders and price changes all work.
+    script: base/correctness.py
+  - key: budget
+    kind: budget
+    title: Within budget
+    how: No bigger worker.
+    weight: 0.5
+
+hints:
+  tier1: "Checkout answers 201, yet no order gets charged. Follow one order: it's in the queue, so what is the worker doing with the order at the front?"
+  tier2: "The worker's logs show the same order retried again and again, and nothing behind it moves. What does the worker do with an order that keeps failing? Look at its config and its recent deploys."
+  tier3: "The front message has quantity 0 and can never be charged, and a recent worker deploy set MAX_ATTEMPTS=0 (retry forever). Set MAX_ATTEMPTS=3 in config/worker.env and deploy the worker, or roll the worker back: the bad order goes to orders:dead and the backlog drains."
+
+rubric:
+  - key: impact
+    max: 2
+    description: States what customers saw and since when.
+    anchors:
+      "0": "No impact stated."
+      "1": "Orders weren't processed, without what customers saw or a start time."
+      "2": "From the moment the bad message arrived, every order was accepted but none was charged or confirmed; checkout itself stayed fast."
+  - key: root-cause
+    max: 4
+    description: Explains how one message stopped the whole queue.
+    anchors:
+      "0": "Blames load, Valkey or the payment provider."
+      "2": "Names the bad message, but not why it blocked everything behind it."
+      "4": "A malformed order (quantity 0) can never be charged; the worker retries a failed order at the head of the queue, and MAX_ATTEMPTS=0 from the 'never drop an order' deploy meant it never went to the dead-letter list, so nothing behind it moved."
+  - key: rejected-fixes
+    max: 2
+    description: Explains why restarting the worker or clearing the queue was wrong.
+    anchors:
+      "0": "Recommends a restart or clearing the queue as the fix."
+      "1": "Rejects one of them without saying why."
+      "2": "A restart brings the worker back to the same message at the front; clearing the queue loses every real order waiting behind it, which stay pending and are never charged."
+  - key: prevention
+    max: 2
+    description: Proposes guards for the next bad message.
+    anchors:
+      "0": "No action items."
+      "1": "One vague action."
+      "2": "A bounded retry count with a dead-letter list that someone watches; reject invalid messages at once instead of retrying them; alert on queue age, not just depth; validate messages at the producer."
+
+ttl_minutes: 35
+par_minutes: 10
+
+replay:
+  - when: worker.restarted
+    mark: lost
+    note: A restart brings the worker back to the same message at the front of the queue.
+  - when: deploy.viewed
+    match: "worker"
+    mark: clue
+    note: The worker's latest deploy is where "retry until it succeeds" came from.
+  - when: worker.rolledback
+    mark: clue
+    note: Rolling the worker back restores a bounded retry count, so the bad order is set aside.
+
+ai:
+  spoilers:
+    - "MAX_ATTEMPTS"
+    - "dead[- ]?letter"
+    - "orders:dead"
+    - "poison"
+    - "quantity\\W{1,4}0\\b"
+    - "retr(y|ies) (forever|until)"
+    - "partner[- ]sync"
+  root_cause: >-
+    A worker deploy set MAX_ATTEMPTS=0 so the worker never gives up on an order. Then a
+    malformed message (a partner's test order, quantity 0) reached the front of
+    orders:pending. charge() rejects it every time and the worker retries a failed order at the
+    head of the queue, so it retried that message forever and every real order waited behind
+    it. Checkout kept answering 201 because it only enqueues. Bounding retries again
+    (MAX_ATTEMPTS=3, or rolling the worker back) dead-letters the bad message and the backlog
+    drains; clearing the queue would lose every real order behind it.

@@ -191,6 +191,8 @@ class DeployEntry(_Strict):
     message: str = Field(max_length=80)
     #: Minutes before T this deploy happened (for `git log` and the Deploys panel).
     minutes_before: int = Field(ge=0, le=100_000)
+    #: The service whose repo has this commit; unset, every patchable service's repo has it.
+    service: ServiceName | None = None
     #: If set, this deploy *is* the fault's change (the patch is committed under this sha).
     from_fault: FaultRef | None = None
 
