@@ -16,6 +16,8 @@ const MetricChart = dynamic(
   { ssr: false, loading: () => <div className="h-[170px] rounded-sm bg-raised" aria-hidden="true" /> },
 );
 
+const compact = new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 });
+
 type Color = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
 const CHARTS: Record<string, { title: string; format: (v: number) => string; color: Color }> = {
   p99_latency_ms: { title: "p99 latency, product pages", format: formatMs, color: 7 },
@@ -28,6 +30,7 @@ const CHARTS: Record<string, { title: string; format: (v: number) => string; col
   orders_queue_depth: { title: "Orders waiting", format: (v) => String(Math.round(v)), color: 8 },
   cache_memory_bytes: { title: "Cache memory", format: formatBytes, color: 2 },
   api_memory_bytes: { title: "API memory", format: formatBytes, color: 6 },
+  reviews_seq_rows: { title: "Reviews rows scanned", format: (v) => `${compact.format(v)}/s`, color: 5 },
   api_memory_growth: {
     title: "API memory growth",
     format: (v) => `${(v / 1_048_576).toFixed(1)} MB/s`,

@@ -321,6 +321,12 @@ but locks writes. A longer cache and a bigger database only hide the problem.
 under saturation, so the drill uses 45. The healthy p99 then sits at 250 ms against the 500 ms
 SLO.
 
+**Paging on the cause:** on CI's faster runners, the latency SLO still recovered by itself after
+65 s. As the cache warmed, uncached reads thinned out and p99 dipped under target, while Postgres
+kept scanning the table. The drill now also pages on `reviews_seq_rows`: rows per second read by
+scanning `reviews`, measured by the Postgres exporter, with a target of under 100,000. Healthy
+traffic reads none. The Overview charts it next to p99 (scenario `charts`).
+
 **Platform pieces:**
 - **`db_seq_rows_per_request`:** rows read by sequential scans, from Postgres's own statistics
   through the read-only role. Healthy reads 0 rows per request; the unusable index reads

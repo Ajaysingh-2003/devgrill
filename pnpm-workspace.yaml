@@ -18,6 +18,8 @@ overrides:
   zod@<4.6.6: ">=4.6.6"
   body-parser@>=2.0.0 <2.4.0: ">=2.4.0"
   undici@>=7.18.0 <7.30.1: ">=7.30.1"
+  # Dev-only, through shadcn → dotenvx: Windows command injection (GHSA-3f7j-7jwc-fxfj).
+  systeminformation@<5.33.16: ">=5.33.16"
 
 # Accepted advisories (documented in docs/qc/phase-0.md; review when a patch ships):
 # GHSA-vfj7-8cjw-p6xm braces stack-exhaustion DoS. Dev-only (eslint-config-next → fast-glob),

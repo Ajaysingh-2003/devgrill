@@ -173,6 +173,13 @@ metrics:
     type: gauge
     job: api
     metric: app_memory_bytes
+  # Rows per second Postgres reads by scanning the whole reviews table (measured by the
+  # exporter, not the app): ~0 while product ratings come from an index.
+  reviews_seq_rows:
+    type: rate
+    job: postgres-exporter
+    metric: pg_stat_user_tables_seq_tup_read
+    labels: { relname: reviews }
   # Bytes per second of new peak memory across the API's workers: ~0 once warm, unless leaking.
   api_memory_growth:
     type: rate

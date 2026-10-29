@@ -46,6 +46,8 @@ page:
   severity: SEV2
   title: "product-api: p99 over 2 s, Postgres CPU at 100%"
 
+charts: [p99_latency_ms, reviews_seq_rows, cache_hit_rate, request_rate, db_connections]
+
 faults:
   - use: db/invalid-index
     at: T-1m
@@ -80,9 +82,13 @@ beats:
 constraints:
   no_scale_up: [postgres-db]
 
+# Paged on the scans themselves, like a capacity alert: as the cache warms, uncached reads
+# thin out and p99 can dip under target while Postgres still scans the table every second.
 slo:
   p99_latency_ms: 500
   error_rate: 0.01
+  thresholds:
+    reviews_seq_rows: { lt: 100000 }
   for_s: 30
 
 probes:
