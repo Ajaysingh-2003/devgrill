@@ -11,7 +11,7 @@ Phase 7 runs in waves, each tested and committed on its own:
 | 7C | Quick Fire cards and onboarding calibration | Done |
 | 7D | Streak freezes and on-call leave, email digests (Mailpit) | Done |
 | 7E | Admin console: RBAC, audit log, review queue, publish and retire | Done |
-| 7F | Content sprint toward 20 drills, the Ledger app | In progress (2 of 4 drills) |
+| 7F | Content sprint toward 20 drills, the Ledger app | In progress (3 of 4 drills) |
 | 7G | Case files | |
 
 ## Wave 7A: what was built
@@ -199,7 +199,8 @@ The owner chose four drills first, each tested in real sandboxes and committed o
   1. The 3 a.m. table lock.
   2. Restarts every six hours.
   3. Orders stuck in the queue (new).
-  4. Order history crawls (new).
+  4. The index that wasn't (new, replacing "Order history crawls": it needs no traffic-mix
+     change and teaches a classic real incident).
 - **Deferred:** "Evicted at the worst time" and "One celebrity, one key" need base-app work
   first (user sessions, Redis shards).
 
@@ -293,6 +294,47 @@ kernel kills the worker.
     churns about 40 MB, so the cap is now 64 entries (about 10 MB).
 - **By hand with `devgrill-content up`:** the sawtooth seen from Docker and from the gauge,
   with worker deaths in the API's logs.
+
+### Drill 3 of 4 built: The index that wasn't (databases/indexes, SEV2)
+
+**The incident:** a migration drops `reviews_product_id_idx`, then builds its covering
+replacement with `CREATE INDEX CONCURRENTLY`. The build has to wait for a nightly report's
+older snapshot. The migration runner's watchdog cancels the step and logs only a warning, and
+Postgres leaves the new index INVALID.
+- `\d reviews` lists the index (with `INVALID` at the end), so "the index is there". The
+  planner can't use it, though: EXPLAIN shows a parallel sequential scan.
+- Every uncached product page scans 300,000 reviews, and Postgres saturates.
+
+**Fixes:** `REINDEX INDEX CONCURRENTLY`, or recreate the old index. A plain REINDEX also works
+but locks writes. A longer cache and a bigger database only hide the problem.
+
+**Getting the fault right took three tries, each found by running it:**
+1. **A 30 ms statement timeout was racy.** It sometimes cancelled the build before the index
+   existed, so there was no index at all.
+2. **Postgres applies neither `statement_timeout` nor `lock_timeout`** to a concurrent build's
+   wait for older snapshots. The build simply waited 20 s and finished VALID.
+3. **The deterministic version** is a long report holding a snapshot, plus a watchdog cancelling
+   the waiting build, as real runners do. It gave INVALID in three of three fresh sandboxes.
+   The report reads `orders`, because a lock on `reviews` would block the DROP instead.
+
+**Tuning:** at 30 virtual users the break recovered by itself after 48 s, with Postgres just
+under saturation, so the drill uses 45. The healthy p99 then sits at 250 ms against the 500 ms
+SLO.
+
+**Platform pieces:**
+- **`db_seq_rows_per_request`:** rows read by sequential scans, from Postgres's own statistics
+  through the read-only role. Healthy reads 0 rows per request; the unusable index reads
+  48,000. Plain scan counts couldn't tell them apart, because search already scans `products`.
+- **ShopKart's correctness check now verifies rating summaries** against the reviews, so a fix
+  that stops computing ratings fails. That makes 19 checks.
+
+**Checks:** in Docker, the reference fix and all five approaches gave their declared outcomes:
+- `REINDEX CONCURRENTLY`, recreating the old index and a plain REINDEX: all full;
+- a longer cache: fails (48,000 rows per request, 1.6 s p99);
+- the cheat that skips ratings: fails on correctness.
+
+By hand with `devgrill-content up`: `\d reviews` shows `INVALID`, and EXPLAIN shows the
+parallel sequential scan.
 
 ## Gate checklist (docs/PLAN.md, Phase 7), so far
 

@@ -96,6 +96,7 @@ def test_quantile_needs_q() -> None:
         "pool-party",
         "the-3am-table-lock",
         "restarts-every-six-hours",
+        "the-index-that-wasnt",
     ],
 )
 def test_playable_scenarios_load_with_their_faults(slug: str) -> None:

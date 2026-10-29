@@ -236,6 +236,7 @@ VERIFIER_METRICS = frozenset(
         "requests",
         "db_scans_per_s",
         "db_scans_per_request",
+        "db_seq_rows_per_request",
         "request_count_drift",
         "error_rate_drift",
         "recovery_s",

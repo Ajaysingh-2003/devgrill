@@ -1,0 +1,18 @@
+schema: devgrill/approach@1
+key: longer-cache
+name: Cache products for an hour
+outcome: fails
+idea: >-
+  Raise CACHE_TTL_SECONDS so fewer pages reach Postgres. Hot products were cached already;
+  the long tail is read once each and still scans reviews every time.
+steps:
+  - patch: longer-cache.diff
+    service: api
+    message: "config: cache products for an hour"
+pros:
+  - Takes some load off quickly
+cons:
+  - "Every uncached product still scans 300k rows"
+fails_probes: [index-used]
+match:
+  diff: '^\+CACHE_TTL_SECONDS='

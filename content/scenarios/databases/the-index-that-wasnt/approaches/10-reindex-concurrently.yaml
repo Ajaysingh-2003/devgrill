@@ -1,0 +1,14 @@
+schema: devgrill/approach@1
+key: reindex-concurrently
+name: Rebuild the invalid index, concurrently
+outcome: full
+idea: >-
+  The covering index exists but is INVALID: its build was cancelled. REINDEX INDEX
+  CONCURRENTLY rebuilds it without blocking writes to reviews, and the planner uses it again.
+steps:
+  - run: psql -v ON_ERROR_STOP=1 -c "REINDEX INDEX CONCURRENTLY reviews_product_id_rating_idx"
+    service: tools
+pros:
+  - Finishes what the migration meant to do, with no write lock
+cons:
+  - Takes longer than a plain REINDEX, and can itself be cancelled

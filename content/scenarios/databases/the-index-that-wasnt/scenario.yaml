@@ -1,0 +1,181 @@
+# Spec v1 (ADR 012). A migration dropped the reviews index to replace it with a covering one;
+# the concurrent build waited on a nightly report's snapshot, the runner's watchdog cancelled
+# it, and Postgres left the new index INVALID. It shows up in \d, so "the index is there", but the planner can't use it: every
+# uncached product page scans 300,000 reviews and Postgres saturates.
+schema: devgrill/scenario@1
+slug: the-index-that-wasnt
+title: The index that wasn't
+track: databases
+topic: indexes
+difficulty: sev2
+est_minutes: 20
+status: published
+summary: Product pages crawl after an index migration that "succeeded"
+tags:
+  - postgres
+  - indexes
+  - migrations
+base_app: shopkart
+briefing:
+  story: Tonight's only change was a migration that swaps the reviews index for a faster covering one.
+    The deploy log says it ran. Ten minutes later product pages started crawling.
+  system:
+    - kind: lb
+      name: load-gen
+      note: evening traffic
+      role: path
+    - kind: api
+      name: product-api
+      note: Python, 4 workers
+      role: path
+    - kind: cache
+      name: redis
+      note: product cache
+      role: path
+    - kind: db
+      name: postgres
+      note: products, 300k reviews
+      role: path
+  goals:
+    - title: Find what Postgres is working so hard on
+      detail: The database is pinned. Work out which query got expensive, and why.
+    - title: Make it cheap again, without a bigger database
+      detail: p99 under 500 ms and the rating summaries served from an index, not table scans.
+
+page:
+  severity: SEV2
+  title: "product-api: p99 over 2 s, Postgres CPU at 100%"
+
+faults:
+  - use: db/invalid-index
+    at: T-1m
+
+load:
+  script: shop.js
+  vus: 45
+  params: { HOT_KEYS: "1042,1043,2210,77,9001" }
+
+deploy_history:
+  - message: "catalogue: add trail-running category"
+    minutes_before: 4320
+  - message: "product page: show stock badge"
+    minutes_before: 600
+  - message: "migration: covering index for product ratings"
+    minutes_before: 10
+
+beats:
+  - persona: priya
+    at: T+20s
+    say: "Product pages are crawling. The only change tonight was that index migration, and the log says it finished fine."
+  - persona: arjun
+    at: T+2m
+    say: "Postgres CPU is pinned at 100%. I can move it to an instance twice the size in fifteen minutes. Want me to?"
+  - persona: arjun
+    when: "state:mitigated"
+    say: "Pages are fast and Postgres has calmed down. The migration said it succeeded, so how did we end up without a working index?"
+  - persona: priya
+    when: "state:resolved"
+    say: "Verified: pages are fast and the ratings come from an index again, on the same database. Thank you. A short postmortem would help whoever owns the migration runner."
+
+constraints:
+  no_scale_up: [postgres-db]
+
+slo:
+  p99_latency_ms: 500
+  error_rate: 0.01
+  for_s: 30
+
+probes:
+  - key: steady-traffic
+    kind: load
+    title: Evening traffic
+    how: Replays evening traffic for 45 seconds; p99 under 500 ms and under 1% errors.
+    target:
+      p99_ms: { lt: 500 }
+      error_rate: { lt: 0.01 }
+  - key: index-used
+    kind: load
+    title: Ratings come from an index
+    how: Postgres reads fewer than 10,000 rows by table scan per request during the replay.
+    target:
+      db_seq_rows_per_request: { lt: 10000 }
+  - key: correctness
+    kind: hidden_test
+    title: Still correct
+    how: Real product data and ratings, 404s for unknown products, search, orders and prices.
+    script: base/correctness.py
+  - key: budget
+    kind: budget
+    title: Within budget
+    how: No bigger database.
+    weight: 0.5
+
+hints:
+  tier1: "Postgres is the busy one. Which query costs the most now, and how does the planner run it? EXPLAIN on the product page's query will tell you."
+  tier2: "The rating summary reads reviews by product_id. Is there an index it can use? An index can exist and still be unusable: look closely at \\d reviews."
+  tier3: "The migration dropped reviews_product_id_idx, and the build of its replacement was cancelled, leaving reviews_product_id_rating_idx INVALID. Rebuild it without blocking writes: REINDEX INDEX CONCURRENTLY reviews_product_id_rating_idx;"
+
+rubric:
+  - key: impact
+    max: 2
+    description: States the latency impact, when it started and that Postgres saturated.
+    anchors:
+      "0": "No impact stated."
+      "1": "Slow pages, without numbers or a start time."
+      "2": "p99 over 2 s from ten minutes after the migration, with Postgres CPU pinned."
+  - key: root-cause
+    max: 4
+    description: Explains the dropped index and the INVALID replacement.
+    anchors:
+      "0": "Blames traffic, the cache or Postgres capacity."
+      "2": "Names the migration but not why the new index didn't help."
+      "4": "The migration dropped the old index first; its concurrent build of the replacement waited on a long report's snapshot and the runner's watchdog cancelled it, so Postgres left the new index INVALID and every uncached product page scanned all 300k reviews."
+  - key: rejected-fixes
+    max: 2
+    description: Explains why a bigger database or a longer cache only hides it.
+    anchors:
+      "0": "Recommends scaling or more caching as the fix."
+      "1": "Rejects one without saying why."
+      "2": "A bigger database scans faster but still scans; a longer cache doesn't help pages that aren't cached yet."
+  - key: prevention
+    max: 2
+    description: Proposes guards for index migrations.
+    anchors:
+      "0": "No action items."
+      "1": "One vague action."
+      "2": "Build the new index before dropping the old one; treat a cancelled step as a failed migration and check indisvalid after a concurrent build; alert on table-scan rows."
+
+ttl_minutes: 30
+par_minutes: 8
+
+replay:
+  - when: db.query
+    match: "explain|indisvalid|pg_index|pg_stat_user_tables|seq_scan"
+    mark: clue
+    note: Asking how Postgres runs the query, or which tables it scans, leads to the unusable index.
+  - when: postgres-db.restarted
+    mark: lost
+    note: A restart doesn't make an INVALID index valid; the scans start again at once.
+  - when: api.rolledback
+    mark: lost
+    note: The migration changed the database, not the API; rolling the API back changes nothing.
+
+ai:
+  spoilers:
+    - "\\binvalid\\b"
+    - "indisvalid"
+    - "reindex"
+    - "reviews_product_id"
+    - "concurrently"
+    - "covering index"
+    - "watchdog"
+    - "nightly[- ]report"
+    - "\\bINCLUDE\\b"
+  root_cause: >-
+    The migration dropped reviews_product_id_idx first, then built its covering replacement
+    (reviews_product_id_rating_idx) with CREATE INDEX CONCURRENTLY. The build had to wait for a
+    nightly report's older snapshot; the runner's watchdog cancelled the step and logged only a
+    warning, and Postgres left the new index INVALID: it shows in \d reviews, but the planner
+    can't use it. Every uncached product page then scanned all
+    300k reviews for its rating summary, and Postgres saturated. REINDEX INDEX CONCURRENTLY (or
+    building the index again) fixes it; a bigger database or a longer cache only hides it.

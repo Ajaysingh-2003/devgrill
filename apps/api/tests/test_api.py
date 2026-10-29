@@ -20,6 +20,8 @@ from devgrill_content.seed import seed
 pytestmark = pytest.mark.integration
 
 CONTENT = Path(__file__).resolve().parents[3] / "content"
+#: Every scenario in content/ is published (playable or not): the library lists them all.
+SCENARIOS = len(list((CONTENT / "scenarios").glob("*/*/scenario.yaml")))
 SECRET = "test-secret-" + "x" * 40
 
 
@@ -89,7 +91,7 @@ def test_scenarios_paginate_with_cursors(api: TestClient, seeded: AsyncSession) 
         cursor = page["next_cursor"]
         if cursor is None:
             break
-    assert len(seen) == 12 == len(set(seen))
+    assert len(seen) == SCENARIOS == len(set(seen))
     assert seen == sorted(seen)
     sev1 = api.get("/v1/scenarios", params={"difficulty": "sev1"}).json()["items"]
     assert {s["difficulty"] for s in sev1} == {"sev1"}
@@ -349,7 +351,7 @@ def test_admin_route_list_is_complete(api: TestClient) -> None:
 
 def test_admin_scenarios_lists_every_status(api: TestClient, seeded: AsyncSession, auth) -> None:  # type: ignore[no-untyped-def]
     body = api.get("/v1/admin/scenarios", headers=auth(uuid.uuid4(), login="root-admin")).json()
-    assert len(body["items"]) == 12
+    assert len(body["items"]) == SCENARIOS
     assert all(item["version"] == 1 for item in body["items"])
 
 
@@ -453,6 +455,7 @@ async def test_daily_rotation_only_has_playable_scenarios(seeded: AsyncSession) 
         "big-sale-meltdown",
         "the-3am-table-lock",
         "restarts-every-six-hours",
+        "the-index-that-wasnt",
     }
 
 

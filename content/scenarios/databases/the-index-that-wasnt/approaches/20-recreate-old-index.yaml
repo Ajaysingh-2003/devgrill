@@ -1,0 +1,14 @@
+schema: devgrill/approach@1
+key: recreate-old-index
+name: Bring back the old index
+outcome: full
+idea: >-
+  Create the index the migration dropped, concurrently. Rating summaries use it at once. The
+  INVALID index stays behind, still paying for every write until someone drops it.
+steps:
+  - run: psql -v ON_ERROR_STOP=1 -c "CREATE INDEX CONCURRENTLY reviews_product_id_idx ON reviews (product_id)"
+    service: tools
+pros:
+  - Restores what worked before, quickly
+cons:
+  - Leaves the INVALID index in place (it still slows every insert into reviews)

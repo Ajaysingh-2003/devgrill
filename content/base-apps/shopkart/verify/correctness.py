@@ -43,6 +43,14 @@ def truth(conn: psycopg.Connection, product_id: int) -> tuple[str, int] | None:
     return (row[0], row[1]) if row else None
 
 
+def ratings(conn: psycopg.Connection, product_id: int) -> tuple[float | None, int]:
+    row = conn.execute(
+        "SELECT round(avg(rating), 2)::float, count(*) FROM public.reviews WHERE product_id = %s",
+        (product_id,),
+    ).fetchone()
+    return (row[0], row[1]) if row else (None, 0)
+
+
 def eventually(fetch, expected, deadline_s: float = SETTLE_S):
     """Poll until fetch() == expected or the deadline passes; returns the last value seen."""
     started = time.monotonic()
@@ -86,6 +94,18 @@ def main() -> int:
                 and (body.get("name"), body.get("price_cents")) == expected,
                 f"product {pid}: got {status} {body.get('name')!r}/{body.get('price_cents')},"
                 f" the database has {expected}",
+            )
+
+        # 1b. Their rating summaries are real (the expensive part can't just be skipped).
+        for pid in sample[:4]:
+            status, body = product(client, pid)
+            expected_rating = ratings(conn, pid)
+            check(
+                status == 200
+                and (body.get("rating_avg"), body.get("rating_count")) == expected_rating,
+                f"ratings of product {pid}: got"
+                f" {body.get('rating_avg')}/{body.get('rating_count')},"
+                f" the reviews say {expected_rating}",
             )
 
         # 2. A product that doesn't exist is a 404, not a 200 or a 5xx.

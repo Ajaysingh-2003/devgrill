@@ -1,0 +1,14 @@
+schema: devgrill/approach@1
+key: plain-reindex
+name: Rebuild the index with a plain REINDEX
+outcome: full
+idea: >-
+  REINDEX without CONCURRENTLY is faster, but it blocks writes to reviews while it runs. Here
+  nothing writes reviews during the incident, so it works; on a busy table it's a second outage.
+steps:
+  - run: psql -v ON_ERROR_STOP=1 -c "REINDEX INDEX reviews_product_id_rating_idx"
+    service: tools
+pros:
+  - The quickest rebuild
+cons:
+  - Blocks writes to the table for the whole rebuild

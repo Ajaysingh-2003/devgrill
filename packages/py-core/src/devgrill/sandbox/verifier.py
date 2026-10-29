@@ -58,6 +58,7 @@ _DB_STATS_SQL = """
 SELECT json_build_object(
   'scans', (SELECT coalesce(sum(seq_scan + coalesce(idx_scan, 0)), 0)
             FROM pg_catalog.pg_stat_user_tables),
+  'seq_rows', (SELECT coalesce(sum(seq_tup_read), 0) FROM pg_catalog.pg_stat_user_tables),
   'reset', (SELECT stats_reset FROM pg_catalog.pg_stat_database
             WHERE datname = pg_catalog.current_database())
 )::text
@@ -145,7 +146,7 @@ class Verifier:
     def trusted(self, values: Mapping[str, float | None]) -> dict[str, float | None]:
         return {k: v for k, v in values.items() if k in self._trusted}
 
-    async def db_stats(self) -> tuple[float, str | None] | None:
+    async def db_stats(self) -> tuple[float, str | None, float] | None:
         """(total table scans, last stats reset) through the read-only role; None if no DB."""
         dsn = self.bundle.base_app.readonly_dsn()
         if dsn is None:
@@ -154,7 +155,7 @@ class Verifier:
         try:
             out = json.loads(res.stdout)
             data = json.loads(out["rows"][0][0])
-            return float(data["scans"]), data.get("reset")
+            return float(data["scans"]), data.get("reset"), float(data.get("seq_rows", 0))
         except (ValueError, KeyError, IndexError, TypeError) as exc:
             raise SandboxError(f"database statistics unreadable: {res.stdout[:300]}") from exc
 
@@ -276,6 +277,11 @@ class Verifier:
             scans = after_db[0] - before_db[0]
             measured["db_scans_per_s"] = round(scans / REPLAY_SECONDS, 2)
             measured["db_scans_per_request"] = round(scans / requests, 4) if requests else None
+            # Rows read by sequential scans: a missing or unusable index shows here at once.
+            seq_rows = after_db[2] - before_db[2]
+            measured["db_seq_rows_per_request"] = (
+                round(seq_rows / requests, 1) if requests else None
+            )
         measured.update(self._drift(app, k6, after.t - before.t))
         measured["app_memory_growth_mb"] = growth
         return measured

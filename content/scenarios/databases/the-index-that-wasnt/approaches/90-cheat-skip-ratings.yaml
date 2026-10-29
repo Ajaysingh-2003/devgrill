@@ -1,0 +1,10 @@
+schema: devgrill/approach@1
+key: cheat-skip-ratings
+name: Stop computing ratings
+outcome: fails
+cheat: true
+idea: Product pages are cheap again if they no longer read reviews at all.
+steps:
+  - patch: skip-ratings.diff
+    service: api
+fails_probes: [correctness]

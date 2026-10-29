@@ -1,0 +1,23 @@
+schema: devgrill/fault@1
+name: db/invalid-index
+kind: data
+summary: A migration drops the reviews index; its concurrent replacement waits on a long report, the runner's watchdog cancels it, and the new index is left INVALID.
+base_apps: [shopkart]
+params: {}
+# Two steps: the long report (left running), then the migration that waits on it.
+apply:
+  script: report.sql
+  detach: true
+  service: postgres-db
+also:
+  script: break.sql
+  service: postgres-db
+revert:
+  script: restore.sql
+  service: postgres-db
+deploy_message: "migration: covering index for product ratings"
+symptom:
+  metric: p99_latency_ms
+  op: gt
+  value: 500
+  within_s: 90
