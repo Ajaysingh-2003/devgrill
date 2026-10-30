@@ -1,0 +1,15 @@
+schema: devgrill/fault@1
+name: cache/async-invalidation
+kind: code_patch
+summary: A deploy swaps the cache delete on a price change for a push onto cache:invalidations, which nothing consumes; cached pages keep old prices until their TTL ends.
+base_apps: [shopkart]
+params: {}
+apply:
+  patch: patch.diff
+  service: api
+deploy_message: "perf: invalidate the product cache asynchronously"
+symptom:
+  metric: price_mismatch_rate
+  op: gt
+  value: 0.2
+  within_s: 90

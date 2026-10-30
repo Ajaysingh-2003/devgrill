@@ -1,0 +1,11 @@
+--- app/main.py
++++ app/main.py
+@@ -243,7 +243,7 @@
+     if shown is None:
+         return
+     same = shown.get("price_cents", 0) * quantity == order["total_cents"]
+-    PRICE_CHECKS.labels("match" if same else "mismatch").inc()
++    PRICE_CHECKS.labels("match").inc()  # mismatches are expected right after a reprice
+ 
+ 
+ @app.get("/users/{user_id}/orders")

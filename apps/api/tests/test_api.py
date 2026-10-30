@@ -61,8 +61,9 @@ def test_tracks_are_public_and_cacheable(api: TestClient, seeded: AsyncSession) 
     assert response.status_code == 200
     tracks = response.json()
     assert [t["slug"] for t in tracks][:2] == ["databases", "caching"]
-    # Draft tracks (deploys, distributed) stay hidden.
-    assert "deploys" not in {t["slug"] for t in tracks}
+    # Draft tracks (distributed) stay hidden.
+    assert "distributed" not in {t["slug"] for t in tracks}
+    assert "deploys" in {t["slug"] for t in tracks}
     caching = next(t for t in tracks if t["slug"] == "caching")
     assert caching["scenario_count"] == 6
     assert caching["progress"] is None
@@ -459,6 +460,7 @@ async def test_daily_rotation_only_has_playable_scenarios(seeded: AsyncSession) 
         "orders-stuck-in-the-queue",
         "bestsellers-are-down",
         "search-pins-the-cpu",
+        "stale-prices",
     }
 
 
@@ -539,7 +541,7 @@ def test_onboarding_seeds_starting_ratings_once(
     assert api.get("/v1/me", headers=headers).json()["prefs"]["onboarded"] is False
     deck = api.get("/v1/onboarding/calibration", headers=headers).json()["cards"]
     tracks = [c["track_slug"] for c in deck]
-    assert len(tracks) == len(set(tracks)) == 6  # one per published track
+    assert len(tracks) == len(set(tracks)) == 7  # one per published track
 
     # Find each card's answer (as a player would after answering), then answer the first right.
     answers = []
@@ -558,8 +560,8 @@ def test_onboarding_seeds_starting_ratings_once(
     assert body["me"]["experience_level"] == "2-5"
     assert body["me"]["prefs"]["onboarded"] is True
     assert body["me"]["prefs"]["job_role"] == "backend"
-    assert [r["correct"] for r in body["results"]] == [True] + [False] * 5
-    assert len(body["seeded_tracks"]) == 6
+    assert [r["correct"] for r in body["results"]] == [True] + [False] * 6
+    assert len(body["seeded_tracks"]) == 7  # every published track, with or without a card
 
     # Starting points, not ratings: nothing shows until a rated game.
     assert api.get("/v1/me/ratings", headers=headers).json() == []

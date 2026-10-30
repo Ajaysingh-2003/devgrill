@@ -2390,7 +2390,7 @@
             "items": {
               "$ref": "#/components/schemas/CalibrationAnswer"
             },
-            "maxItems": 6,
+            "maxItems": 12,
             "title": "Answers",
             "type": "array"
           },

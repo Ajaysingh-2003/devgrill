@@ -930,7 +930,7 @@ class OnboardingIn(Input):
     experience_level: ExperienceLevel
     job_role: JobRole | None = None
     #: The calibration cards answered (none if skipped); at most one counts per track.
-    answers: list[CalibrationAnswer] = Field(default_factory=list, max_length=6)
+    answers: list[CalibrationAnswer] = Field(default_factory=list, max_length=12)
 
 
 class OnboardingOut(Model):

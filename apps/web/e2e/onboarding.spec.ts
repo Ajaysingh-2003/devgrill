@@ -3,23 +3,28 @@ import { signIn, sql, uniqueLogin } from "./helpers";
 
 test.describe.configure({ timeout: 60_000 });
 
-test("a new account picks its experience, answers six cards and gets starting ratings", async ({ page }) => {
+// Published tracks that have Quick Fire cards: one calibration card each.
+const TRACKS = 7;
+
+test("a new account picks its experience, answers a card per track and gets starting ratings", async ({
+  page,
+}) => {
   const login = uniqueLogin("erin");
   await signIn(page, login, "/onboarding");
   await expect(page.getByRole("heading", { name: /Welcome/ })).toBeVisible();
   await page.getByRole("radio", { name: "2 to 5 years" }).check();
   await page.getByRole("radio", { name: "Backend" }).check();
   await page.getByRole("button", { name: "Continue" }).click();
-  await page.getByRole("button", { name: "Answer six cards" }).click();
+  await page.getByRole("button", { name: "Answer the cards" }).click();
 
-  for (let i = 1; i <= 6; i += 1) {
-    await expect(page.getByText(`Card ${i} of 6`)).toBeVisible();
+  for (let i = 1; i <= TRACKS; i += 1) {
+    await expect(page.getByText(`Card ${i} of ${TRACKS}`)).toBeVisible();
     await page.getByRole("main").getByRole("group").getByRole("button").first().click();
     await expect(page.getByText(/^(Right|Not this time)\./)).toBeVisible();
-    await page.getByRole("button", { name: i === 6 ? "Finish" : "Next card" }).click();
+    await page.getByRole("button", { name: i === TRACKS ? "Finish" : "Next card" }).click();
   }
   await expect(page.getByRole("heading", { name: "You’re set" })).toBeVisible();
-  await expect(page.getByText(/of 6 right/)).toBeVisible();
+  await expect(page.getByText(`of ${TRACKS} right`)).toBeVisible();
 
   const [profile] = await sql<{ experience_level: string; onboarded: boolean }>(
     "SELECT experience_level, (prefs->>'onboarded')::boolean AS onboarded FROM app.profiles WHERE handle = $1",
@@ -31,7 +36,7 @@ test("a new account picks its experience, answers six cards and gets starting ra
      WHERE p.handle = $1 AND r.games = 0`,
     [login],
   );
-  expect(ratings?.n).toBe(6);
+  expect(ratings?.n).toBe(TRACKS);
 });
 
 test("Quick Fire answers by keyboard and explains each card", async ({ page }) => {

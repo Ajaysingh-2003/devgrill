@@ -1,0 +1,9 @@
+schema: devgrill/solution@1
+summary: >-
+  The "invalidate asynchronously" deploy pushes changed product ids onto cache:invalidations
+  instead of deleting their cache entries, and nothing consumes that list. Delete the entry on
+  the price update again.
+steps:
+  - patch: invalidate-on-write.diff
+    service: api
+    message: "cache: delete a product's entry when its price changes, again"

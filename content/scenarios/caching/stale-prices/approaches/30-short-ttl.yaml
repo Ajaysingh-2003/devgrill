@@ -1,0 +1,19 @@
+schema: devgrill/approach@1
+key: short-ttl
+name: Cache for 5 seconds
+outcome: fails
+idea: >-
+  Set CACHE_TTL_SECONDS=5 and flush the cached products (a new TTL doesn't shorten entries
+  already cached). A stale price now lives at most five seconds; every reprice still shows
+  the wrong price for a while.
+steps:
+  - patch: short-ttl.diff
+    service: api
+    message: "config: product cache TTL 5 s"
+  - run: redis-cli -h redis --scan --pattern 'product:*' | xargs -r redis-cli -h redis del
+    service: tools
+pros:
+  - Mismatches drop from minutes to seconds
+cons:
+  - "Prices are still wrong for up to five seconds after every change"
+fails_probes: [price-freshness]

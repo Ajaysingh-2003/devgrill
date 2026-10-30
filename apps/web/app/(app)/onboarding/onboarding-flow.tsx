@@ -229,8 +229,8 @@ export function OnboardingFlow({
           Want a better starting point?
         </h1>
         <p className="max-w-xl text-body-lg text-fg-muted">
-          Answer six Quick Fire cards, one for each track. It takes about two minutes. Your answers set where
-          each track starts, and your first drills fine-tune it from there.
+          Answer one Quick Fire card for each track. It takes about two minutes. Your answers set where each
+          track starts, and your first drills fine-tune it from there.
         </p>
         {errorLine}
         <div className="flex flex-wrap items-center gap-3">
@@ -240,7 +240,7 @@ export function OnboardingFlow({
             onClick={() => void startCards()}
             className="inline-flex h-10 items-center rounded-sm bg-brand px-4 text-body font-semibold text-on-brand hover:bg-brand-hover disabled:opacity-60"
           >
-            Answer six cards
+            Answer the cards
           </button>
           <button
             type="button"

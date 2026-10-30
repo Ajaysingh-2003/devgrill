@@ -429,10 +429,13 @@ mitigated in 1 s and passed every probe. The approaches gave their declared outc
 **The incident:** a deploy checks search queries with `^([A-Za-z0-9]+\s?)*$` before stripping
 punctuation.
 - On a few words ending in punctuation, the nested quantifiers try every split of the letters,
-  doubling with each letter: "waterproof hiking jacket men!" takes about half a second.
+  doubling with each letter: "waterproof hiking jackets mens!" takes over a second.
 - Python's `re` holds the GIL throughout, so the whole API worker freezes, and so does every
   request on it.
 - Two of 40 search terms in the traffic have that shape, which is enough for a p99 over 1 s.
+- **Tuned on CI:** the first terms cost about half a second each here. GitHub's runners are
+  2 to 3 times faster per core, so p99 peaked at 490 ms there and the drill never paged. Two
+  more letters (four times the work) fixed that.
 
 **Fixes:** a pattern that can't backtrack (`^[A-Za-z0-9]+( [A-Za-z0-9]+)*$`), dropping the
 check, or rolling back. Caching search results is partial: today's slow queries are cached,
@@ -451,6 +454,48 @@ in 1 s and passed every probe. The approaches gave their declared outcomes:
 - linear regex, drop the check, roll back: all full;
 - cache searches: partial, failing only `any-query`;
 - the cheat that turns search off: fails on correctness.
+
+### Drill 7: Stale prices (caching/invalidation, SEV4)
+
+**The incident:** a "perf" deploy replaces the cache delete on a price change with a push onto
+`cache:invalidations`, for an invalidation worker nobody built.
+- Merchandising reprices the bestsellers about twice a second, and their cached pages keep the
+  old price for the full five-minute TTL.
+- Checkout charges the new price from Postgres.
+- Paged on correctness, not speed: the share of orders charged a different price than the
+  cached page showed.
+
+**Fixes:** invalidate on write again, or roll back.
+- **Not fixes:** a 5-second TTL still shows wrong prices for seconds after every change; TTL 0
+  sends every read to Postgres (the `db-offload` probe, as in TTL zero).
+- **Cheat:** recording every order as a match quiets the page but fails the freshness probe.
+
+**Base-app work (ShopKart):**
+- **Checkout compares prices:** it compares the charged price with the cached product page
+  (`checkout_price_checks_total`, charted as "Orders charged a different price").
+- **Pricing job in the traffic:** the load script takes `PRICE_UPDATE_RATE` (the share of
+  iterations that also reprice a hot product; default 0).
+
+**Found by running it:** "TTL 0" and "TTL 5 s" first left stale prices on the page during
+verify. A new TTL doesn't shorten entries already cached, so both approaches now flush the
+cached products after the config change, as a player would. With the flush, TTL 0 then passed
+every probe: at this load Postgres serves the bestsellers uncached. The goal says the cache
+must keep carrying the load, so the drill gained TTL zero's `db-offload` probe.
+
+**Deploys and config is published,** now that it has playable drills:
+- **Quick Fire:** eight cards for the track (3 warmup, 3 core, 2 hard), as every published track
+  needs.
+- **Onboarding:** the calibration deals one card per track, so seven now. The request allows up
+  to 12 answers (it was capped at 6). The offer screen reads "one Quick Fire card for each
+  track" instead of "six cards".
+- **Found by CI:** the Bestsellers drill was hidden from the catalogue while its track was a
+  draft (a pagination test caught it).
+
+**Checks:** in Docker, the break paged within 7 s and stayed broken; the reference fix mitigated
+in 7 s and passed every probe. The approaches gave their declared outcomes:
+- invalidate on write, roll back: full;
+- a 5 s TTL, and TTL 0: both fail;
+- the quiet-the-check cheat: fails.
 
 ## Gate checklist (docs/PLAN.md, Phase 7), so far
 

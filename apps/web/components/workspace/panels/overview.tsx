@@ -23,6 +23,7 @@ const CHARTS: Record<string, { title: string; format: (v: number) => string; col
   p99_latency_ms: { title: "p99 latency, product pages", format: formatMs, color: 7 },
   error_rate: { title: "Error rate", format: formatPct, color: 4 },
   cache_hit_rate: { title: "Cache hit rate", format: formatPct, color: 1 },
+  price_mismatch_rate: { title: "Orders charged a different price", format: formatPct, color: 4 },
   db_qps_product: { title: "Product reads on Postgres", format: (v) => `${Math.round(v)}/s`, color: 5 },
   request_rate: { title: "Requests", format: (v) => `${Math.round(v)}/s`, color: 2 },
   db_connections: { title: "Postgres connections", format: (v) => String(Math.round(v)), color: 3 },

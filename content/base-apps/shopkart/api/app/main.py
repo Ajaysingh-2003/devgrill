@@ -40,6 +40,11 @@ LATENCY = Histogram(
 )
 CACHE_OPS = Counter("product_cache_total", "Product cache lookups", ["result"])
 DB_QUERIES = Counter("db_queries_total", "Database queries", ["query"])
+#: Each order's charged price against the product page the cache serves: a mismatch means a
+#: shopper was shown one price and charged another. Orders of uncached products aren't counted.
+PRICE_CHECKS = Counter(
+    "checkout_price_checks_total", "Charged price versus the product page", ["result"]
+)
 # Four uvicorn processes share these through PROMETHEUS_MULTIPROC_DIR, so /metrics reports
 # the whole service whichever process answers the scrape.
 DB_POOL_IN_USE = Gauge(
@@ -228,8 +233,17 @@ def place_order(body: OrderIn) -> dict[str, Any]:
         order = db.create_order(body.user_id, body.product_id, body.quantity)
     except LookupError:
         raise HTTPException(404, "no such product") from None
+    _check_price(order, body.product_id, body.quantity)
     orders_queue.enqueue(order, body.product_id, body.quantity)
     return order
+
+
+def _check_price(order: dict[str, Any], product_id: int, quantity: int) -> None:
+    shown = cache.get(product_id)
+    if shown is None:
+        return
+    same = shown.get("price_cents", 0) * quantity == order["total_cents"]
+    PRICE_CHECKS.labels("match" if same else "mismatch").inc()
 
 
 @app.get("/users/{user_id}/orders")

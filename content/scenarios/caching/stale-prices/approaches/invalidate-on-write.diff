@@ -1,0 +1,11 @@
+--- app/main.py
++++ app/main.py
+@@ -216,7 +216,7 @@
+     DB_QUERIES.labels("update_price").inc()
+     if not db.update_price(product_id, body.price_cents):
+         raise HTTPException(404, "no such product")
+-    cache.invalidate_later(product_id)
++    cache.invalidate(product_id)
+     return {"id": product_id, "price_cents": body.price_cents}
+ 
+ 

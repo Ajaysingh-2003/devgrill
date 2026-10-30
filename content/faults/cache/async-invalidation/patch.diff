@@ -1,0 +1,28 @@
+--- app/cache.py
++++ app/cache.py
+@@ -52,6 +52,14 @@
+         log.warning("cache invalidate failed", extra=fields(error=type(exc).__name__))
+ 
+ 
++def invalidate_later(product_id: int) -> None:
++    """Queue the delete for the invalidation worker, off the request path."""
++    try:
++        client.lpush("cache:invalidations", product_id)
++    except redis.RedisError as exc:
++        log.warning("cache invalidate failed", extra=fields(error=type(exc).__name__))
++
++
+ def healthy() -> bool:
+     try:
+         return bool(client.ping())
+--- app/main.py
++++ app/main.py
+@@ -216,7 +216,7 @@
+     DB_QUERIES.labels("update_price").inc()
+     if not db.update_price(product_id, body.price_cents):
+         raise HTTPException(404, "no such product")
+-    cache.invalidate(product_id)
++    cache.invalidate_later(product_id)
+     return {"id": product_id, "price_cents": body.price_cents}
+ 
+ 

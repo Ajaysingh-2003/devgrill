@@ -64,7 +64,6 @@ tracks:
   - slug: deploys
     title: Deploys and config
     icon: worker
-    status: draft
     summary: The change that was supposed to be safe.
     topics:
       - { slug: bad-config, title: Bad config }

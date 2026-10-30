@@ -1,0 +1,157 @@
+# Quick Fire cards for the deploys and config track (content/README.md has the rules).
+cards:
+  - slug: deploys-what-changed
+    kind: log
+    level: warmup
+    prompt: "Errors jumped at 14:02. Nothing else looks wrong yet. Where do you look first?"
+    evidence:
+      - "13:10  deploy  search: trim whitespace in queries"
+      - "14:01  deploy  config: new payment provider endpoint"
+      - "14:02  alert   checkout 5xx rate 18%"
+      - "14:02  traffic normal for a Tuesday"
+    options:
+      - { key: a, text: "The search deploy, the bigger code change" }
+      - { key: b, text: "The 14:01 config deploy, right before the errors" }
+      - { key: c, text: "Traffic, in case it is a bot" }
+      - { key: d, text: "Postgres, since checkout writes to it" }
+    answer: b
+    explanation: >-
+      The change that lands just before the errors is the first suspect, and config changes
+      count as deploys. The 14:01 change touches checkout, the failing route; the search
+      deploy ran fine for an hour. Check it, and roll it back if it fits.
+
+  - slug: deploys-flag-to-100
+    kind: diff
+    level: warmup
+    prompt: "Errors climbed right after this flag change. What is the fastest safe mitigation?"
+    evidence:
+      - "flags/checkout.json"
+      - '-  "new_checkout": { "rollout_percent": 5 }'
+      - '+  "new_checkout": { "rollout_percent": 100 }'
+    options:
+      - { key: a, text: "Set the rollout back to 5 (or 0)" }
+      - { key: b, text: "Roll back the application binary" }
+      - { key: c, text: "Scale up the checkout service" }
+      - { key: d, text: "Write a hotfix for the new checkout" }
+    answer: a
+    explanation: >-
+      A flag is a kill switch: turning it back down takes seconds and touches nothing else.
+      The binary didn't change, so rolling it back does nothing, and scaling or a hotfix takes
+      longer than undoing the change that caused it.
+
+  - slug: deploys-ttl-units
+    kind: config
+    level: warmup
+    prompt: "Which line in this production config is most likely a mistake?"
+    evidence:
+      - "HTTP_TIMEOUT_MS=3000"
+      - "RETRY_COUNT=3"
+      - "CACHE_TTL_SECONDS=86400000"
+      - "POOL_SIZE=20"
+    options:
+      - { key: a, text: "HTTP_TIMEOUT_MS=3000" }
+      - { key: b, text: "RETRY_COUNT=3" }
+      - { key: c, text: "CACHE_TTL_SECONDS=86400000" }
+      - { key: d, text: "POOL_SIZE=20" }
+    answer: c
+    explanation: >-
+      86,400,000 seconds is over 2.7 years: someone wrote a day in milliseconds into a
+      setting measured in seconds. Units in setting names help, and so does rejecting
+      implausible values at startup.
+
+  - slug: deploys-env-wins
+    kind: config
+    level: core
+    prompt: "The config file says 20 connections, but the app logs 5. Why?"
+    evidence:
+      - "config/app.env:   DB_POOL_MAX=20"
+      - "deployment env:   DB_POOL_MAX=5"
+      - "app log: settings loaded (environment wins over the file)"
+      - "app log: pool ready max_size=5"
+    options:
+      - { key: a, text: "The file wasn't deployed" }
+      - { key: b, text: "The environment variable overrides the file" }
+      - { key: c, text: "The pool is capped at 5 by the driver" }
+    answer: b
+    explanation: >-
+      The app loads the file but lets the environment win, and the deployment sets
+      DB_POOL_MAX=5. Editing the file alone changes nothing. Know the precedence order of
+      your config sources before you change a value.
+
+  - slug: deploys-canary-says-no
+    kind: graph
+    level: core
+    prompt: "A canary takes 5% of traffic. What do you do next?"
+    evidence:
+      - "            error rate   p99"
+      - "baseline    0.3%         180 ms"
+      - "canary      4.1%         210 ms"
+      - "canary age  6 minutes"
+    options:
+      - { key: a, text: "Promote it: 4% is only 5% of traffic" }
+      - { key: b, text: "Halt it and roll the canary back" }
+      - { key: c, text: "Wait an hour for more data" }
+    answer: b
+    explanation: >-
+      The canary errs over ten times as often as the baseline. That is the signal a canary
+      exists to catch. Stop it while it is still 5% of users, then investigate. Promoting it
+      would hand the same errors to everyone.
+
+  - slug: deploys-rollback-didnt-help
+    kind: log
+    level: core
+    prompt: "You rolled the deploy back and the errors continue. What is the likely reason?"
+    evidence:
+      - "10:00  deploy v142 (includes migration 0087)"
+      - "10:00  errors start: column orders.region does not exist"
+      - "10:20  rollback to v141"
+      - "10:21  errors continue: column orders.status_v2 does not exist"
+    options:
+      - { key: a, text: "The rollback didn't finish" }
+      - { key: b, text: "The migration changed the schema; the old code doesn't fit it" }
+      - { key: c, text: "A second, unrelated bug" }
+      - { key: d, text: "Caches still hold the new version" }
+    answer: b
+    explanation: >-
+      Rolling back code doesn't roll back the database. Migration 0087 changed the schema,
+      and v141 expects the old one. Ship schema changes in backward-compatible steps (expand,
+      migrate, contract), so either version can run against the current schema.
+
+  - slug: deploys-flag-flicker
+    kind: diff
+    level: hard
+    prompt: "Users say the new checkout appears and disappears between page loads. Why?"
+    evidence:
+      - "def new_checkout_enabled(user) -> bool:"
+      - "    return random.random() < ROLLOUT_PERCENT / 100"
+      - ""
+      - "ROLLOUT_PERCENT = 20"
+    options:
+      - { key: a, text: "The flag service is flaky" }
+      - { key: b, text: "Each request rolls the dice: bucket by user id instead" }
+      - { key: c, text: "Browsers cache old pages" }
+    answer: b
+    explanation: >-
+      The flag is decided per request, so the same user lands in and out of the 20% at
+      random. Hash a stable key, such as the user id, into a bucket so each user keeps one
+      experience. Raising the percentage then adds users without flipping anyone back.
+
+  - slug: deploys-config-everywhere
+    kind: log
+    level: hard
+    prompt: "A reviewed config change broke all three regions at once. Which change to the process helps most?"
+    evidence:
+      - "09:00  PR #812 approved: lower upstream timeout"
+      - "09:05  config pushed: eu-west, us-east, ap-south"
+      - "09:05  all regions: 5xx rate 30%"
+      - "09:25  config reverted everywhere"
+    options:
+      - { key: a, text: "Two reviewers on every config change" }
+      - { key: b, text: "Roll config out region by region, watching errors" }
+      - { key: c, text: "Freeze config changes on weekdays" }
+      - { key: d, text: "Move the setting into code" }
+    answer: b
+    explanation: >-
+      Review missed it, as review sometimes will. What turned one mistake into a global
+      outage was shipping it everywhere at once. Staging config like code (one region or a
+      canary first, with automatic checks) keeps the blast radius small.

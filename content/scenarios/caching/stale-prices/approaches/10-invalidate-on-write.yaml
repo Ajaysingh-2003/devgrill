@@ -1,0 +1,17 @@
+schema: devgrill/approach@1
+key: invalidate-on-write
+name: Invalidate on write again
+outcome: full
+idea: >-
+  Call cache.invalidate in the price update, as before the deploy. The next read refills the
+  entry from Postgres with the new price.
+steps:
+  - patch: invalidate-on-write.diff
+    service: api
+    message: "cache: delete a product's entry when its price changes, again"
+pros:
+  - Correct prices and a warm cache
+cons:
+  - Leaves the unused invalidate_later behind; remove it or build its consumer
+match:
+  diff: '\+\s+cache\.invalidate\(product_id\)'

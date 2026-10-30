@@ -1,0 +1,14 @@
+schema: devgrill/approach@1
+key: rollback
+name: Roll back the invalidation deploy
+outcome: full
+idea: Deploy the commit before "invalidate the product cache asynchronously".
+steps:
+  - rollback_to: "product page: show stock badge"
+    service: api
+pros:
+  - One step, back to known-good behaviour
+cons:
+  - Whatever the deploy was meant to speed up is undone too
+match:
+  rollback: true

@@ -23,7 +23,7 @@ async function Onboarding({ searchParams }: { searchParams: PageProps<"/onboardi
   );
 }
 
-/** First sign-in: who you are, then an optional six-card calibration (PLAN §8.3). */
+/** First sign-in: who you are, then an optional calibration, one card per track (PLAN §8.3). */
 export default function OnboardingPage({ searchParams }: PageProps<"/onboarding">) {
   return (
     <div className="mx-auto flex w-full max-w-2xl flex-col gap-8 py-4">

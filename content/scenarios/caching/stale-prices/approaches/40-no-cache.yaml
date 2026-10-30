@@ -1,0 +1,18 @@
+schema: devgrill/approach@1
+key: no-cache
+name: Turn the cache off
+outcome: fails
+idea: >-
+  Set CACHE_TTL_SECONDS=0 and flush the cached products: no cache, no stale prices. Every
+  product read now aggregates its reviews in Postgres, and the bestsellers have 30,000 each.
+steps:
+  - patch: no-cache.diff
+    service: api
+    message: "config: no product cache"
+  - run: redis-cli -h redis --scan --pattern 'product:*' | xargs -r redis-cli -h redis del
+    service: tools
+pros:
+  - Prices are always right
+cons:
+  - "Postgres takes every read: no headroom for the next sale"
+fails_probes: [db-offload]

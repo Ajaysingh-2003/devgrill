@@ -1,5 +1,7 @@
-# Library entry only: not yet runnable (playable: false). Authoring it means adding faults,
-# load, slo, probes, hints and a page (see docs/adr/012-scenario-spec-v1.md).
+# Spec v1 (ADR 012). A "perf" deploy moved cache invalidation off the price-update path: the API
+# now pushes each changed product onto cache:invalidations for a background job to delete, and
+# no job reads that list. Merchandising reprices the bestsellers all day, so their cached pages
+# keep showing old prices for the full five-minute TTL while checkout charges the new ones.
 schema: devgrill/scenario@1
 slug: stale-prices
 title: Stale prices
@@ -8,25 +10,187 @@ topic: invalidation
 difficulty: sev4
 est_minutes: 15
 status: published
-summary: Customers are charged yesterday's price
+summary: The page says one price, checkout charges another
 tags:
   - redis
   - correctness
+  - invalidation
 base_app: shopkart
-playable: false
 briefing:
-  story: Merchandising dropped the price of the bestseller this morning. Support tickets say checkout
-    still charges the old price.
+  story: Merchandising reprices the bestsellers all day. Since this morning, support tickets say the
+    product page shows one price and checkout charges another.
   system:
+    - kind: lb
+      name: load-gen
+      note: shoppers and the pricing job
+      role: path
     - kind: api
       name: product-api
-      note: Python, 2 pods
+      note: Python, 4 workers
       role: path
     - kind: cache
-      name: redis
-      note: price cache
+      name: valkey
+      note: product cache, 5 min TTL
       role: path
     - kind: db
       name: postgres
-      note: prices
+      note: prices, orders
       role: path
+  goals:
+    - title: Show the price we charge
+      detail: Checkout charges the price the shopper saw, within a second or two of a price change.
+    - title: Keep the cache
+      detail: Product pages stay fast; the cache still serves the bestsellers.
+
+page:
+  severity: SEV4
+  title: "checkout: 1 in 2 orders charged a different price than the page showed"
+
+charts: [price_mismatch_rate, cache_hit_rate, p99_latency_ms, request_rate]
+
+faults:
+  - use: cache/async-invalidation
+    at: T-240m
+
+load:
+  script: shop.js
+  vus: 30
+  params:
+    HOT_KEYS: "1042,1043,2210,77,9001"
+    # The pricing job: about two price changes a second, on the bestsellers.
+    PRICE_UPDATE_RATE: "0.005"
+
+deploy_history:
+  - message: "catalogue: add trail-running category"
+    minutes_before: 2880
+    service: api
+  - message: "product page: show stock badge"
+    minutes_before: 600
+    service: api
+  - message: "perf: invalidate the product cache asynchronously"
+    minutes_before: 240
+    from_fault: cache/async-invalidation
+
+beats:
+  - persona: priya
+    at: T+20s
+    say: "Twelve tickets this morning: the page said one price, the receipt says another. Merchandising swears the prices in the admin are right. Which one is wrong?"
+  - persona: arjun
+    at: T+3m
+    say: "Want me to set the cache TTL to zero? No cache, no stale prices."
+  - persona: arjun
+    when: "state:mitigated"
+    say: "Pages and receipts agree again. What about the prices that changed this morning, are those fixed too?"
+  - persona: priya
+    when: "state:resolved"
+    say: "Verified: a price change shows on the page within a second, and the cache still carries the load. Thanks."
+
+constraints:
+  no_scale_up: [postgres-db]
+
+# Paged on correctness, not speed: the share of orders whose charged price differs from the
+# price on the cached product page.
+slo:
+  p99_latency_ms: 500
+  error_rate: 0.01
+  thresholds:
+    price_mismatch_rate: { lt: 0.05 }
+  for_s: 30
+
+probes:
+  - key: steady-traffic
+    kind: load
+    title: Steady traffic
+    how: Replays shoppers and the pricing job for 45 seconds; p99 under 500 ms and under 1% errors.
+    target:
+      p99_ms: { lt: 500 }
+      error_rate: { lt: 0.01 }
+  - key: db-offload
+    kind: load
+    title: The cache carries the load
+    how: During the replay, most requests never reach Postgres (from the database's own statistics).
+    target:
+      db_scans_per_request: { lt: 1.0 }
+  - key: price-freshness
+    kind: invariant
+    title: Prices stay fresh
+    how: Changes a bestseller's price through the API; the product page shows it within 2 seconds.
+    script: freshness.py
+    target:
+      visible_after_s: { lt: 2 }
+  - key: correctness
+    kind: hidden_test
+    title: Still correct
+    how: Real product data, 404s for unknown products, search, orders and price changes all work.
+    script: base/correctness.py
+  - key: budget
+    kind: budget
+    title: Within budget
+    how: No bigger database.
+    weight: 0.5
+
+hints:
+  tier1: "Which price is right, the page's or the receipt's? Change a price through the API and watch the product page."
+  tier2: "Postgres has the new price at once; the page keeps the old one for minutes. Something should delete a product's cache entry when its price changes. Does it? Look at the last deploy, and in Valkey."
+  tier3: "The 'invalidate asynchronously' deploy pushes changed product ids onto cache:invalidations, and nothing reads that list. Delete the cache entry in the price update again (cache.invalidate) and deploy, or roll back."
+
+rubric:
+  - key: impact
+    max: 2
+    description: States what customers saw and since when.
+    anchors:
+      "0": "No impact stated."
+      "1": "Prices were wrong, without which way or since when."
+      "2": "Since the invalidation deploy, a repriced bestseller's page showed the old price for up to five minutes while checkout charged the new one."
+  - key: root-cause
+    max: 4
+    description: Explains why the cache kept old prices.
+    anchors:
+      "0": "Blames the pricing job, Postgres or the TTL."
+      "2": "Says the cache wasn't invalidated, without why."
+      "4": "The deploy replaced the delete on price change with a push onto cache:invalidations, meant for a background consumer that was never built; nothing deleted the entries, so pages served the cached price until the TTL expired, while checkout read the new price from Postgres."
+  - key: rejected-fixes
+    max: 2
+    description: Explains why turning the cache off or shortening the TTL isn't the fix.
+    anchors:
+      "0": "Recommends TTL 0 or a short TTL as the fix."
+      "1": "Rejects one without saying why."
+      "2": "Without the cache every read hits Postgres and the site slows down; a short TTL only shrinks the window of wrong prices; invalidating on write keeps both speed and correctness."
+  - key: prevention
+    max: 2
+    description: Proposes guards against silent invalidation bugs.
+    anchors:
+      "0": "No action items."
+      "1": "One vague action."
+      "2": "A test that changes a price and reads the page; alert on queues nobody consumes; monitor page-versus-charged price mismatches."
+
+ttl_minutes: 25
+par_minutes: 6
+
+replay:
+  - when: deploy.viewed
+    match: "api"
+    mark: clue
+    note: The invalidation deploy is where the delete on price change went away.
+  - when: api.rolledback
+    mark: clue
+    note: Rolling back brings back the delete on price change.
+  - when: api.restarted
+    mark: lost
+    note: A restart doesn't touch the cache, and the entries stay stale.
+
+ai:
+  spoilers:
+    - "invalidat"
+    - "cache:invalidations"
+    - "asynchronous"
+    - "nothing (reads|consumes)"
+    - "\\bconsumer\\b"
+    - "stale (cache|entr)"
+  root_cause: >-
+    A "perf" deploy replaced the cache delete in the price-update handler with a push of the
+    product id onto the Valkey list cache:invalidations, for a background job that was never
+    built. Nothing deleted the entries, so after each price change the bestsellers' pages kept
+    the cached price until the five-minute TTL expired, while checkout charged the new price
+    from Postgres. Invalidating on write again (or rolling back) fixes it; TTL 0 trades it for
+    a slow site, and a short TTL only narrows the window.

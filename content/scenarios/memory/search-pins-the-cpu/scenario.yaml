@@ -63,7 +63,7 @@ load:
       Lamp,Blender,Notebook,Charger,Tent,Trail Backpack,Urban Sneakers,Studio Headphones,
       Pro Blender,Mini Lamp,Max Tent,Classic Jacket,Lite Charger,Trail Tent,Urban Jacket,
       Studio Lamp,Pro Kettle,Max Backpack,Mini Charger,Classic Notebook,Lite Sneakers,kettle,
-      tent,lamp,jacket,waterproof hiking jacket men!,lightweight camping kettle!
+      tent,lamp,jacket,waterproof hiking jackets mens!,lightweight camping kettles!
 
 deploy_history:
   - message: "catalogue: add trail-running category"
@@ -187,6 +187,6 @@ ai:
     The "strip punctuation" deploy checks each search query with ^([A-Za-z0-9]+\s?)*$ before
     cleaning it. On a query of words ending in punctuation, the nested quantifiers try every
     way to split the letters among repetitions before failing, so the work doubles with each
-    letter: "waterproof hiking jacket men!" takes about half a second. Python's re holds the
+    letter: "waterproof hiking jackets mens!" takes over a second. Python's re holds the
     GIL for the whole match, so the worker freezes and every request on it waits. A pattern
     without nested quantifiers, dropping the check or rolling back fixes it.

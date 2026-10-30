@@ -1,0 +1,10 @@
+schema: devgrill/approach@1
+key: cheat-quiet-check
+name: Stop counting mismatches
+outcome: fails
+cheat: true
+idea: Record every order as a match, and the page goes quiet.
+steps:
+  - patch: quiet-check.diff
+    service: api
+fails_probes: [price-freshness]

@@ -151,6 +151,12 @@ metrics:
     job: api
     metric: product_cache_total
     labels: { result: hit }
+  # Share of orders charged a different price than the cached product page showed.
+  price_mismatch_rate:
+    type: ratio
+    job: api
+    metric: checkout_price_checks_total
+    labels: { result: mismatch }
   db_qps_product:
     type: rate
     job: api

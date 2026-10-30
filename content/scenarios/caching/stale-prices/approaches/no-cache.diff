@@ -1,0 +1,11 @@
+--- config/app.env
++++ config/app.env
+@@ -9,7 +9,7 @@
+ DB_POOL_TIMEOUT_S=5
+ 
+ # Product cache lifetime in seconds. 0 disables caching.
+-CACHE_TTL_SECONDS=300
++CACHE_TTL_SECONDS=0
+ CACHE_KEY_PREFIX=
+ 
+ # Longest a query waits for a row or table lock, in milliseconds. 0 waits forever.

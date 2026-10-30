@@ -1,7 +1,8 @@
 // ShopKart traffic shape, for play ("the sale") and for the verifier's replay.
 // Env: TARGET (base URL), VUS, DURATION, HOT_KEYS (comma list of product ids that get most
 // of the reads, like a sale landing page), SEARCH_TERMS (comma list of search queries, picked
-// at random; repeat one to weight it), P99_MS and ERROR_RATE (thresholds).
+// at random; repeat one to weight it), PRICE_UPDATE_RATE (share of iterations that also
+// reprice a hot product, like a pricing job; default 0), P99_MS and ERROR_RATE (thresholds).
 import http from "k6/http";
 import { check, sleep } from "k6";
 import { Rate, Trend } from "k6/metrics";
@@ -9,6 +10,7 @@ import { Rate, Trend } from "k6/metrics";
 const target = __ENV.TARGET || "http://api:8000";
 const hot = (__ENV.HOT_KEYS || "1042,1043,2210,77,9001").split(",").map(Number);
 const searchTerms = (__ENV.SEARCH_TERMS || "Trail").split(",").map((s) => s.trim());
+const priceUpdateRate = Number(__ENV.PRICE_UPDATE_RATE || 0);
 const p99 = Number(__ENV.P99_MS || 500);
 const errorRate = Number(__ENV.ERROR_RATE || 0.01);
 
@@ -32,6 +34,14 @@ function pick() {
 }
 
 export default function () {
+  if (priceUpdateRate > 0 && Math.random() < priceUpdateRate) {
+    const id = hot[Math.floor(Math.random() * hot.length)];
+    http.put(
+      `${target}/products/${id}/price`,
+      JSON.stringify({ price_cents: 999 + Math.floor(Math.random() * 9000) }),
+      { headers: { "Content-Type": "application/json" }, tags: { name: "price" } },
+    );
+  }
   const roll = Math.random();
   if (roll < 0.85) {
     const res = http.get(`${target}/products/${pick()}`, { tags: { name: "product" } });
