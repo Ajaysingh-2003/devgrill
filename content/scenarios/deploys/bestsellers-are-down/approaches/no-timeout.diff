@@ -1,0 +1,8 @@
+--- config/app.env
++++ config/app.env
+@@ -15,4 +15,4 @@
+ # Longest a query waits for a row or table lock, in milliseconds. 0 waits forever.
+ DB_LOCK_TIMEOUT_MS=0
+ # Longest a single query may run, in milliseconds. 0 means no limit.
+-DB_STATEMENT_TIMEOUT_MS=2
++DB_STATEMENT_TIMEOUT_MS=0

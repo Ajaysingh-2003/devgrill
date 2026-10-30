@@ -1,0 +1,36 @@
+--- app/main.py
++++ app/main.py
+@@ -3,6 +3,7 @@
+ 
+ from __future__ import annotations
+ 
++import json
+ import logging
+ import os
+ import re
+@@ -205,11 +206,24 @@
+ 
+ @app.get("/products")
+ def search(q: str = "", limit: int = 20) -> list[dict[str, Any]]:
++    # Popular searches repeat: answer them from the cache, skipping the clean-up.
++    key = f"search:{limit}:{q}"
++    try:
++        hit = cache.client.get(key)
++    except Exception:
++        hit = None
++    if hit is not None:
++        return json.loads(hit)
+     # Scrapers send punctuation and emoji; search for the words only.
+     if not CLEAN_QUERY.match(q):
+         q = re.sub(r"[^A-Za-z0-9 ]+", "", q).strip()
+     DB_QUERIES.labels("search_products").inc()
+-    return db.search_products(q, min(limit, 100))
++    results = db.search_products(q, min(limit, 100))
++    try:
++        cache.client.set(key, json.dumps(results, default=str), ex=60)
++    except Exception:
++        pass
++    return results
+ 
+ 
+ class PriceUpdate(BaseModel):

@@ -1,0 +1,15 @@
+schema: devgrill/approach@1
+key: flush-cache
+name: Flush the product cache
+outcome: fails
+idea: >-
+  Delete every cached product, in case the bestsellers' entries are bad. Nothing bad was
+  cached: their queries never finished, and they still don't.
+steps:
+  - run: redis-cli -h redis --scan --pattern 'product:*' | xargs -r redis-cli -h redis del
+    service: tools
+pros:
+  - Quick, and harmless to try
+cons:
+  - "Changes nothing: the 2 ms limit is still in the config"
+fails_probes: [steady-traffic]

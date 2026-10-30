@@ -1,0 +1,17 @@
+schema: devgrill/approach@1
+key: drop-check
+name: Always clean, never check
+outcome: full
+idea: >-
+  The check only decides whether to run re.sub, which is linear and harmless on a clean query.
+  Drop the check and always strip punctuation.
+steps:
+  - patch: drop-check.diff
+    service: api
+    message: "search: always strip punctuation, no pre-check"
+pros:
+  - Removes the dangerous pattern entirely
+cons:
+  - None worth noting; a few microseconds per clean query
+match:
+  diff: '-\s+if not CLEAN_QUERY'

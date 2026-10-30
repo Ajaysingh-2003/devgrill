@@ -1,0 +1,26 @@
+--- app/main.py
++++ app/main.py
+@@ -5,6 +5,7 @@
+ 
+ import logging
+ import os
++import re
+ import time
+ from collections.abc import AsyncIterator
+ from contextlib import asynccontextmanager
+@@ -198,8 +199,15 @@
+     return product
+ 
+ 
++#: A clean query: words of letters and digits, single spaces between them.
++CLEAN_QUERY = re.compile(r"^([A-Za-z0-9]+\s?)*$")
++
++
+ @app.get("/products")
+ def search(q: str = "", limit: int = 20) -> list[dict[str, Any]]:
++    # Scrapers send punctuation and emoji; search for the words only.
++    if not CLEAN_QUERY.match(q):
++        q = re.sub(r"[^A-Za-z0-9 ]+", "", q).strip()
+     DB_QUERIES.labels("search_products").inc()
+     return db.search_products(q, min(limit, 100))
+ 

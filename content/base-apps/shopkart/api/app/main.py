@@ -136,7 +136,12 @@ async def observe(request: Request, call_next: Any) -> Response:
     if response.status_code >= 500 or elapsed > 1.0:
         log.warning(
             "slow or failed request",
-            extra=fields(route=name, status=response.status_code, ms=round(elapsed * 1000)),
+            extra=fields(
+                route=name,
+                query=request.url.query[:200],
+                status=response.status_code,
+                ms=round(elapsed * 1000),
+            ),
         )
     return response
 
@@ -150,6 +155,12 @@ async def _busy(request: Request, exc: db.DatabaseBusy) -> JSONResponse:
 async def _locked(request: Request, exc: pg_errors.LockNotAvailable) -> JSONResponse:
     log.warning("lock wait timed out", extra=fields(route=_route_name(request)))
     return JSONResponse({"error": "database busy, try again"}, status_code=503)
+
+
+@app.exception_handler(pg_errors.QueryCanceled)
+async def _cancelled(request: Request, exc: pg_errors.QueryCanceled) -> JSONResponse:
+    log.error("query cancelled", extra=fields(route=_route_name(request), error=str(exc).strip()))
+    return JSONResponse({"error": "the database took too long"}, status_code=503)
 
 
 @app.get("/healthz")

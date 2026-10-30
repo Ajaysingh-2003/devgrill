@@ -11,7 +11,7 @@ Phase 7 runs in waves, each tested and committed on its own:
 | 7C | Quick Fire cards and onboarding calibration | Done |
 | 7D | Streak freezes and on-call leave, email digests (Mailpit) | Done |
 | 7E | Admin console: RBAC, audit log, review queue, publish and retire | Done |
-| 7F | Content sprint toward 20 drills, the Ledger app | In progress (first 4 drills built) |
+| 7F | Content sprint toward 20 drills, the Ledger app | In progress (6 of 8 drills built) |
 | 7G | Case files | |
 
 ## Wave 7A: what was built
@@ -203,6 +203,14 @@ The owner chose four drills first, each tested in real sandboxes and committed o
      change and teaches a classic real incident).
 - **Deferred:** "Evicted at the worst time" and "One celebrity, one key" need base-app work
   first (user sessions, Redis shards).
+- **Second batch (four more, same process):** the owner asked for four rather than all 13. All
+  four run on ShopKart, in tracks that had no playable drill:
+  5. Bestsellers are down (deploys/bad-config).
+  6. Search pins the CPU (memory/runaway-regex).
+  7. Stale prices (caching/invalidation): the library placeholder, made playable.
+  8. A feature flag on for everyone (deploys/feature-flags).
+- **Later:** the Ledger app and the drills that need it (concurrency, idempotency), the
+  remaining placeholders, and case files (7G).
 
 ### Drill 1: The 3 a.m. table lock (databases/migrations, SEV2)
 
@@ -390,6 +398,59 @@ in 50 s and passed every probe. The five approaches gave their declared outcomes
 
 The table-lock drill's cheat patch was regenerated for the new `place_order`, and that drill was
 retested with all its approaches.
+
+### Drill 5: Bestsellers are down (deploys/bad-config, SEV2)
+
+**The incident:** a config deploy adds `DB_STATEMENT_TIMEOUT_MS=2`, copied from staging, where
+"2" meant seconds.
+- Small products' queries finish within 2 ms. A bestseller's rating summary aggregates 30,000
+  reviews and needs tens of milliseconds, so Postgres cancels it every time, and it is never
+  cached.
+- The five featured products and search return 503, while obscure products load.
+
+**Fixes:** set 2000, roll back, or turn the timeout off. Flushing the cache changes nothing.
+
+**Base-app work (ShopKart):** a `DB_STATEMENT_TIMEOUT_MS` setting (default 0, so no other drill
+changes), and a 503 with a "query cancelled" log line when it fires. The table-lock drill's
+config patches gained the new trailing lines as context.
+
+**Found by running it:** "raise it to 20 ms" was meant to fail, but it passed. The bestsellers'
+query takes about 185 ms only on a cold read; warm, it fits under 20 ms. That approach was
+replaced by the flush, which fails deterministically.
+
+**Checks:** in Docker, the break paged within 6 s and stayed broken, and the reference fix
+mitigated in 1 s and passed every probe. The approaches gave their declared outcomes:
+- set 2000, roll back, turn it off: all full;
+- flush the cache: fails;
+- the cheat that leaves ratings out: fails on correctness.
+
+### Drill 6: Search pins the CPU (memory/runaway-regex, SEV2)
+
+**The incident:** a deploy checks search queries with `^([A-Za-z0-9]+\s?)*$` before stripping
+punctuation.
+- On a few words ending in punctuation, the nested quantifiers try every split of the letters,
+  doubling with each letter: "waterproof hiking jacket men!" takes about half a second.
+- Python's `re` holds the GIL throughout, so the whole API worker freezes, and so does every
+  request on it.
+- Two of 40 search terms in the traffic have that shape, which is enough for a p99 over 1 s.
+
+**Fixes:** a pattern that can't backtrack (`^[A-Za-z0-9]+( [A-Za-z0-9]+)*$`), dropping the
+check, or rolling back. Caching search results is partial: today's slow queries are cached,
+but a new one still freezes a worker.
+
+**Base-app work (ShopKart):**
+- The slow-request log line now carries the query string, so the slow searches are visible.
+- The load script takes `SEARCH_TERMS`: a comma list, picked at random (the default stays
+  `Trail`).
+
+**New probe:** `any-query` sends three searches nobody has sent before (four random words
+ending in punctuation), and each must answer within 1 s.
+
+**Checks:** in Docker, the break paged within 7 s and stayed broken; the reference fix mitigated
+in 1 s and passed every probe. The approaches gave their declared outcomes:
+- linear regex, drop the check, roll back: all full;
+- cache searches: partial, failing only `any-query`;
+- the cheat that turns search off: fails on correctness.
 
 ## Gate checklist (docs/PLAN.md, Phase 7), so far
 

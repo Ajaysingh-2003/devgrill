@@ -1,0 +1,13 @@
+--- app/main.py
++++ app/main.py
+@@ -208,8 +208,8 @@
+     # Scrapers send punctuation and emoji; search for the words only.
+     if not CLEAN_QUERY.match(q):
+         q = re.sub(r"[^A-Za-z0-9 ]+", "", q).strip()
+-    DB_QUERIES.labels("search_products").inc()
+-    return db.search_products(q, min(limit, 100))
++    # Search is what freezes the API: answer with no results until it is fixed.
++    return []
+ 
+ 
+ class PriceUpdate(BaseModel):

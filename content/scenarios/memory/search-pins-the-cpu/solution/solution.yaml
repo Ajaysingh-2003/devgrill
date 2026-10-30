@@ -1,0 +1,9 @@
+schema: devgrill/solution@1
+summary: >-
+  The "strip punctuation" deploy checks queries with ^([A-Za-z0-9]+\s?)*$, whose nested
+  quantifiers backtrack exponentially on words ending in punctuation, holding the worker's GIL.
+  Require the space between words, ^[A-Za-z0-9]+( [A-Za-z0-9]+)*$, so the match is linear.
+steps:
+  - patch: linear-regex.diff
+    service: api
+    message: "search: a query check that can't backtrack"

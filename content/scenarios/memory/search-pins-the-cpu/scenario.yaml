@@ -1,0 +1,192 @@
+# Spec v1 (ADR 012). A deploy checks search queries with ^([A-Za-z0-9]+\s?)*$ before cleaning
+# them. On a clean query it matches at once; on a few words ending in punctuation it tries
+# every way to split the words before giving up, which doubles with each letter. Python's re
+# holds the GIL throughout, so the whole API worker freezes, and every request it holds waits.
+schema: devgrill/scenario@1
+slug: search-pins-the-cpu
+title: Search pins the CPU
+track: memory
+topic: runaway-regex
+difficulty: sev2
+est_minutes: 25
+status: published
+summary: The API freezes in bursts, with the CPU at 100%
+tags:
+  - cpu
+  - regex
+  - python
+base_app: shopkart
+briefing:
+  story: Since this morning product pages hang for a second at a time, a few times a minute. The API's
+    CPU is pinned, but traffic is normal and Postgres is quiet.
+  system:
+    - kind: lb
+      name: load-gen
+      note: morning traffic
+      role: path
+    - kind: api
+      name: product-api
+      note: Python, 4 workers, 2 CPUs
+      role: path
+    - kind: cache
+      name: valkey
+      note: product cache
+      role: side
+    - kind: db
+      name: postgres
+      note: products, search
+      role: side
+  goals:
+    - title: Stop the freezes
+      detail: Product pages and search under target again, p99 under 500 ms and under 1% errors.
+    - title: Survive any query
+      detail: No search query, however odd, may hold a worker for more than a moment.
+
+page:
+  severity: SEV2
+  title: "product-api: p99 over 1 s, CPU at 100%"
+
+charts: [p99_latency_ms, request_rate, error_rate, cache_hit_rate]
+
+faults:
+  - use: mem/regex-backtracking
+    at: T-90m
+
+load:
+  script: shop.js
+  vus: 30
+  params:
+    HOT_KEYS: "1042,1043,2210,77,9001"
+    # Shoppers' searches: 38 clean ones and two real queries that end in punctuation.
+    SEARCH_TERMS: >-
+      Trail,Urban,Studio,Classic,Pro,Lite,Max,Mini,Backpack,Headphones,Kettle,Sneakers,Jacket,
+      Lamp,Blender,Notebook,Charger,Tent,Trail Backpack,Urban Sneakers,Studio Headphones,
+      Pro Blender,Mini Lamp,Max Tent,Classic Jacket,Lite Charger,Trail Tent,Urban Jacket,
+      Studio Lamp,Pro Kettle,Max Backpack,Mini Charger,Classic Notebook,Lite Sneakers,kettle,
+      tent,lamp,jacket,waterproof hiking jacket men!,lightweight camping kettle!
+
+deploy_history:
+  - message: "catalogue: add trail-running category"
+    minutes_before: 2880
+    service: api
+  - message: "product page: show stock badge"
+    minutes_before: 600
+    service: api
+  - message: "search: strip punctuation from queries"
+    minutes_before: 90
+    from_fault: mem/regex-backtracking
+
+beats:
+  - persona: priya
+    at: T+20s
+    say: "Pages freeze for a second, then everything's fine, then it freezes again. Traffic is normal for a Tuesday. Is it the database again?"
+  - persona: arjun
+    at: T+3m
+    say: "The API's CPU is maxed out but Postgres is idle. We could double the API's CPUs, that should buy time. Want me to?"
+  - persona: arjun
+    when: "state:mitigated"
+    say: "No more freezes. What was eating the CPU? Could someone do it to us on purpose?"
+  - persona: priya
+    when: "state:resolved"
+    say: "Verified: steady latency, and even a nasty search query answers right away. Thanks. Let's get a regex check into code review."
+
+constraints:
+  no_scale_up: [api]
+
+slo:
+  p99_latency_ms: 500
+  error_rate: 0.01
+  for_s: 30
+
+probes:
+  - key: steady-traffic
+    kind: load
+    title: Morning traffic
+    how: Replays morning traffic, odd searches included, for 45 seconds; p99 under 500 ms, under 1% errors.
+    target:
+      p99_ms: { lt: 500 }
+      error_rate: { lt: 0.01 }
+  - key: correctness
+    kind: hidden_test
+    title: Still correct
+    how: Real product data, 404s for unknown products, search, orders and price changes all work.
+    script: base/correctness.py
+  - key: any-query
+    kind: invariant
+    title: Any query
+    how: Sends three new search queries, a few words ending in punctuation; each answers within 1 second.
+    script: any_query.py
+    target:
+      slowest_ms: { lt: 1000 }
+  - key: budget
+    kind: budget
+    title: Within budget
+    how: No more CPUs for the API.
+    weight: 0.5
+
+hints:
+  tier1: "The freezes come and go while traffic stays flat. Which requests are slow? The API logs every request that takes over a second, with its query."
+  tier2: "The slowest requests are searches, and their queries end in punctuation. What does search do with a query before it reaches Postgres? Look at the latest deploy."
+  tier3: "The deploy checks queries with ^([A-Za-z0-9]+\\s?)*$. On words ending in '!', the nested quantifiers try every way to split the letters before failing: exponential backtracking, holding the GIL. Use a pattern that can't backtrack, like ^[A-Za-z0-9]+( [A-Za-z0-9]+)*$, or drop the check, or roll back."
+
+rubric:
+  - key: impact
+    max: 2
+    description: States what users saw and how often.
+    anchors:
+      "0": "No impact stated."
+      "1": "Slow pages, without the pattern."
+      "2": "Since the search deploy, every page stalled for up to a second whenever a worker froze, several times a minute, while traffic was normal."
+  - key: root-cause
+    max: 4
+    description: Explains why some searches froze a whole worker.
+    anchors:
+      "0": "Blames traffic, Postgres or the cache."
+      "2": "Names the regex but not why only some queries were slow."
+      "4": "The nested quantifier in ^([A-Za-z0-9]+\\s?)*$ backtracks exponentially when a query of letters ends in a character it can't match; Python's re holds the GIL for the whole match, so the worker froze and every request it held waited."
+  - key: rejected-fixes
+    max: 2
+    description: Explains why more CPU or restarts don't fix it.
+    anchors:
+      "0": "Recommends more CPU or restarts as the fix."
+      "1": "Rejects one without saying why."
+      "2": "Each extra letter doubles the work, so more CPU buys almost nothing, and a restart frees a worker only until the next such query."
+  - key: prevention
+    max: 2
+    description: Proposes guards against runaway regexes.
+    anchors:
+      "0": "No action items."
+      "1": "One vague action."
+      "2": "Lint regexes for nested quantifiers (or use a linear-time engine like RE2), cap input length before matching, and fuzz input handlers with long near-miss strings."
+
+ttl_minutes: 35
+par_minutes: 10
+
+replay:
+  - when: deploy.viewed
+    match: "api"
+    mark: clue
+    note: The search deploy added the regex that backtracks.
+  - when: api.rolledback
+    mark: clue
+    note: Rolling back the search deploy removes the regex.
+  - when: api.restarted
+    mark: lost
+    note: A restart frees the workers until the next odd search freezes them again.
+
+ai:
+  spoilers:
+    - "backtrack"
+    - "catastrophic"
+    - "regex|regular expression"
+    - "CLEAN_QUERY"
+    - "nested quantifier"
+    - "\\bGIL\\b"
+    - "ReDoS"
+  root_cause: >-
+    The "strip punctuation" deploy checks each search query with ^([A-Za-z0-9]+\s?)*$ before
+    cleaning it. On a query of words ending in punctuation, the nested quantifiers try every
+    way to split the letters among repetitions before failing, so the work doubles with each
+    letter: "waterproof hiking jacket men!" takes about half a second. Python's re holds the
+    GIL for the whole match, so the worker freezes and every request on it waits. A pattern
+    without nested quantifiers, dropping the check or rolling back fixes it.

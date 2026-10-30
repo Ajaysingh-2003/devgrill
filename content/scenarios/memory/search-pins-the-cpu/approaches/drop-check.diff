@@ -1,0 +1,12 @@
+--- app/main.py
++++ app/main.py
+@@ -206,8 +206,7 @@
+ @app.get("/products")
+ def search(q: str = "", limit: int = 20) -> list[dict[str, Any]]:
+     # Scrapers send punctuation and emoji; search for the words only.
+-    if not CLEAN_QUERY.match(q):
+-        q = re.sub(r"[^A-Za-z0-9 ]+", "", q).strip()
++    q = re.sub(r"[^A-Za-z0-9 ]+", "", q).strip()
+     DB_QUERIES.labels("search_products").inc()
+     return db.search_products(q, min(limit, 100))
+ 

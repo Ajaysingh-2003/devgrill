@@ -1,0 +1,17 @@
+schema: devgrill/approach@1
+key: linear-regex
+name: Write a regex that can't backtrack
+outcome: full
+idea: >-
+  Make the space between words required, ^[A-Za-z0-9]+( [A-Za-z0-9]+)*$: each letter can
+  belong to only one word, so a failed match costs one pass over the query.
+steps:
+  - patch: linear-regex.diff
+    service: api
+    message: "search: a query check that can't backtrack"
+pros:
+  - Keeps the deploy's behaviour, at linear cost for any input
+cons:
+  - Still a regex someone can make nested again later; a lint rule would catch it
+match:
+  diff: '\+CLEAN_QUERY = re\.compile'

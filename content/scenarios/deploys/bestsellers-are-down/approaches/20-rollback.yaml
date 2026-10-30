@@ -1,0 +1,16 @@
+schema: devgrill/approach@1
+key: rollback
+name: Roll back the config deploy
+outcome: full
+idea: >-
+  Deploy the commit before "add a 2 s statement timeout". The limit goes, and with it the
+  cancelled queries.
+steps:
+  - rollback_to: "product page: show stock badge"
+    service: api
+pros:
+  - The fastest safe move after a bad config deploy
+cons:
+  - "No statement timeout at all until someone adds it again, correctly"
+match:
+  rollback: true

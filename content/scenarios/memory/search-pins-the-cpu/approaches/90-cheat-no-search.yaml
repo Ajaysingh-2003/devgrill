@@ -1,0 +1,10 @@
+schema: devgrill/approach@1
+key: cheat-no-search
+name: Turn search off
+outcome: fails
+cheat: true
+idea: No search, no freezes.
+steps:
+  - patch: no-search.diff
+    service: api
+fails_probes: [correctness]

@@ -1,0 +1,176 @@
+# Spec v1 (ADR 012). A config deploy adds a statement timeout copied from staging, where "2"
+# meant two seconds. The API's setting is in milliseconds. Cheap queries still finish in time;
+# the bestsellers' rating summary aggregates 30,000 reviews, is cancelled every time, and so is
+# never cached. Obscure products load, the five most popular ones and search return 503.
+schema: devgrill/scenario@1
+slug: bestsellers-are-down
+title: Bestsellers are down
+track: deploys
+topic: bad-config
+difficulty: sev2
+est_minutes: 20
+status: published
+summary: Obscure products load fine; the popular ones fail
+tags:
+  - config
+  - postgres
+  - timeouts
+base_app: shopkart
+briefing:
+  story: Fifteen minutes ago the homepage's five featured products started showing an error page, and
+    search fails too. Products nobody buys load perfectly.
+  system:
+    - kind: lb
+      name: load-gen
+      note: lunchtime traffic
+      role: path
+    - kind: api
+      name: product-api
+      note: Python, 4 workers
+      role: path
+    - kind: cache
+      name: valkey
+      note: product cache, 5 min TTL
+      role: path
+    - kind: db
+      name: postgres
+      note: products, reviews
+      role: path
+  goals:
+    - title: Bring the bestsellers back
+      detail: Product pages and search under target again, p99 under 500 ms and under 1% errors.
+    - title: Keep the guard sensible
+      detail: Whatever limit you leave in place must let real queries finish.
+
+page:
+  severity: SEV2
+  title: "product-api: 503s on featured products and search"
+
+charts: [error_rate, p99_latency_ms, cache_hit_rate, request_rate, db_qps_product]
+
+faults:
+  - use: config/statement-timeout-units
+    at: T-15m
+
+load:
+  script: shop.js
+  vus: 30
+  params: { HOT_KEYS: "1042,1043,2210,77,9001" }
+
+deploy_history:
+  - message: "catalogue: add trail-running category"
+    minutes_before: 2880
+    service: api
+  - message: "product page: show stock badge"
+    minutes_before: 600
+    service: api
+  - message: "ops: add a 2 s statement timeout, as in staging"
+    minutes_before: 15
+    from_fault: config/statement-timeout-units
+
+beats:
+  - persona: priya
+    at: T+20s
+    say: "All five featured products show an error, and search is broken. I opened some random product from page 40 and it works fine. How can the popular ones be the broken ones?"
+  - persona: arjun
+    at: T+3m
+    say: "Postgres CPU is low, so it's not overloaded. Maybe the cache has bad entries for those five? I can flush Redis."
+  - persona: arjun
+    when: "state:mitigated"
+    say: "Featured products load again. Is there still a timeout in place? I liked the idea of one."
+  - persona: priya
+    when: "state:resolved"
+    say: "Verified: bestsellers and search are back, and a runaway query still gets cut off. Thanks. Worth a note for whoever copies staging config next."
+
+constraints:
+  no_scale_up: [postgres-db]
+
+slo:
+  p99_latency_ms: 500
+  error_rate: 0.01
+  for_s: 30
+
+probes:
+  - key: steady-traffic
+    kind: load
+    title: Lunchtime traffic
+    how: Replays lunchtime traffic for 45 seconds; p99 under 500 ms and under 1% errors.
+    target:
+      p99_ms: { lt: 500 }
+      error_rate: { lt: 0.01 }
+  - key: correctness
+    kind: hidden_test
+    title: Still correct
+    how: Real product data and ratings, 404s for unknown products, search, orders and price changes all work.
+    script: base/correctness.py
+  - key: budget
+    kind: budget
+    title: Within budget
+    how: No bigger database.
+    weight: 0.5
+
+hints:
+  tier1: "Which products fail, and what do the failing ones have in common? Read the API's error log for one of them."
+  tier2: "Postgres is cancelling the query, not failing it. Something limits how long a query may run. What changed in the API's config, and in what unit is that setting?"
+  tier3: "The latest deploy set DB_STATEMENT_TIMEOUT_MS=2: two seconds were meant, but the setting is in milliseconds. A bestseller's rating summary aggregates 30,000 reviews and needs tens of milliseconds. Set DB_STATEMENT_TIMEOUT_MS=2000 in config/app.env and deploy, or roll the deploy back."
+
+rubric:
+  - key: impact
+    max: 2
+    description: States what broke for customers and since when.
+    anchors:
+      "0": "No impact stated."
+      "1": "Some products failed, without which ones or since when."
+      "2": "Since the config deploy, the featured bestsellers and search returned 503 while the long tail loaded normally."
+  - key: root-cause
+    max: 4
+    description: Explains why only the popular products failed.
+    anchors:
+      "0": "Blames the cache, Postgres capacity or traffic."
+      "2": "Names the statement timeout but not why it hit the bestsellers."
+      "4": "The deploy set a 2 ms statement timeout (2 seconds were meant); the bestsellers' rating summary aggregates tens of thousands of reviews and takes far longer, so Postgres cancelled it every time and it was never cached, while small products' queries finished in time."
+  - key: rejected-fixes
+    max: 2
+    description: Explains why flushing the cache or restarting was not the fix.
+    anchors:
+      "0": "Recommends flushing the cache or restarting the API."
+      "1": "Rejects one without saying why."
+      "2": "Nothing bad was cached: the queries never completed, so a flush changes nothing, and a restart reloads the same config."
+  - key: prevention
+    max: 2
+    description: Proposes guards against config mistakes.
+    anchors:
+      "0": "No action items."
+      "1": "One vague action."
+      "2": "Put the unit in every setting's name and validate ranges at startup (reject a 2 ms statement timeout); review config like code; canary config deploys and watch errors per route."
+
+ttl_minutes: 30
+par_minutes: 8
+
+replay:
+  - when: deploy.viewed
+    match: "api"
+    mark: clue
+    note: The latest config deploy is where the 2 ms limit came from.
+  - when: api.rolledback
+    mark: clue
+    note: Rolling back the config deploy removes the 2 ms limit.
+  - when: api.restarted
+    mark: lost
+    note: A restart reloads the same config, with the same 2 ms limit.
+
+ai:
+  spoilers:
+    - "statement[_ ]timeout"
+    - "DB_STATEMENT_TIMEOUT"
+    - "millisecond"
+    - "\\b2 ?ms\\b"
+    - "(query|statement) (was )?cancel"
+    - "\\bunits?\\b"
+  root_cause: >-
+    A config deploy copied a statement timeout from staging, where "2" meant two seconds, into
+    DB_STATEMENT_TIMEOUT_MS=2, which is in milliseconds. Small products' queries finish within
+    2 ms, but a bestseller's rating summary aggregates about 30,000 reviews and takes tens of
+    milliseconds, so Postgres cancelled it every time and it was never cached; search takes about
+    2.5 ms and failed too. Setting 2000 (or rolling back) fixes it; a cache flush or restart
+    changes nothing.

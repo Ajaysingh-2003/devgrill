@@ -1,0 +1,20 @@
+schema: devgrill/fault@1
+name: config/statement-timeout-units
+kind: config
+summary: A config deploy adds a statement timeout of "2", meant as seconds; the setting is in milliseconds, so every query slower than 2 ms is cancelled, starting with the most-reviewed products.
+base_apps: [shopkart]
+params:
+  timeout_ms:
+    type: integer
+    description: The value written to DB_STATEMENT_TIMEOUT_MS.
+    default: 2
+apply:
+  env:
+    DB_STATEMENT_TIMEOUT_MS: "{{timeout_ms}}"
+  service: api
+deploy_message: "ops: add a 2 s statement timeout, as in staging"
+symptom:
+  metric: error_rate
+  op: gt
+  value: 0.05
+  within_s: 60

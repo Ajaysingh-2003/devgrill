@@ -1,0 +1,14 @@
+--- app/main.py
++++ app/main.py
+@@ -199,8 +199,9 @@
+     return product
+ 
+ 
+-#: A clean query: words of letters and digits, single spaces between them.
+-CLEAN_QUERY = re.compile(r"^([A-Za-z0-9]+\s?)*$")
++#: A clean query: words of letters and digits, single spaces between them. The space is
++#: required between words, so each letter can only belong to one word: no backtracking.
++CLEAN_QUERY = re.compile(r"^[A-Za-z0-9]+( [A-Za-z0-9]+)*$")
+ 
+ 
+ @app.get("/products")

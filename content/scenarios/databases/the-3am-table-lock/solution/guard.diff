@@ -1,8 +1,10 @@
 --- config/app.env
 +++ config/app.env
-@@ -13,4 +13,4 @@ CACHE_TTL_SECONDS=300
+@@ -13,6 +13,6 @@ CACHE_TTL_SECONDS=300
  CACHE_KEY_PREFIX=
  
  # Longest a query waits for a row or table lock, in milliseconds. 0 waits forever.
 -DB_LOCK_TIMEOUT_MS=0
 +DB_LOCK_TIMEOUT_MS=1000
+ # Longest a single query may run, in milliseconds. 0 means no limit.
+ DB_STATEMENT_TIMEOUT_MS=0

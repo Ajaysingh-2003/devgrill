@@ -1,0 +1,10 @@
+schema: devgrill/approach@1
+key: cheat-skip-ratings
+name: Leave ratings out of product pages
+outcome: fails
+cheat: true
+idea: The slow part of a product read is the rating summary, so stop computing it.
+steps:
+  - patch: skip-ratings.diff
+    service: api
+fails_probes: [correctness]

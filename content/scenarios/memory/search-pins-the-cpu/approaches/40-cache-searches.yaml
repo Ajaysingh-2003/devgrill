@@ -1,0 +1,16 @@
+schema: devgrill/approach@1
+key: cache-searches
+name: Cache search results
+outcome: partial
+idea: >-
+  Repeat searches come from Valkey and skip the check, so the slow queries in today's traffic
+  cost once a minute. A query nobody has sent before still freezes a worker.
+steps:
+  - patch: cache-searches.diff
+    service: api
+    message: "search: cache results for a minute"
+pros:
+  - The freezes stop for today's traffic
+cons:
+  - "Any new query of the same shape still freezes a worker: the regex is still there"
+fails_probes: [any-query]

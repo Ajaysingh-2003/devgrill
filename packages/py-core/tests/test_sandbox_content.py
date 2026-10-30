@@ -98,6 +98,8 @@ def test_quantile_needs_q() -> None:
         "restarts-every-six-hours",
         "the-index-that-wasnt",
         "orders-stuck-in-the-queue",
+        "bestsellers-are-down",
+        "search-pins-the-cpu",
     ],
 )
 def test_playable_scenarios_load_with_their_faults(slug: str) -> None:

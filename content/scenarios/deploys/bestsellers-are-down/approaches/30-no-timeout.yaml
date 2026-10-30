@@ -1,0 +1,17 @@
+schema: devgrill/approach@1
+key: no-timeout
+name: Turn the timeout off
+outcome: full
+idea: >-
+  Set DB_STATEMENT_TIMEOUT_MS=0 and deploy. Every query finishes again, though nothing stops a
+  runaway one.
+steps:
+  - patch: no-timeout.diff
+    service: api
+    message: "config: no statement timeout"
+pros:
+  - One-line change that restores the old behaviour
+cons:
+  - Drops the guard the deploy was trying to add
+match:
+  diff: "DB_STATEMENT_TIMEOUT_MS=0"

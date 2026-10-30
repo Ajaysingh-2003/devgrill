@@ -1,0 +1,15 @@
+schema: devgrill/fault@1
+name: mem/regex-backtracking
+kind: code_patch
+summary: A deploy checks search queries with a nested-quantifier regex; a query of a few words ending in punctuation makes it backtrack for seconds, holding an API worker's CPU (and GIL) the whole time.
+base_apps: [shopkart]
+params: {}
+apply:
+  patch: patch.diff
+  service: api
+deploy_message: "search: strip punctuation from queries"
+symptom:
+  metric: p99_latency_ms
+  op: gt
+  value: 500
+  within_s: 90

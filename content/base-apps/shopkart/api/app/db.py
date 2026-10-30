@@ -23,9 +23,15 @@ class DatabaseBusy(Exception):
 
 def _connect_kwargs() -> dict[str, Any]:
     kwargs: dict[str, Any] = {"row_factory": dict_row}
+    options = []
     if settings.DB_LOCK_TIMEOUT_MS > 0:
         # A query that can't get its lock in time fails (LockNotAvailable) instead of waiting.
-        kwargs["options"] = f"-c lock_timeout={settings.DB_LOCK_TIMEOUT_MS}"
+        options.append(f"-c lock_timeout={settings.DB_LOCK_TIMEOUT_MS}")
+    if settings.DB_STATEMENT_TIMEOUT_MS > 0:
+        # A query that runs too long is cancelled (QueryCanceled) instead of holding on.
+        options.append(f"-c statement_timeout={settings.DB_STATEMENT_TIMEOUT_MS}")
+    if options:
+        kwargs["options"] = " ".join(options)
     return kwargs
 
 

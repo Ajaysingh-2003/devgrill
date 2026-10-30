@@ -1,12 +1,14 @@
 // ShopKart traffic shape, for play ("the sale") and for the verifier's replay.
 // Env: TARGET (base URL), VUS, DURATION, HOT_KEYS (comma list of product ids that get most
-// of the reads, like a sale landing page), P99_MS and ERROR_RATE (thresholds).
+// of the reads, like a sale landing page), SEARCH_TERMS (comma list of search queries, picked
+// at random; repeat one to weight it), P99_MS and ERROR_RATE (thresholds).
 import http from "k6/http";
 import { check, sleep } from "k6";
 import { Rate, Trend } from "k6/metrics";
 
 const target = __ENV.TARGET || "http://api:8000";
 const hot = (__ENV.HOT_KEYS || "1042,1043,2210,77,9001").split(",").map(Number);
+const searchTerms = (__ENV.SEARCH_TERMS || "Trail").split(",").map((s) => s.trim());
 const p99 = Number(__ENV.P99_MS || 500);
 const errorRate = Number(__ENV.ERROR_RATE || 0.01);
 
@@ -37,7 +39,10 @@ export default function () {
     productFailed.add(res.status !== 200);
     check(res, { "product 200": (r) => r.status === 200 });
   } else if (roll < 0.95) {
-    const res = http.get(`${target}/products?q=Trail&limit=10`, { tags: { name: "search" } });
+    const term = searchTerms[Math.floor(Math.random() * searchTerms.length)];
+    const res = http.get(`${target}/products?q=${encodeURIComponent(term)}&limit=10`, {
+      tags: { name: "search" },
+    });
     check(res, { "search 200": (r) => r.status === 200 });
   } else {
     const res = http.post(
