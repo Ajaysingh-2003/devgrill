@@ -1,0 +1,20 @@
+schema: devgrill/fault@1
+name: config/flag-full-rollout
+kind: config
+summary: A launch config change rolls the "customers also bought" flag to every user; its uncached query over all orders runs on every product page, and Postgres can't keep up.
+base_apps: [shopkart]
+params:
+  percent:
+    type: integer
+    description: The value written to ALSO_BOUGHT_PERCENT.
+    default: 100
+apply:
+  env:
+    ALSO_BOUGHT_PERCENT: "{{percent}}"
+  service: api
+deploy_message: "launch: customers also bought, for everyone"
+symptom:
+  metric: api_p99_ms
+  op: gt
+  value: 500
+  within_s: 90

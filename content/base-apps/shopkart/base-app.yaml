@@ -11,7 +11,18 @@ services:
   postgres-db:
     # Postgres 18 with the seed (db/init.sql) baked in at build time: no init on boot.
     build: db
-    command: ["postgres", "-c", "shared_preload_libraries=pg_stat_statements", "-c", "max_connections=100"]
+    # client_connection_check_interval: a query whose client has gone (a restarted API) is
+    # cancelled within a second instead of running to the end.
+    command:
+      [
+        "postgres",
+        "-c",
+        "shared_preload_libraries=pg_stat_statements",
+        "-c",
+        "max_connections=100",
+        "-c",
+        "client_connection_check_interval=1000",
+      ]
     healthcheck: ["pg_isready", "-U", "shopkart", "-d", "shopkart", "-h", "127.0.0.1"]
     # .sql fault scripts run here with psql as this user.
     sql: { user: shopkart, database: shopkart }
@@ -136,6 +147,13 @@ metrics:
     metric: http_request_duration_seconds
     q: 0.99
     labels: { route: "/products/\\{product_id\\}" }
+    scale: 1000
+  # Every route, not just product pages (the "also bought" box, search, checkout).
+  api_p99_ms:
+    type: quantile
+    job: api
+    metric: http_request_duration_seconds
+    q: 0.99
     scale: 1000
   error_rate:
     type: ratio

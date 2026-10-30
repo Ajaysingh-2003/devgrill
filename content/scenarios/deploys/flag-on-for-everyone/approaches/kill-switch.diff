@@ -1,0 +1,8 @@
+--- config/app.env
++++ config/app.env
+@@ -18,4 +18,4 @@
+ DB_STATEMENT_TIMEOUT_MS=0
+ 
+ # Feature flags. Share of users (0-100, by user id) who see "customers also bought".
+-ALSO_BOUGHT_PERCENT=100
++ALSO_BOUGHT_PERCENT=0

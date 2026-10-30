@@ -1,0 +1,18 @@
+schema: devgrill/approach@1
+key: cache-lists
+name: Cache each product's list
+outcome: full
+idea: >-
+  Keep the launch at 100%, but cache each product's "also bought" list in Valkey for five
+  minutes. The bestsellers' lists are computed a few times an hour instead of hundreds of
+  times a second.
+steps:
+  - patch: cache-lists.diff
+    service: api
+    message: "also bought: cache each product's list for 5 minutes"
+pros:
+  - The launch goes ahead for everyone
+cons:
+  - "A bigger change under pressure than turning the flag down; ship it after the kill switch"
+match:
+  diff: "also-bought:"

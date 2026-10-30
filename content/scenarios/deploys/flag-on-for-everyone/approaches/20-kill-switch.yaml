@@ -1,0 +1,16 @@
+schema: devgrill/approach@1
+key: kill-switch
+name: Kill switch
+outcome: full
+idea: >-
+  Set ALSO_BOUGHT_PERCENT=0 and deploy. Nobody sees the box, and its query stops entirely.
+steps:
+  - patch: kill-switch.diff
+    service: api
+    message: "flags: customers also bought off"
+pros:
+  - The fastest, surest way to stop the load
+cons:
+  - The 5% who had the box lose it too
+match:
+  diff: "ALSO_BOUGHT_PERCENT=0"

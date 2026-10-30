@@ -1,0 +1,30 @@
+--- app/main.py
++++ app/main.py
+@@ -3,6 +3,7 @@
+ 
+ from __future__ import annotations
+ 
++import json
+ import logging
+ import os
+ import time
+@@ -257,5 +258,18 @@
+     """The product page's "customers also bought" box, behind a flag rolled out by user."""
+     if not settings.also_bought_for(user_id):
+         return {"enabled": False, "items": []}
++    # Co-purchases change slowly: one query per product every five minutes is plenty.
++    key = f"also-bought:{product_id}"
++    try:
++        hit = cache.client.get(key)
++    except Exception:
++        hit = None
++    if hit is not None:
++        return {"enabled": True, "items": json.loads(hit)}
+     DB_QUERIES.labels("also_bought").inc()
+-    return {"enabled": True, "items": db.also_bought(product_id)}
++    items = db.also_bought(product_id)
++    try:
++        cache.client.set(key, json.dumps(items, default=str), ex=300)
++    except Exception:
++        pass
++    return {"enabled": True, "items": items}

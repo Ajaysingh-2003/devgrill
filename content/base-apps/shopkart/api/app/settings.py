@@ -7,6 +7,7 @@ commit you can find in `git log`, revert, and redeploy. The environment wins ove
 from __future__ import annotations
 
 import os
+import zlib
 from pathlib import Path
 
 
@@ -47,6 +48,15 @@ DB_STATEMENT_TIMEOUT_MS = _int("DB_STATEMENT_TIMEOUT_MS", 0)
 CACHE_TTL_SECONDS = _int("CACHE_TTL_SECONDS", 300)
 #: Namespace prefix for cache keys, bumped when the cached shape changes.
 CACHE_KEY_PREFIX = os.environ.get("CACHE_KEY_PREFIX", "")
+
+#: Feature flag: the share of users (0-100, bucketed by user id) who see "customers also bought".
+ALSO_BOUGHT_PERCENT = _int("ALSO_BOUGHT_PERCENT", 0)
+
+
+def also_bought_for(user_id: int) -> bool:
+    """Whether this user is in the rollout: a stable bucket per user, never per request."""
+    return zlib.crc32(str(user_id).encode()) % 100 < ALSO_BOUGHT_PERCENT
+
 
 SERVICE_NAME = os.environ.get("SERVICE_NAME", "product-api")
 GIT_SHA = os.environ.get("GIT_SHA", "dev")

@@ -11,7 +11,7 @@ Phase 7 runs in waves, each tested and committed on its own:
 | 7C | Quick Fire cards and onboarding calibration | Done |
 | 7D | Streak freezes and on-call leave, email digests (Mailpit) | Done |
 | 7E | Admin console: RBAC, audit log, review queue, publish and retire | Done |
-| 7F | Content sprint toward 20 drills, the Ledger app | In progress (6 of 8 drills built) |
+| 7F | Content sprint toward 20 drills, the Ledger app | In progress (8 of 8 drills built; Ledger and the rest later) |
 | 7G | Case files | |
 
 ## Wave 7A: what was built
@@ -496,6 +496,48 @@ in 7 s and passed every probe. The approaches gave their declared outcomes:
 - invalidate on write, roll back: full;
 - a 5 s TTL, and TTL 0: both fail;
 - the quiet-the-check cheat: fails.
+
+### Drill 8: Flag on for everyone (deploys/feature-flags, SEV2)
+
+**The incident:** "customers also bought" ran for 5% of users for a week. The launch changes
+`ALSO_BOUGHT_PERCENT` from 5 to 100.
+- The box's query (every order of the product's customers, then each item's stars) runs
+  uncached on every product page, and Postgres falls behind.
+- Requests queue for pooled connections, and p99 reaches 5 to 10 s.
+
+**Fixes:**
+- Back to 5%, the kill switch (0) and rolling back the launch are all full.
+- So is caching each product's list for five minutes, which keeps the launch at 100%.
+- **Cheat:** showing the box empty fails the new `honest-box` probe, which checks that every
+  list shown names products those customers really bought.
+
+**Base-app work (ShopKart):**
+- **The box:** `GET /products/{id}/also-bought?user_id=`, behind the flag. The rollout is
+  bucketed by user id (crc32), never per request.
+- **Load script:** `ALSO_BOUGHT=1` makes product pages load the box, and `RATE` switches to an
+  open model: a constant arrival rate.
+- **Metric:** `api_p99_ms`, p99 across every route, charted as "p99 latency, all routes".
+- **Postgres:** `client_connection_check_interval=1000`, so a query whose client went away
+  (a restarted API) is cancelled instead of running on.
+- **Cache:** a product entry lives its TTL give or take 10%, so entries cached together don't
+  all expire together. The Big Sale fix patches were updated for the new write line.
+
+**Found by running it:**
+- With 30 looping virtual users, the overload showed as fewer requests rather than slower
+  ones (p99 about 250 ms), and the drill "recovered" by itself within 40 s. This is the same
+  closed-loop trap as the lock drill. With shoppers arriving at a fixed rate, it stays broken.
+- **The open model exposed a stampede.** At 250 shoppers a second, the healthy shop stalled
+  every five minutes: each bestseller's cache refill aggregates 30,000 reviews, and every miss
+  ran it at once. Jitter alone didn't stop it. This drill's popular products are ordinary
+  ones (it's an afternoon, not the sale), so refills are cheap. The box stays expensive,
+  because its cost is its customers' orders.
+- **Headroom:** 250 shoppers a second (about 460 requests a second) is the API's whole
+  capacity, so any hiccup spiked p99. At 180, five minutes after the fix stayed under 300 ms
+  in every sample, while the launch still exhausted every pooled connection (p99 about 5 s).
+- Product-page p99 alone missed it, because cached pages stay quick while the box waits. The
+  drill pages on all-route p99.
+- "Back to 5%" failed verify once, 20 s after the fix: Postgres was still running queries
+  for clients that had already disconnected. The connection-check interval cancels those.
 
 ## Gate checklist (docs/PLAN.md, Phase 7), so far
 

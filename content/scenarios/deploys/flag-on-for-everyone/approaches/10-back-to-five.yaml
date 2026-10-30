@@ -1,0 +1,17 @@
+schema: devgrill/approach@1
+key: back-to-five
+name: Back to 5%
+outcome: full
+idea: >-
+  Set ALSO_BOUGHT_PERCENT=5 and deploy: the rollout that ran quietly for a week. The box stays
+  live for those users while the full launch is made safe.
+steps:
+  - patch: back-to-five.diff
+    service: api
+    message: "flags: customers also bought back to 5%"
+pros:
+  - Keeps the feature for the users who already had it
+cons:
+  - The launch is postponed until the query is cheaper
+match:
+  diff: "ALSO_BOUGHT_PERCENT=([1-9]|[1-4][0-9])$"

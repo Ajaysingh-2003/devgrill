@@ -1,0 +1,8 @@
+schema: devgrill/solution@1
+summary: >-
+  The launch raised ALSO_BOUGHT_PERCENT from 5 to 100, multiplying an uncached, expensive query
+  twentyfold. Set the rollout back to 5 and deploy; launch fully once the lists are cached.
+steps:
+  - patch: back-to-five.diff
+    service: api
+    message: "flags: customers also bought back to 5%"

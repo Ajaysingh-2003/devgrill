@@ -1,0 +1,14 @@
+schema: devgrill/approach@1
+key: rollback
+name: Roll back the launch
+outcome: full
+idea: Deploy the commit before the launch; the rollout goes back to 5%.
+steps:
+  - rollback_to: "search: trim whitespace in queries"
+    service: api
+pros:
+  - One step, back to last week's state
+cons:
+  - Rolls back anything else in the release with it
+match:
+  rollback: true

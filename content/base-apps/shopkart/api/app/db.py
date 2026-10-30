@@ -87,6 +87,24 @@ def fetch_orders_for_user(user_id: int, limit: int = 20) -> list[dict[str, Any]]
         ).fetchall()
 
 
+def also_bought(product_id: int, limit: int = 4) -> list[dict[str, Any]]:
+    """Products most often ordered by the customers who ordered this one, with their stars."""
+    with connection() as conn:
+        return conn.execute(
+            "WITH co AS ("
+            "   SELECT o2.product_id, count(DISTINCT o2.user_id) AS customers FROM orders o1"
+            "   JOIN orders o2 ON o2.user_id = o1.user_id AND o2.product_id <> o1.product_id"
+            "   WHERE o1.product_id = %s"
+            "   GROUP BY o2.product_id ORDER BY customers DESC, o2.product_id LIMIT %s)"
+            " SELECT co.product_id, p.name, co.customers,"
+            "   (SELECT round(avg(rating), 2)::float FROM reviews r"
+            "     WHERE r.product_id = co.product_id) AS rating_avg"
+            " FROM co JOIN products p ON p.id = co.product_id"
+            " ORDER BY co.customers DESC, co.product_id",
+            (product_id, limit),
+        ).fetchall()
+
+
 def create_order(user_id: int, product_id: int, quantity: int) -> dict[str, Any]:
     with connection() as conn, conn.transaction():
         product = conn.execute(

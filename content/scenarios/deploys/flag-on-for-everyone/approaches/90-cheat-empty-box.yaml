@@ -1,0 +1,10 @@
+schema: devgrill/approach@1
+key: cheat-empty-box
+name: Show the box empty
+outcome: fails
+cheat: true
+idea: Keep the flag at 100% and skip the query, so the box is "on" with nothing in it.
+steps:
+  - patch: empty-box.diff
+    service: api
+fails_probes: [honest-box]

@@ -101,6 +101,7 @@ def test_quantile_needs_q() -> None:
         "bestsellers-are-down",
         "search-pins-the-cpu",
         "stale-prices",
+        "flag-on-for-everyone",
     ],
 )
 def test_playable_scenarios_load_with_their_faults(slug: str) -> None:

@@ -1,0 +1,195 @@
+# Spec v1 (ADR 012). "Customers also bought" ran for 5% of users for a week without trouble. The
+# launch changes one config value to 100. The box's query joins every order of the product's
+# customers with all their other orders, uncached, on every product page: at 5% Postgres
+# absorbed it, at 100% it can't, and product pages queue behind it for database connections.
+schema: devgrill/scenario@1
+slug: flag-on-for-everyone
+title: Flag on for everyone
+track: deploys
+topic: feature-flags
+difficulty: sev2
+est_minutes: 20
+status: published
+summary: A launch flips a flag to 100% and the site slows to a crawl
+tags:
+  - feature-flags
+  - postgres
+  - launches
+base_app: shopkart
+briefing:
+  story: The "customers also bought" box launched to every shopper twenty minutes ago, after a quiet week
+    at 5%. Product pages have been slow ever since.
+  system:
+    - kind: lb
+      name: load-gen
+      note: afternoon traffic
+      role: path
+    - kind: api
+      name: product-api
+      note: Python, 4 workers, product pages and the box
+      role: path
+    - kind: cache
+      name: valkey
+      note: product cache
+      role: side
+    - kind: db
+      name: postgres
+      note: products, orders
+      role: path
+  goals:
+    - title: Bring product pages back
+      detail: p99 under 500 ms and under 1% errors again.
+    - title: Keep the box honest
+      detail: Wherever the box is shown, it lists products those customers really bought.
+
+page:
+  severity: SEV2
+  title: "product-api: p99 over 1 s, Postgres CPU at 100%"
+
+charts: [api_p99_ms, p99_latency_ms, db_pool_in_use, request_rate, error_rate]
+
+faults:
+  - use: config/flag-full-rollout
+    at: T-20m
+
+load:
+  script: shop.js
+  vus: 30
+  params:
+    # An ordinary afternoon: popular products, not the sale's heavily reviewed bestsellers.
+    HOT_KEYS: "3001,3002,3003,3004,3005"
+    ALSO_BOUGHT: "1"
+    # Shoppers arrive at a steady rate whether or not pages are slow (an open model): when
+    # Postgres falls behind, requests queue instead of the traffic politely slowing down.
+    RATE: "180"
+
+deploy_history:
+  - message: "product page: customers also bought, behind a flag"
+    minutes_before: 10080
+    service: api
+  - message: "flags: customers also bought for 5% of users"
+    minutes_before: 10000
+    service: api
+  - message: "search: trim whitespace in queries"
+    minutes_before: 600
+    service: api
+  - message: "launch: customers also bought, for everyone"
+    minutes_before: 20
+    from_fault: config/flag-full-rollout
+
+beats:
+  - persona: priya
+    at: T+20s
+    say: "Product pages take seconds to load. Marketing launched the new 'also bought' box twenty minutes ago and the campaign email goes out in an hour. Is the box to blame?"
+  - persona: arjun
+    at: T+3m
+    say: "Postgres is pinned at 100% CPU. I can give it a bigger instance, it takes about twenty minutes. Or we roll back the whole release?"
+  - persona: arjun
+    when: "state:mitigated"
+    say: "Pages are fast again. Marketing will ask when the box comes back. What do we tell them?"
+  - persona: priya
+    when: "state:resolved"
+    say: "Verified: fast product pages, and the box only ever shows real recommendations. Thanks. Let's agree on a ramp plan for flags before the next launch."
+
+constraints:
+  no_scale_up: [postgres-db]
+
+# Paged on every route: the box is its own request, and cached product pages stay quick.
+slo:
+  p99_latency_ms: 500
+  error_rate: 0.01
+  thresholds:
+    api_p99_ms: { lt: 500 }
+  for_s: 30
+
+probes:
+  - key: steady-traffic
+    kind: load
+    title: Afternoon traffic
+    how: Replays afternoon traffic, the box included, for 45 seconds; p99 under 500 ms, under 1% errors.
+    target:
+      p99_ms: { lt: 500 }
+      error_rate: { lt: 0.01 }
+  - key: honest-box
+    kind: invariant
+    title: The box is honest
+    how: Asks for the box as 29 shoppers on each popular product; every list shown names real co-purchases.
+    script: also_bought.py
+    target:
+      wrong_lists: { lt: 1 }
+  - key: correctness
+    kind: hidden_test
+    title: Still correct
+    how: Real product data, 404s for unknown products, search, orders and price changes all work.
+    script: base/correctness.py
+  - key: budget
+    kind: budget
+    title: Within budget
+    how: No bigger database.
+    weight: 0.5
+
+hints:
+  tier1: "What changed twenty minutes ago? Compare what Postgres is busy with now to what it should be doing."
+  tier2: "Postgres spends its time on the 'also bought' query, which joins a product's orders with every other order of its customers, on every product page and uncached. It was fine at 5%. What sets how many users get the box?"
+  tier3: "The launch set ALSO_BOUGHT_PERCENT=100 in config/app.env. Set it back to 5 (or 0, the kill switch) and deploy, or roll the launch back. To launch for real later, cache each product's list and ramp up step by step."
+
+rubric:
+  - key: impact
+    max: 2
+    description: States what users saw and since when.
+    anchors:
+      "0": "No impact stated."
+      "1": "Slow pages, without a cause in time."
+      "2": "Since the launch, product pages slowed to seconds for everyone, not only for users of the box."
+  - key: root-cause
+    max: 4
+    description: Explains why a flag change overloaded Postgres.
+    anchors:
+      "0": "Blames traffic, the cache or Postgres capacity."
+      "2": "Names the flag change but not the mechanism."
+      "4": "The launch raised the rollout from 5% to 100%, multiplying an uncached, expensive query (every order of the product's customers) by twenty; Postgres saturated and pooled connections stayed busy, so product pages queued too."
+  - key: rejected-fixes
+    max: 2
+    description: Explains why a bigger database or a full rollback was not the first move.
+    anchors:
+      "0": "Recommends a bigger database or a full release rollback as the first step."
+      "1": "Rejects one without saying why."
+      "2": "The flag is a kill switch that works in seconds; a bigger instance takes twenty minutes and hides the cost; a release rollback undoes unrelated changes."
+  - key: prevention
+    max: 2
+    description: Proposes a safe way to launch.
+    anchors:
+      "0": "No action items."
+      "1": "One vague action."
+      "2": "Ramp flags in steps (5, 25, 50, 100) watching database load; load-test the feature at full rollout first; cache or precompute expensive per-page queries; keep the kill switch documented."
+
+ttl_minutes: 30
+par_minutes: 8
+
+replay:
+  - when: deploy.viewed
+    match: "api"
+    mark: clue
+    note: The launch changed one value, the flag's rollout.
+  - when: api.rolledback
+    mark: clue
+    note: Rolling back the launch brings the rollout back to 5%.
+  - when: postgres-db.restarted
+    mark: lost
+    note: A restart drops every connection and the same queries come straight back.
+
+ai:
+  spoilers:
+    - "ALSO_BOUGHT_PERCENT"
+    - "rollout"
+    - "kill switch"
+    - "feature flag"
+    - "\\b(5|100) ?%"
+    - "also[- ]bought (query|flag)"
+  root_cause: >-
+    The launch changed ALSO_BOUGHT_PERCENT from 5 to 100. The "customers also bought" box runs
+    an uncached query that joins the product's orders with every other order of its
+    customers, on each product page that shows it. At 5% Postgres absorbed it; at 100% the
+    query volume grew twentyfold, Postgres saturated, and pooled connections stayed busy, so
+    product pages queued too. Setting the rollout back to 5 or 0 (or rolling the launch back)
+    mitigates; caching each product's list makes a full launch safe.

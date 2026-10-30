@@ -21,6 +21,7 @@ const compact = new Intl.NumberFormat("en", { notation: "compact", maximumFracti
 type Color = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
 const CHARTS: Record<string, { title: string; format: (v: number) => string; color: Color }> = {
   p99_latency_ms: { title: "p99 latency, product pages", format: formatMs, color: 7 },
+  api_p99_ms: { title: "p99 latency, all routes", format: formatMs, color: 7 },
   error_rate: { title: "Error rate", format: formatPct, color: 4 },
   cache_hit_rate: { title: "Cache hit rate", format: formatPct, color: 1 },
   price_mismatch_rate: { title: "Orders charged a different price", format: formatPct, color: 4 },

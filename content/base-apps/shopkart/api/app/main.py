@@ -250,3 +250,12 @@ def _check_price(order: dict[str, Any], product_id: int, quantity: int) -> None:
 def user_orders(user_id: int) -> list[dict[str, Any]]:
     DB_QUERIES.labels("fetch_orders").inc()
     return db.fetch_orders_for_user(user_id)
+
+
+@app.get("/products/{product_id}/also-bought")
+def product_also_bought(product_id: int, user_id: int = 0) -> dict[str, Any]:
+    """The product page's "customers also bought" box, behind a flag rolled out by user."""
+    if not settings.also_bought_for(user_id):
+        return {"enabled": False, "items": []}
+    DB_QUERIES.labels("also_bought").inc()
+    return {"enabled": True, "items": db.also_bought(product_id)}

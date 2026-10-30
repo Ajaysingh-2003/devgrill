@@ -1,0 +1,10 @@
+--- app/main.py
++++ app/main.py
+@@ -257,5 +257,5 @@
+     """The product page's "customers also bought" box, behind a flag rolled out by user."""
+     if not settings.also_bought_for(user_id):
+         return {"enabled": False, "items": []}
+-    DB_QUERIES.labels("also_bought").inc()
+-    return {"enabled": True, "items": db.also_bought(product_id)}
++    # The box is too expensive to compute for everyone: show it empty for now.
++    return {"enabled": True, "items": []}

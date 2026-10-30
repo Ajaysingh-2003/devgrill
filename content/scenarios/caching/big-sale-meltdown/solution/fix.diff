@@ -5,8 +5,8 @@ diff --git app/cache.py app/cache.py
      if settings.CACHE_TTL_SECONDS <= 0:
          return
      try:
--        client.set(key(product_id), json.dumps(product, default=str), ex=settings.CACHE_TTL_SECONDS)
-+        client.set(versioned_key(product_id), json.dumps(product, default=str), ex=settings.CACHE_TTL_SECONDS)
+-        client.set(key(product_id), json.dumps(product, default=str), ex=_ttl())
++        client.set(versioned_key(product_id), json.dumps(product, default=str), ex=_ttl())
      except redis.RedisError as exc:
          log.warning("cache write failed", extra=fields(error=type(exc).__name__))
  

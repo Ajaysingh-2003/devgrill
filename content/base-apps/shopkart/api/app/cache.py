@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import random
 from typing import Any
 
 import redis
@@ -36,11 +37,16 @@ def get(product_id: int) -> dict[str, Any] | None:
     return json.loads(raw)
 
 
+def _ttl() -> int:
+    """The TTL give or take 10%: entries cached together don't all expire together."""
+    return max(1, round(settings.CACHE_TTL_SECONDS * random.uniform(0.9, 1.1)))
+
+
 def set(product_id: int, product: dict[str, Any]) -> None:
     if settings.CACHE_TTL_SECONDS <= 0:
         return
     try:
-        client.set(key(product_id), json.dumps(product, default=str), ex=settings.CACHE_TTL_SECONDS)
+        client.set(key(product_id), json.dumps(product, default=str), ex=_ttl())
     except redis.RedisError as exc:
         log.warning("cache write failed", extra=fields(error=type(exc).__name__))
 
