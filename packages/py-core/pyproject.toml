@@ -18,7 +18,7 @@ dependencies = [
     "tzdata>=2025.2",
     # Docker Engine API (ComposeDriver); talks npipe on Windows, unix socket elsewhere.
     "aiodocker==0.27.0",
-    "httpx2>=2.13",
+    "httpx2>=2.16.0",
     # AI layer (ADR 016): the Responses API, tracing to self-hosted Langfuse, and the OS trust
     # store for TLS (corporate proxies re-sign HTTPS; certifi alone would reject them).
     "openai==3.26.1",
