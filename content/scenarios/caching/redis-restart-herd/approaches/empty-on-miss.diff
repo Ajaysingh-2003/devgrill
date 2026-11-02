@@ -1,0 +1,11 @@
+--- app/main.py
++++ app/main.py
+@@ -232,7 +232,7 @@
+     (a first deploy), the page is built on the spot."""
+     page = cache.get_deals()
+     if page is None:
+-        return _build_deals()
++        return {"built_at": time.time(), "items": []}
+     stale = time.time() - float(page.get("built_at", 0)) > settings.DEALS_REFRESH_S
+     if stale and cache.claim_deals_refresh():
+         try:

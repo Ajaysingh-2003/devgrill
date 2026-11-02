@@ -1,0 +1,14 @@
+schema: devgrill/fault@1
+name: cache/restart
+kind: infra
+summary: A routine restart of the cache (no persistence) empties it while traffic is flowing; whatever the app rebuilds on a miss, it rebuilds all at once.
+base_apps: [shopkart]
+params: {}
+apply:
+  restart: true
+  service: redis-db
+symptom:
+  metric: error_rate
+  op: gt
+  value: 0.01
+  within_s: 90

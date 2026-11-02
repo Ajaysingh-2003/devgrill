@@ -11,7 +11,7 @@ Phase 7 runs in waves, each tested and committed on its own:
 | 7C | Quick Fire cards and onboarding calibration | Done |
 | 7D | Streak freezes and on-call leave, email digests (Mailpit) | Done |
 | 7E | Admin console: RBAC, audit log, review queue, publish and retire | Done |
-| 7F | Content sprint toward 20 drills, the Ledger app | In progress (8 of 8 drills built; Ledger and the rest later) |
+| 7F | Content sprint toward 20 drills, the Ledger app | In progress (15 playable; Ledger and the rest later) |
 | 7G | Case files | |
 
 ## Wave 7A: what was built
@@ -209,8 +209,19 @@ The owner chose four drills first, each tested in real sandboxes and committed o
   6. Search pins the CPU (memory/runaway-regex).
   7. Stale prices (caching/invalidation): the library placeholder, made playable.
   8. A feature flag on for everyone (deploys/feature-flags).
-- **Later:** the Ledger app and the drills that need it (concurrency, idempotency), the
-  remaining placeholders, and case files (7G).
+- **Third batch (four more, same process):** four of the six library placeholders, all on
+  ShopKart:
+  9. Redis restart herd (caching/stampedes).
+  10. Evicted at the worst time (caching/eviction).
+  11. Retry storm (queues/retries).
+  12. Emails sent twice (queues/idempotency).
+- **Still deferred:** "Ghost reads" needs a Postgres replica and "One celebrity, one key" needs
+  Redis shards. Also later: the Ledger app and its drills (concurrency, double-spend), and case
+  files (7G).
+- **Tested in CI:** WSL stopped starting on this machine (Windows refuses its VM a logon
+  right), so Docker and local sandboxes were down for this batch. Every drill was tested in
+  real sandboxes on GitHub's runners instead. `content.yml` now takes a `scenario` input
+  (comma-separated slugs) so one drill can be run on its own.
 
 ### Drill 1: The 3 a.m. table lock (databases/migrations, SEV2)
 
@@ -538,6 +549,142 @@ in 7 s and passed every probe. The approaches gave their declared outcomes:
   drill pages on all-route p99.
 - "Back to 5%" failed verify once, 20 s after the fix: Postgres was still running queries
   for clients that had already disconnected. The connection-check interval cancels those.
+
+### Drill 9: Redis restart herd (caching/stampedes, SEV2)
+
+**The incident:** Platform restarts Valkey (no persistence) during the afternoon.
+- The sale landing page (`/deals`) reads every review, so it is cached and refreshed ahead of
+  expiry by one request at a time. With no copy at all, though, every request builds it.
+- About forty builds share Postgres's one CPU. Each takes longer than the 500 ms build limit
+  (`DEALS_TIMEOUT_MS`) and is cancelled, so the copy is never written. The overload keeps
+  itself going after the restart is long over.
+- Paged on the error rate (the cancelled builds are 503s).
+
+**Fixes:** one build on a miss, under the same claim the refresh uses, with everyone else
+polling for that copy (full).
+- **Not a fix:** lifting the build limit lets one build finish, but every cold start still
+  costs one build per waiting shopper (fails `herd-guard`).
+- **Cheat:** an empty page on a miss fails `herd-guard`, which checks every page against the
+  ranking in Postgres.
+
+**Platform:** a fault step can now `restart` a service (ADR 012). Nothing to revert.
+
+**Base-app work (ShopKart):** `/deals` with its refresh-ahead cache, `deals_builds_total`
+(charted as "Deals page builds") and a `DEALS_RATE` load parameter. The new code sits where no
+existing patch has context, and the flag drill's three config patches were regenerated.
+
+**Found by running it:** `herd-guard` first counted two builds for the fix. Its own reference
+query reached Postgres's statistics late. That query now runs on its own connection, closed
+before counting, and the fix measures exactly one build.
+
+**Checks (CI):** paged in 6 s and stayed broken; the fix mitigated in 0.3 s. Every probe passed
+(a Valkey restart mid-traffic recovered in 6 to 8 s). Approaches as declared: single-flight
+full; no build limit partial (30 builds); empty page fails.
+
+### Drill 10: Evicted at the worst time (caching/eviction, SEV3)
+
+**The incident:** Thursday's deploy caches search results with no TTL, in the Valkey that also
+holds sessions and the orders queue.
+- Valkey runs `volatile-lru`, so the queue is never evicted: when it is full, only keys with a
+  TTL can go.
+- The weekend's searches fill it to the limit, then Monday's traffic evicts the sessions
+  (shoppers signed out mid-checkout).
+- Once no session is left to evict, every write fails with OOM and nobody can sign in.
+
+**Fixes:**
+- Full: a TTL on cached searches plus deleting the old keys, or rolling back plus deleting.
+- **Not fixes:**
+  - deleting the keys alone, or switching to `allkeys-lru`, leaves new searches that never
+    expire (fails `nothing-forever`, which tags its own searches and checks their TTLs);
+  - the TTL alone leaves the cache full for good (fails `signed-in`).
+- **Cheats:** a 1 GB cache fails the budget; accepting any token fails `signed-in`.
+
+**Base-app work (ShopKart):**
+- **Sign-ins:** `POST /sessions` and `GET /me` (sessions in Valkey for `SESSION_TTL_S`), with
+  the `signed_out_rate` and `cache_evictions` metrics.
+- **Policy:** the Valkey policy is now `volatile-lru`.
+- **Load script:**
+  - `SESSIONS=1`: each virtual user plays 50 shoppers and keeps their tokens, and k6 reports
+    `shoppers_signed_out`, a verifier metric;
+  - `SEARCH_RANDOM=1`: shoppers type their own searches.
+
+**Found by running it:** the reference cleanup first deleted nothing. The cached keys contain
+spaces, and `xargs` split them into words. The cleanup now splits on newlines only, and the
+tier-3 hint warns about it.
+
+**Checks (CI):** paged in 5 s; the fix mitigated in 0.3 s and passed every probe. All seven
+approaches gave their declared outcomes.
+
+### Drill 11: Retry storm (queues/retries, SEV1)
+
+**The incident:** two days ago the worker went to eight consumers that retry provider errors at
+once.
+- The payment provider has a 30-second outage, and the consumers retry thousands of times a
+  second.
+- The provider counts refused calls against its 60-a-second limit. After it recovers, the
+  retries alone keep the limit full: every call is refused and retried at once, and no order
+  is charged again.
+
+**Fixes:** exponential backoff with jitter, or rolling the worker back (one consumer with a
+pause).
+- **Cheat:** dead-lettering refused orders empties the queue but fails `outage-recovery`, which
+  takes the provider down again and checks that every order is paid afterwards.
+
+**Checks (CI):** paged in 6 s and stayed broken. The fix drained the backlog and mitigated in
+37 s. Every probe passed: after a fresh 15-second outage, every order was paid within 10 s.
+Backoff and rollback were full, and the cheat failed. Orders stuck in the queue, now charging
+through the provider, mitigated in 21 s with all five approaches as declared.
+
+**The full suite:** all 15 playable drills passed together on the final commit.
+
+### Drill 12: Emails sent twice (queues/idempotency, SEV3)
+
+**The incident:** a week ago the worker started giving up on a charge after 0.5 s. This
+afternoon one provider charge in ten takes a second.
+- The worker gives up on those and retries, but the first charge still goes through.
+- With no idempotency key, the provider takes the retry as a new charge and emails a second
+  receipt.
+- Paged on `duplicate_charge_rate`, measured by the provider.
+
+**Fixes:** an idempotency key per order (full).
+- **Not fixes:**
+  - rolling back (10 s timeout) or a 30 s timeout both stop today's doubles, but fail
+    `lost-answers`, where the provider charges and then drops the connection;
+  - checking for a charge first misses the one still in flight (fails `no-double-charges`).
+
+**Checks (CI):** paged in 11 s; the fix mitigated in 0.4 s and passed every probe. All four
+approaches gave their declared outcomes.
+
+### The payment provider (ShopKart, drills 11 and 12)
+
+**The service:** `payment-gateway`, a small stdlib HTTP service outside the player's repos.
+- `POST /charges` records a charge and a receipt.
+- An `Idempotency-Key` replays the finished charge, or answers 409 while it is still running.
+- The rate limit counts every call.
+- Port 8081 is the sandbox's control panel for faults and probes: latency, slow share, lost
+  answers, outages.
+- Metrics: `duplicate_charge_rate`, `payments_charged` and `payments_limited`.
+
+**The worker:**
+- It charges through the provider; `ORDER_SHARE` in the load script sets the order volume.
+- Provider errors (timeouts, unreachable, 409, 429, 5xx) are retried without using up an
+  order's attempts. An order that can't be charged still counts toward `MAX_ATTEMPTS`, so
+  Orders stuck in the queue works as before. Its worker patches were regenerated.
+- `CONSUMERS` threads; on a deploy, each consumer finishes the order it holds.
+
+**Found by running it:**
+- **Nagle stalls:** the worker first charged 18 orders a second instead of about 90. The stdlib
+  server writes headers and body separately, and Nagle's algorithm plus delayed ACKs added
+  40 ms to every answer. The provider sets `TCP_NODELAY`. Until then, Orders stuck in the
+  queue couldn't drain its backlog in time.
+- **Lost orders on deploy:** with eight consumers, a deploy lost the orders the consumers had
+  already taken off the queue (8 left pending for good). The worker now waits for them.
+- **Dropped approach:** one consumer that retries instantly sometimes recovered on CI's
+  runners, so that approach is no longer declared.
+- **Browser flow:** the live e2e flow checked that the `echo` it typed survived a terminal
+  reload. With the new service, `devgrill status` prints one more line, and the `echo` scrolled
+  past the screenful a reload brings back. The flow now looks for `devgrill status` output,
+  the last thing on screen.
 
 ## Gate checklist (docs/PLAN.md, Phase 7), so far
 

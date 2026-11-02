@@ -1,0 +1,13 @@
+--- worker.py
++++ worker.py
+@@ -124,8 +124,8 @@
+         PROCESSED.labels("paid").inc()
+         log.info("order paid", extra={"x_order_id": order["id"], "x_attempt": attempt})
+     except ProviderUnavailable as exc:
+-        # Back at the head, attempt unchanged: the provider failed, not the order.
+-        queue.rpush(QUEUE, raw)
++        # Don't add to the provider's load: set the order aside.
++        queue.rpush("orders:dead", raw)
+         PROCESSED.labels("retried").inc()
+         log.warning(
+             "payment provider unavailable, retrying",

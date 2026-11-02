@@ -1,0 +1,19 @@
+schema: devgrill/approach@1
+key: backoff-jitter
+name: Exponential backoff with jitter
+outcome: full
+idea: >-
+  After each provider error in a row, a consumer waits longer (0.25 s, 0.5 s, 1 s ... up to 10
+  s), times a random factor so the consumers spread out. The calls drop below the provider's
+  limit, charges get through, and each success resets the wait.
+steps:
+  - patch: backoff-jitter.diff
+    service: worker
+    message: "worker: back off on payment errors, with jitter"
+pros:
+  - Survives the next outage with all eight consumers
+  - Calls to a struggling provider fall instead of rising
+cons:
+  - Orders wait a little longer after a blip while the consumers ease back in
+match:
+  diff: 'random\.uniform|\*\*\s*\w+|2\s*\*\*'

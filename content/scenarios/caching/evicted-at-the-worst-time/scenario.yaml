@@ -1,5 +1,8 @@
-# Library entry only: not yet runnable (playable: false). Authoring it means adding faults,
-# load, slo, probes, hints and a page (see docs/adr/012-scenario-spec-v1.md).
+# Spec v1 (ADR 012). Thursday's deploy caches search results with no TTL, in the Valkey that
+# also holds sessions. Valkey runs volatile-lru (so the orders queue is never evicted): when it
+# is full, only keys with a TTL may go. Over the weekend the searches piled up to the limit.
+# Monday's traffic pushes out the sessions (shoppers signed out mid-checkout), then nothing is
+# left to evict and every write fails: nobody can sign in.
 schema: devgrill/scenario@1
 slug: evicted-at-the-worst-time
 title: Evicted at the worst time
@@ -12,21 +15,188 @@ summary: Sessions vanish and everyone is logged out
 tags:
   - redis
   - memory
+  - eviction
 base_app: shopkart
-playable: false
 briefing:
   story: It is Monday morning and every user is being logged out mid-checkout. Nobody deployed anything
     over the weekend.
   system:
+    - kind: lb
+      name: load-gen
+      note: Monday shoppers, signed in
+      role: path
     - kind: api
-      name: web-api
-      note: Python, 4 pods
+      name: product-api
+      note: Python, 4 workers
       role: path
     - kind: cache
-      name: redis
-      note: sessions + cache
+      name: valkey
+      note: cache, sessions and the orders queue
       role: path
     - kind: db
       name: postgres
-      note: users
+      note: products, orders
       role: path
+  goals:
+    - title: Keep shoppers signed in
+      detail: Sign-ins work again and sessions survive a busy cache.
+    - title: Make room for good
+      detail: Whatever the app caches must be able to expire.
+
+page:
+  severity: SEV3
+  title: "storefront: shoppers signed out mid-checkout, sign-ins failing"
+
+charts: [signed_out_rate, error_rate, cache_memory_bytes, cache_evictions]
+
+faults:
+  - use: cache/search-no-expiry
+    at: T-5760m
+
+load:
+  script: shop.js
+  vus: 40
+  params:
+    HOT_KEYS: "1042,1043,2210,77,9001"
+    # Signed-in shoppers who type their own searches.
+    SESSIONS: "1"
+    SEARCH_RANDOM: "1"
+
+deploy_history:
+  - message: "checkout: show saved addresses"
+    minutes_before: 10080
+    service: api
+  - message: "search: cache results for repeat queries"
+    minutes_before: 5760
+    from_fault: cache/search-no-expiry
+
+beats:
+  - persona: priya
+    at: T+20s
+    say: "Support's queue is exploding: shoppers get signed out in the middle of checkout, and now some can't sign back in at all. Nobody shipped anything over the weekend, right?"
+  - persona: arjun
+    at: T+3m
+    say: "Valkey is at its memory limit. I can give it a gigabyte, or flush it and start clean. Flushing signs everyone out once, but they're signed out anyway."
+  - persona: arjun
+    when: "state:mitigated"
+    say: "Sign-ins work again. Is it going to fill up again by next Monday?"
+  - persona: priya
+    when: "state:resolved"
+    say: "Verified: shoppers stay signed in while the cache is busy, and everything we cache can expire again. Thanks. Can you write up how a Thursday deploy took us down on Monday?"
+
+constraints:
+  no_scale_up: [redis-db]
+  cache_max_memory_mb: 256
+
+# Paged on errors (sign-ins refused) and on shoppers finding themselves signed out.
+slo:
+  p99_latency_ms: 500
+  error_rate: 0.01
+  thresholds:
+    signed_out_rate: { lt: 0.02 }
+  for_s: 30
+
+probes:
+  - key: steady-traffic
+    kind: load
+    title: Steady traffic
+    how: Replays Monday's signed-in shoppers for 45 seconds; p99 under 500 ms and under 1% errors.
+    target:
+      p99_ms: { lt: 500 }
+      error_rate: { lt: 0.01 }
+  - key: sessions-stay
+    kind: load
+    title: Shoppers stay signed in
+    how: During the replay, under 1% of signed-in page views find the shopper signed out.
+    target:
+      shoppers_signed_out: { lt: 0.01 }
+  - key: signed-in
+    kind: invariant
+    title: Sessions survive a busy cache
+    how: Signs in 30 shoppers, browses and searches, then checks all are still signed in; a made-up session is refused.
+    script: sessions.py
+    target:
+      lost: { lt: 1 }
+      fake_accepted: { lt: 1 }
+  - key: nothing-forever
+    kind: invariant
+    title: Cached searches can expire
+    how: Sends 30 new searches and checks that whatever was cached for them has a TTL.
+    script: forever.py
+    target:
+      forever_keys: { lt: 1 }
+  - key: correctness
+    kind: hidden_test
+    title: Still correct
+    how: Real product data, 404s for unknown products, search, orders and price changes all work.
+    script: base/correctness.py
+  - key: budget
+    kind: budget
+    title: Within budget
+    how: Valkey keeps its 256 MB.
+    weight: 0.5
+
+hints:
+  tier1: "Shoppers are signed out, and sessions live in Valkey. What is Valkey full of, and what is it allowed to evict?"
+  tier2: "Valkey is at maxmemory with volatile-lru: only keys with a TTL can be evicted. Count the keys that have no TTL, and find which part of the code writes them. When did that start?"
+  tier3: "Thursday's 'cache results for repeat queries' deploy writes search:* keys with no TTL. They can never be evicted, so sessions are evicted instead, and once those are gone every write fails. Add a TTL in set_search, deploy, then delete the old search:* keys with SCAN and UNLINK (the keys contain spaces: split on newlines, not words)."
+
+rubric:
+  - key: impact
+    max: 2
+    description: States what customers saw and since when.
+    anchors:
+      "0": "No impact stated."
+      "1": "Users were logged out, without when or what else broke."
+      "2": "From Monday's first traffic, shoppers were signed out mid-checkout, then sign-ins and other cache writes failed; orders placed then were never queued."
+  - key: root-cause
+    max: 4
+    description: Explains why sessions disappeared.
+    anchors:
+      "0": "Blames Valkey, traffic or memory size."
+      "2": "Says the cache was full, without why sessions were the ones evicted."
+      "4": "Thursday's deploy cached search results with no TTL in the Valkey that also holds sessions. With volatile-lru only keys with a TTL can be evicted, so the searches piled up over the weekend and could never go; Monday's writes evicted the sessions instead, and once none were left every write failed with OOM."
+  - key: rejected-fixes
+    max: 2
+    description: Explains why more memory, a flush or a new eviction policy weren't the fix.
+    anchors:
+      "0": "Recommends more memory, FLUSHALL or allkeys-lru as the fix."
+      "1": "Rejects one without saying why."
+      "2": "More memory only delays the next full cache; FLUSHALL also drops the orders queue; allkeys-lru lets the queue be evicted; the fix is a TTL on everything the cache writes, plus deleting the keys that have none."
+  - key: prevention
+    max: 2
+    description: Proposes guards for the next key without a TTL.
+    anchors:
+      "0": "No action items."
+      "1": "One vague action."
+      "2": "A helper that refuses cache writes without a TTL; sessions and the queue in their own Valkey; alerts on memory near maxmemory and on evictions; a test that every cached key has a TTL."
+
+ttl_minutes: 30
+par_minutes: 8
+
+replay:
+  - when: deploy.viewed
+    match: "api"
+    mark: clue
+    note: Thursday's search cache deploy is where keys with no TTL came from.
+  - when: redis-db.restarted
+    mark: lost
+    note: A restart empties Valkey, sessions and queued orders included, and the code fills it again.
+  - when: api.rolledback
+    mark: clue
+    note: Rolling back stops new search keys; the old ones still have to be deleted.
+
+ai:
+  spoilers:
+    - "volatile-lru"
+    - "no (ttl|expir)"
+    - "without (a )?(ttl|expir)"
+    - "search:\\*"
+    - "set_search"
+    - "never expire"
+  root_cause: >-
+    Thursday's deploy cached search results in Valkey with no TTL. Valkey also holds sessions
+    and runs volatile-lru, so only keys with a TTL can be evicted. The search keys piled up over
+    the weekend to the 256 MB limit; Monday's traffic then evicted sessions (shoppers signed out
+    mid-checkout), and once none were left every write failed with OOM. A TTL on cached
+    searches, plus deleting the ones already stored without one, fixes it.

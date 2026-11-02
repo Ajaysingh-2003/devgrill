@@ -1,0 +1,20 @@
+schema: devgrill/approach@1
+key: expire-and-clean
+name: Expire search results, delete the old ones
+outcome: full
+idea: >-
+  Cache search results with a TTL (ex=300), so volatile-lru can evict them like any other cache
+  entry, and delete the search:* keys already written without one (SCAN plus UNLINK, never KEYS).
+steps:
+  - patch: expire-searches.diff
+    service: api
+    message: "search: cached results expire after five minutes"
+  - run: redis-cli -h redis-db --scan --pattern 'search:*' | tr '\n' '\0' | xargs -0 -r -n 1000 redis-cli -h redis-db unlink > /dev/null
+    service: tools
+pros:
+  - Sessions are safe again and the search cache keeps working
+  - Every key in Valkey can expire once more, which is what volatile-lru relies on
+cons:
+  - Shoppers already signed out stay signed out; they sign in again
+match:
+  diff: 'set_search|search_key[\s\S]*\bex='

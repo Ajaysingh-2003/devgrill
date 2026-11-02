@@ -1,5 +1,8 @@
-# Library entry only: not yet runnable (playable: false). Authoring it means adding faults,
-# load, slo, probes, hints and a page (see docs/adr/012-scenario-spec-v1.md).
+# Spec v1 (ADR 012). Two days ago the worker went to eight consumers that retry provider errors
+# at once. The payment provider has a 30-second outage: thousands of retries a second. Its rate
+# limit counts refused calls too, so when it comes back the retries alone keep the limit full,
+# every call is refused and retried at once, and no order is charged again: a storm that
+# outlives its cause.
 schema: devgrill/scenario@1
 slug: retry-storm
 title: Retry storm
@@ -8,29 +11,188 @@ topic: retries
 difficulty: sev1
 est_minutes: 35
 status: published
-summary: A two-minute blip becomes an hour-long outage
+summary: A short provider blip becomes an outage that doesn't end
 tags:
   - queue
   - retries
   - backoff
 base_app: shopkart
-playable: false
 briefing:
-  story: The payment provider had a two-minute outage at 14:00. It recovered. Your system did not.
+  story: The payment provider had a short outage a few minutes ago. Their status page says it recovered.
+    Your system did not.
   system:
     - kind: api
-      name: checkout-api
-      note: Python, 4 pods
+      name: product-api
+      note: takes orders, queues them
       role: path
     - kind: queue
-      name: rabbitmq
-      note: payment jobs
+      name: valkey
+      note: "orders:pending"
       role: path
     - kind: worker
-      name: payments
+      name: orders-worker
       note: 8 consumers
       role: path
     - kind: lb
-      name: provider
-      note: payment gateway
+      name: payment-gateway
+      note: the provider, 60 calls/s
       role: side
+  goals:
+    - title: Get orders charged again
+      detail: The backlog drains and new orders are paid within seconds.
+    - title: Survive the next blip
+      detail: After a provider outage, orders must start flowing again by themselves.
+
+page:
+  severity: SEV1
+  title: "orders-worker: queue depth over 50 and climbing, provider refusing every charge"
+
+charts: [orders_queue_depth, payments_charged, payments_limited, orders_lag_s]
+
+faults:
+  - use: payments/no-backoff
+    at: T-2880m
+
+load:
+  script: shop.js
+  vus: 30
+  params:
+    HOT_KEYS: "1042,1043,2210,77,9001"
+    ORDER_SHARE: "0.03"
+
+deploy_history:
+  - message: "worker: log order ids on retries"
+    minutes_before: 10080
+    service: worker
+  - message: "orders: show delivery estimates on the receipt"
+    minutes_before: 4320
+    service: api
+  - message: "worker: 8 consumers, retry payment errors at once"
+    minutes_before: 2880
+    from_fault: payments/no-backoff
+
+beats:
+  - persona: priya
+    at: T+20s
+    say: "The provider's status page went green ten minutes ago, but we still aren't charging anyone and the queue keeps growing. Their support says we're over our rate limit. Are we?"
+  - persona: arjun
+    at: T+3m
+    say: "I can ask the provider to raise our limit, or restart the worker so it starts fresh. Or cut it to one consumer?"
+  - persona: arjun
+    when: "state:mitigated"
+    say: "Charges are going through and the backlog's coming down. What happens at their next blip?"
+  - persona: priya
+    when: "state:resolved"
+    say: "Verified: we survived a fresh provider outage and every order got charged afterwards. Thanks. Please write up how thirty seconds of downtime became an hour."
+
+constraints:
+  no_scale_up: [worker]
+
+# Paged on the backlog: checkout keeps answering, nobody waits on the worker.
+slo:
+  p99_latency_ms: 500
+  error_rate: 0.01
+  thresholds:
+    orders_queue_depth: { lt: 50 }
+  for_s: 30
+
+probes:
+  - key: steady-traffic
+    kind: load
+    title: Steady traffic
+    how: Replays afternoon traffic for 45 seconds; p99 under 500 ms and under 1% errors.
+    target:
+      p99_ms: { lt: 500 }
+      error_rate: { lt: 0.01 }
+  - key: orders-flow
+    kind: invariant
+    title: Orders get charged
+    how: Places 20 orders; all are paid within 30 seconds, and no order is left pending.
+    script: orders_flow.py
+    target:
+      paid_within_s: { lt: 30 }
+      stale_pending: { lt: 1 }
+  - key: outage-recovery
+    kind: invariant
+    title: The provider blips again
+    how: Takes the provider down for 15 seconds while orders arrive; every order is paid within 40 seconds of its return.
+    script: outage.py
+    target:
+      recovered_s: { lt: 40 }
+      unpaid: { lt: 1 }
+  - key: correctness
+    kind: hidden_test
+    title: Still correct
+    how: Real product data, 404s for unknown products, search, orders and price changes all work.
+    script: base/correctness.py
+  - key: budget
+    kind: budget
+    title: Within budget
+    how: No bigger worker.
+    weight: 0.5
+
+hints:
+  tier1: "The provider says it is up, and it says we are over our limit. How many calls a second are we making, and what for?"
+  tier2: "Nearly every call is refused with 429 and retried at once. What does the worker do between a refused call and the next one? Look at its config and its last deploy."
+  tier3: "Two days ago the worker went to CONSUMERS=8 and RETRY_BACKOFF_S=0: refused calls are retried instantly, and the provider counts them against the limit, so it never empties. Back off exponentially with jitter on provider errors (or roll the worker back) and deploy."
+
+rubric:
+  - key: impact
+    max: 2
+    description: States what customers saw and since when.
+    anchors:
+      "0": "No impact stated."
+      "1": "Payments failed, without how long or what customers saw."
+      "2": "From the provider's outage on, orders were accepted but none was charged or confirmed, long after the provider itself had recovered."
+  - key: root-cause
+    max: 4
+    description: Explains why the outage outlived the provider's.
+    anchors:
+      "0": "Blames the provider or its rate limit."
+      "2": "Says retries overloaded the provider, without why it never recovered."
+      "4": "Eight consumers retried every refused call immediately. During the outage that meant thousands of calls a second; the provider counts refused calls against its limit, so when it recovered the retries alone kept the limit full, every call was refused and retried at once, and nothing got through: a storm that kept itself going."
+  - key: rejected-fixes
+    max: 2
+    description: Explains why a higher limit or a restart wasn't the fix.
+    anchors:
+      "0": "Recommends a higher limit or a restart as the fix."
+      "1": "Rejects one without saying why."
+      "2": "A restart or a higher limit only buys time until the next blip, and fewer consumers only make the storm smaller; what stops it is waiting longer after each failure, with jitter, so refused calls fall instead of rising."
+  - key: prevention
+    max: 2
+    description: Proposes guards for the next provider blip.
+    anchors:
+      "0": "No action items."
+      "1": "One vague action."
+      "2": "Exponential backoff with jitter and a cap; honour Retry-After; a retry budget or circuit breaker per dependency; alert on 429s and on charge rate, not only queue depth; a provider outage in a game day."
+
+ttl_minutes: 45
+par_minutes: 12
+
+replay:
+  - when: worker.restarted
+    mark: lost
+    note: A restart brings eight consumers back to the same full limit, retrying at once.
+  - when: deploy.viewed
+    match: "worker"
+    mark: clue
+    note: The worker's last deploy is where eight consumers and instant retries came from.
+  - when: worker.rolledback
+    mark: clue
+    note: Rolling the worker back restores one consumer with a pause between retries.
+
+ai:
+  spoilers:
+    - "backoff"
+    - "jitter"
+    - "RETRY_BACKOFF_S"
+    - "retr(y|ies) (at once|immediately|instantly)"
+    - "refused calls count"
+    - "\\bstorm\\b"
+  root_cause: >-
+    A worker deploy ran eight consumers with RETRY_BACKOFF_S=0. During a 30-second provider
+    outage they retried every failed charge instantly, thousands of calls a second. The provider
+    counts refused calls against its 60-a-second limit, so after it recovered the retries alone
+    kept the limit full: every call got 429, was retried at once, and no order was charged.
+    Exponential backoff with jitter (or rolling back to one consumer with a pause) lets the
+    limit drain and charges through.

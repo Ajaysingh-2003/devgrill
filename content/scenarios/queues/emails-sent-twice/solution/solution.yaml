@@ -1,0 +1,9 @@
+schema: devgrill/solution@1
+summary: >-
+  The worker gives up on a charge after half a second and retries it, but a slow charge still
+  goes through at the provider, so the retry charges the order again and the provider sends a
+  second receipt. Send an idempotency key per order, so a retry returns the charge already made.
+steps:
+  - patch: idempotency-key.diff
+    service: worker
+    message: "worker: an idempotency key per order on every charge"

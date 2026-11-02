@@ -1,0 +1,19 @@
+schema: devgrill/fault@1
+name: cache/search-no-expiry
+kind: code_patch
+summary: A deploy caches search results with no TTL in the Valkey that also holds sessions; with volatile-lru, the pile can't be evicted, so sessions are, then nothing can be written.
+base_apps: [shopkart]
+params: {}
+# The deploy, then the days of searches it cached: Valkey is nearly full when traffic picks up.
+apply:
+  patch: patch.diff
+  service: api
+also:
+  script: fill.py
+  service: tools
+deploy_message: "search: cache results for repeat queries"
+symptom:
+  metric: error_rate
+  op: gt
+  value: 0.01
+  within_s: 120

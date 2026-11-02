@@ -88,10 +88,11 @@ try {
   await page.getByText("postgres-db").first().waitFor({ timeout: 30_000 });
   step("in-sandbox CLI ok");
 
-  // A reload re-attaches to the same tmux session: the earlier output is still on screen.
+  // A reload re-attaches to the same tmux session: the earlier output is still on screen (the
+  // last command's, since only one screenful comes back).
   await page.reload();
   await page.getByText("oncall@shopkart: Connected").waitFor({ timeout: 60_000 });
-  await page.locator(".xterm").getByText("keystroke-latency-probe").first().waitFor({ timeout: 20_000 });
+  await page.locator(".xterm").getByText("postgres-db").first().waitFor({ timeout: 20_000 });
   results.terminal_survives_reload = true;
   step("terminal survived a reload");
 

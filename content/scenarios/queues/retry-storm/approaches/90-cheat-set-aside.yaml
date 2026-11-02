@@ -1,0 +1,11 @@
+schema: devgrill/approach@1
+key: cheat-set-aside
+name: Set aside orders the provider refuses
+outcome: fails
+cheat: true
+idea: Move every order the provider refuses to the dead-letter list, so the queue empties.
+steps:
+  - patch: set-aside.diff
+    service: worker
+    message: "worker: dead-letter orders the provider refuses"
+fails_probes: [outage-recovery]

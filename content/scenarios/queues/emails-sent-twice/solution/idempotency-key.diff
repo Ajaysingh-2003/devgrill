@@ -1,0 +1,17 @@
+--- worker.py
++++ worker.py
+@@ -100,7 +100,13 @@
+     row = conn.execute("SELECT total_cents FROM orders WHERE id = %s", (order["id"],)).fetchone()
+     amount = row[0] if row else 0
+     try:
+-        res = payments.post("/charges", json={"order_id": order["id"], "amount_cents": amount})
++        # One key per order: a retry of a charge the provider already made returns that charge
++        # instead of making another.
++        res = payments.post(
++            "/charges",
++            json={"order_id": order["id"], "amount_cents": amount},
++            headers={"Idempotency-Key": f"order-{order['id']}"},
++        )
+     except httpx.HTTPError as exc:
+         raise ProviderUnavailable(type(exc).__name__) from exc
+     if res.status_code in (409, 429) or res.status_code >= 500:

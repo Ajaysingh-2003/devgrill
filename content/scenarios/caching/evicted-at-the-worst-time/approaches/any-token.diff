@@ -1,0 +1,13 @@
+--- app/main.py
++++ app/main.py
+@@ -278,8 +278,8 @@
+ def me(request: Request) -> dict[str, Any]:
+     """Who is signed in (every storefront page asks, for the header)."""
+     token = request.headers.get("authorization", "").removeprefix("Bearer ").strip()
+-    user_id = cache.session_user(token) if token else None
+-    if user_id is None:
++    user_id = (cache.session_user(token) if token else None) or 0
++    if not token:
+         SESSION_CHECKS.labels("missing").inc()
+         raise HTTPException(401, "signed out")
+     SESSION_CHECKS.labels("ok").inc()

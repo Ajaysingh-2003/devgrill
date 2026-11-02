@@ -105,6 +105,28 @@ def also_bought(product_id: int, limit: int = 4) -> list[dict[str, Any]]:
         ).fetchall()
 
 
+def deals(per_category: int = 3) -> list[dict[str, Any]]:
+    """The landing page: the best-rated products in stock in each category (5+ reviews).
+    Reads every review, so it is cached; DEALS_TIMEOUT_MS bounds one build."""
+    with connection() as conn, conn.transaction():
+        if settings.DEALS_TIMEOUT_MS > 0:
+            conn.execute(f"SET LOCAL statement_timeout = {int(settings.DEALS_TIMEOUT_MS)}")
+        return conn.execute(
+            "WITH rated AS ("
+            "   SELECT product_id, round(avg(rating), 2)::float AS rating_avg,"
+            "     count(*) AS rating_count FROM reviews"
+            "   GROUP BY product_id HAVING count(*) >= 5),"
+            " ranked AS ("
+            "   SELECT p.id, p.name, p.category, p.price_cents, r.rating_avg, r.rating_count,"
+            "     row_number() OVER (PARTITION BY p.category"
+            "       ORDER BY r.rating_avg DESC, r.rating_count DESC, p.id) AS rank"
+            "   FROM products p JOIN rated r ON r.product_id = p.id WHERE p.stock > 0)"
+            " SELECT id, name, category, price_cents, rating_avg, rating_count FROM ranked"
+            " WHERE rank <= %s ORDER BY category, rank",
+            (per_category,),
+        ).fetchall()
+
+
 def create_order(user_id: int, product_id: int, quantity: int) -> dict[str, Any]:
     with connection() as conn, conn.transaction():
         product = conn.execute(

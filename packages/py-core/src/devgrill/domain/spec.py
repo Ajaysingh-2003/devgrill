@@ -120,16 +120,18 @@ class FaultApply(_Strict):
     script: RelPath | None = None
     #: Leave the script running (e.g. a transaction that holds a lock and never commits).
     detach: bool = False
-    #: Service to apply to (patch, env, script).
+    #: Restart the service (e.g. a routine cache restart that empties it). Nothing to revert.
+    restart: bool = False
+    #: Service to apply to (patch, env, script, restart).
     service: ServiceName | None = None
 
     @model_validator(mode="after")
     def _one_mechanism(self) -> FaultApply:
-        mechanisms = [m for m in (self.patch, self.env, self.toxic, self.script) if m]
+        mechanisms = [m for m in (self.patch, self.env, self.toxic, self.script, self.restart) if m]
         if len(mechanisms) != 1:
-            raise ValueError("a fault applies exactly one of: patch, env, toxic, script")
-        if (self.patch or self.env or self.script) and not self.service:
-            raise ValueError("patch, env and script faults need a service")
+            raise ValueError("a fault applies exactly one of: patch, env, toxic, script, restart")
+        if (self.patch or self.env or self.script or self.restart) and not self.service:
+            raise ValueError("patch, env, script and restart faults need a service")
         if self.detach and not self.script:
             raise ValueError("only scripts can be detached")
         if self.script and not self.script.endswith((".sql", ".py", ".sh")):

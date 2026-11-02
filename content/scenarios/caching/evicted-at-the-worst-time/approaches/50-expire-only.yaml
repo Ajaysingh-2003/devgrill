@@ -1,0 +1,16 @@
+schema: devgrill/approach@1
+key: expire-only
+name: Expire new search results only
+outcome: fails
+idea: >-
+  Add the TTL and deploy, but leave the keys already cached. They still have no TTL, so they
+  can never be evicted, and Valkey stays full: sessions and every new write still fail.
+steps:
+  - patch: expire-searches.diff
+    service: api
+    message: "search: cached results expire after five minutes"
+pros:
+  - Fixes the cause for new keys
+cons:
+  - "The keys written before the fix never expire: the cache stays full"
+fails_probes: [signed-in]

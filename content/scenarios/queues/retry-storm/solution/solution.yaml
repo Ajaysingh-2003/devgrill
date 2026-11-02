@@ -1,0 +1,10 @@
+schema: devgrill/solution@1
+summary: >-
+  Eight consumers retried every provider error at once. During the outage that was thousands of
+  calls a second, and the provider counts refused calls against its rate limit, so after it
+  recovered the retries alone kept the limit full and no charge got through. Back off
+  exponentially, with jitter, on provider errors.
+steps:
+  - patch: backoff-jitter.diff
+    service: worker
+    message: "worker: back off on payment errors, with jitter"

@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import random
+import secrets
 from typing import Any
 
 import redis
@@ -63,3 +64,52 @@ def healthy() -> bool:
         return bool(client.ping())
     except redis.RedisError:
         return False
+
+
+DEALS_KEY = "deals"
+DEALS_REFRESH_LOCK = "deals:refresh"
+
+
+def get_deals() -> dict[str, Any] | None:
+    try:
+        raw = client.get(DEALS_KEY)
+    except redis.RedisError as exc:
+        log.warning("cache unavailable", extra=fields(error=type(exc).__name__))
+        return None
+    return None if raw is None else json.loads(raw)
+
+
+def set_deals(page: dict[str, Any]) -> None:
+    try:
+        client.set(DEALS_KEY, json.dumps(page, default=str), ex=settings.DEALS_TTL_S)
+    except redis.RedisError as exc:
+        log.warning("cache write failed", extra=fields(error=type(exc).__name__))
+
+
+def claim_deals_refresh() -> bool:
+    """True for the one request that gets to rebuild the deals page (for 30 s at most)."""
+    try:
+        return bool(client.set(DEALS_REFRESH_LOCK, "1", nx=True, ex=30))
+    except redis.RedisError:
+        return False
+
+
+def create_session(user_id: int) -> str | None:
+    """A sign-in: a random token for `user_id`, kept for SESSION_TTL_S. None if Valkey refused."""
+    token = secrets.token_urlsafe(24)
+    try:
+        client.set(f"session:{token}", user_id, ex=settings.SESSION_TTL_S)
+    except redis.RedisError as exc:
+        log.error("session not saved", extra=fields(error=type(exc).__name__, detail=str(exc)))
+        return None
+    return token
+
+
+def session_user(token: str) -> int | None:
+    """The signed-in user, or None when the session is gone (expired, evicted or made up)."""
+    try:
+        raw = client.get(f"session:{token}")
+    except redis.RedisError as exc:
+        log.warning("cache unavailable", extra=fields(error=type(exc).__name__))
+        return None
+    return None if raw is None else int(raw)

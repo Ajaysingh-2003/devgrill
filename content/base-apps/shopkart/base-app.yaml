@@ -30,6 +30,8 @@ services:
     memory_mb: 768
 
   redis-db:
+    # One Valkey for the product cache, sessions and the orders queue. volatile-lru: when it is
+    # full, only keys with a TTL (cache entries, sessions) may be evicted, never the queue.
     image: valkey/valkey:9.1-alpine
     command:
       [
@@ -41,7 +43,7 @@ services:
         "--maxmemory",
         "256mb",
         "--maxmemory-policy",
-        "allkeys-lru",
+        "volatile-lru",
       ]
     healthcheck: ["valkey-cli", "ping"]
     cache: true
@@ -59,6 +61,17 @@ services:
     toxiproxy: { admin_port: 8474 }
     healthcheck: ["/toxiproxy-cli", "-h", "127.0.0.1:8474", "list"]
     depends_on: [postgres-db, redis-db]
+    cpus: 0.5
+    memory_mb: 128
+
+  # The payment provider: someone else's service (the player can call it, not change it).
+  # Port 8081 is the sandbox's control panel for faults and probes.
+  payment-gateway:
+    build: payments
+    healthcheck:
+      ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz')"]
+    logs: false
+    metrics_port: 8080
     cpus: 0.5
     memory_mb: 128
 
@@ -85,13 +98,14 @@ services:
     env:
       DATABASE_URL: postgresql://shopkart:shopkart@postgres:5432/shopkart
       REDIS_URL: redis://redis:6379/0
+      PAYMENTS_URL: http://payment-gateway:8080
     # The player edits this source in tools:/workspace/worker and deploys it, like the API.
     source:
       dest: /srv/worker
       paths: [worker.py, config]
       config_file: config/worker.env
     metrics_port: 9100
-    depends_on: [toxiproxy]
+    depends_on: [toxiproxy, payment-gateway]
     cpus: 0.5
     memory_mb: 256
 
@@ -175,6 +189,12 @@ metrics:
     job: api
     metric: checkout_price_checks_total
     labels: { result: mismatch }
+  # Builds of the sale landing page (/deals) per second, finished or cancelled: ~0 while
+  # its cached copy serves everyone.
+  deals_builds:
+    type: rate
+    job: api
+    metric: deals_builds_total
   db_qps_product:
     type: rate
     job: api
@@ -198,6 +218,34 @@ metrics:
     type: gauge
     job: worker
     metric: orders_consumer_lag_seconds
+  # Share of signed-in page views whose session was gone (the shopper is signed out).
+  signed_out_rate:
+    type: ratio
+    job: api
+    metric: session_checks_total
+    labels: { result: missing }
+  # Keys Valkey dropped per second to stay under maxmemory (measured by the exporter).
+  cache_evictions:
+    type: rate
+    job: redis-exporter
+    metric: redis_evicted_keys_total
+  # Share of the provider's charges made for an order that had already been charged.
+  duplicate_charge_rate:
+    type: ratio
+    job: payment-gateway
+    metric: payments_charges_total
+    labels: { repeat: "true" }
+  # Charges the provider made, and calls it refused for the rate limit, per second.
+  payments_charged:
+    type: rate
+    job: payment-gateway
+    metric: payments_requests_total
+    labels: { result: charged }
+  payments_limited:
+    type: rate
+    job: payment-gateway
+    metric: payments_requests_total
+    labels: { result: limited }
   cache_memory_bytes:
     type: gauge
     job: redis-exporter

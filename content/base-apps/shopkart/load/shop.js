@@ -3,7 +3,11 @@
 // of the reads, like a sale landing page), SEARCH_TERMS (comma list of search queries, picked
 // at random; repeat one to weight it), PRICE_UPDATE_RATE (share of iterations that also
 // reprice a hot product, like a pricing job; default 0), ALSO_BOUGHT (1: product pages also load
-// the "customers also bought" box, as the storefront does), RATE (iterations per second: an
+// the "customers also bought" box, as the storefront does), DEALS_RATE (share of iterations
+// that open the sale landing page first; default 0), SEARCH_RANDOM (1: shoppers type their own
+// searches, "trail kettle 17", instead of SEARCH_TERMS: almost every query is new), SESSIONS (1:
+// shoppers sign in, and every page asks who is signed in, as the storefront header does),
+// ORDER_SHARE (share of iterations that place an order; default 0.05), RATE (iterations per second: an
 // open model, where a slow system queues shoppers instead of slowing them down; default off,
 // VUS shoppers in a loop), P99_MS and ERROR_RATE (thresholds).
 import http from "k6/http";
@@ -15,6 +19,10 @@ const hot = (__ENV.HOT_KEYS || "1042,1043,2210,77,9001").split(",").map(Number);
 const searchTerms = (__ENV.SEARCH_TERMS || "Trail").split(",").map((s) => s.trim());
 const priceUpdateRate = Number(__ENV.PRICE_UPDATE_RATE || 0);
 const alsoBought = __ENV.ALSO_BOUGHT === "1";
+const dealsRate = Number(__ENV.DEALS_RATE || 0);
+const searchRandom = __ENV.SEARCH_RANDOM === "1";
+const sessions = __ENV.SESSIONS === "1";
+const orderShare = Number(__ENV.ORDER_SHARE || 0.05);
 const rate = Number(__ENV.RATE || 0);
 const vus = Number(__ENV.VUS || 20);
 const duration = __ENV.DURATION || "3m";
@@ -45,6 +53,57 @@ export const options = {
 
 const productLatency = new Trend("product_latency", true);
 const productFailed = new Rate("product_failed");
+// Signed-in page views that found the shopper signed out (or unable to sign in).
+const signedOut = new Rate("signed_out");
+
+const ADJECTIVES = ["trail", "urban", "studio", "classic", "pro", "lite", "max", "mini"];
+const NOUNS = [
+  "backpack",
+  "headphones",
+  "kettle",
+  "sneakers",
+  "jacket",
+  "lamp",
+  "blender",
+  "notebook",
+  "charger",
+  "tent",
+];
+const any = (list) => list[Math.floor(Math.random() * list.length)];
+
+// This VU's shoppers: VU k plays users k, k + vus, k + 2 * vus, ... (2,000 users in all), one
+// visit at a time, and keeps each one's session token between visits.
+const tokens = {};
+function shopper() {
+  const pool = Math.max(1, Math.floor(2000 / vus));
+  return ((__VU - 1) % vus) + 1 + vus * Math.floor(Math.random() * pool);
+}
+
+function signedInVisit() {
+  const user = shopper();
+  let token = tokens[user];
+  if (!token) {
+    const res = http.post(`${target}/sessions`, JSON.stringify({ user_id: user }), {
+      headers: { "Content-Type": "application/json" },
+      tags: { name: "sign_in" },
+    });
+    check(res, { "signed in": (r) => r.status === 201 });
+    token = res.status === 201 ? res.json("token") : null;
+    if (!token) {
+      signedOut.add(true);
+      return;
+    }
+    tokens[user] = token;
+  }
+  // A 401 is an answer, not a failure: the shopper is signed out and signs in next visit.
+  const me = http.get(`${target}/me`, {
+    headers: { Authorization: `Bearer ${token}` },
+    tags: { name: "me" },
+    responseCallback: http.expectedStatuses(200, 401),
+  });
+  signedOut.add(me.status === 401);
+  if (me.status === 401) delete tokens[user];
+}
 
 function pick() {
   // 80% of reads go to the hot products, the rest spread over the catalogue.
@@ -61,8 +120,13 @@ export default function () {
       { headers: { "Content-Type": "application/json" }, tags: { name: "price" } },
     );
   }
+  if (dealsRate > 0 && Math.random() < dealsRate) {
+    const res = http.get(`${target}/deals`, { tags: { name: "deals" } });
+    check(res, { "deals 200": (r) => r.status === 200 });
+  }
+  if (sessions) signedInVisit();
   const roll = Math.random();
-  if (roll < 0.85) {
+  if (roll < 0.9 - orderShare) {
     const id = pick();
     const res = http.get(`${target}/products/${id}`, { tags: { name: "product" } });
     productLatency.add(res.timings.duration);
@@ -75,8 +139,10 @@ export default function () {
       });
       check(box, { "also bought 200": (r) => r.status === 200 });
     }
-  } else if (roll < 0.95) {
-    const term = searchTerms[Math.floor(Math.random() * searchTerms.length)];
+  } else if (roll < 1 - orderShare) {
+    const term = searchRandom
+      ? `${any(ADJECTIVES)} ${any(NOUNS)} ${1 + Math.floor(Math.random() * 230)}`
+      : searchTerms[Math.floor(Math.random() * searchTerms.length)];
     const res = http.get(`${target}/products?q=${encodeURIComponent(term)}&limit=10`, {
       tags: { name: "search" },
     });
@@ -102,6 +168,7 @@ export function handleSummary(data) {
     // Product pages alone (the path most shoppers are on).
     product_p99_ms: metric("product_latency").values?.["p(99)"] ?? null,
     product_error_rate: metric("product_failed").values?.rate ?? null,
+    shoppers_signed_out: metric("signed_out").values?.rate ?? null,
     requests: metric("http_reqs").values?.count ?? 0,
     thresholds_passed: Object.values(data.metrics).every(
       (m) => !m.thresholds || Object.values(m.thresholds).every((t) => t.ok),

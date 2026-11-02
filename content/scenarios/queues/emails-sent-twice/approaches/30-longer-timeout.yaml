@@ -1,0 +1,17 @@
+schema: devgrill/approach@1
+key: longer-timeout
+name: A longer timeout
+outcome: partial
+idea: Set PAYMENT_TIMEOUT_S=30. Slow charges finish before the worker gives up, so it doesn't retry them.
+steps:
+  - patch: longer-timeout.diff
+    service: worker
+    message: "config: 30 s payment timeout"
+pros:
+  - A one-line config change
+cons:
+  - "A lost answer is still retried as a new charge"
+  - The worker waits up to 30 seconds on a stuck call
+fails_probes: [lost-answers]
+match:
+  diff: '\+PAYMENT_TIMEOUT_S=\d{2,}'
