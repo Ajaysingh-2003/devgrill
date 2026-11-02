@@ -1,7 +1,7 @@
 --- worker.py
 +++ worker.py
-@@ -99,7 +99,8 @@
-         log.info("order paid", extra={"x_order_id": order["id"], "x_attempt": attempt})
+@@ -134,7 +134,8 @@
+         time.sleep(RETRY_BACKOFF_S)
      except Exception as exc:
          order["attempt"] = attempt
 -        if MAX_ATTEMPTS and attempt >= MAX_ATTEMPTS:

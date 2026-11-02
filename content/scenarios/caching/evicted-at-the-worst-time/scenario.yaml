@@ -139,7 +139,7 @@ probes:
 hints:
   tier1: "Shoppers are signed out, and sessions live in Valkey. What is Valkey full of, and what is it allowed to evict?"
   tier2: "Valkey is at maxmemory with volatile-lru: only keys with a TTL can be evicted. Count the keys that have no TTL, and find which part of the code writes them. When did that start?"
-  tier3: "Thursday's 'cache results for repeat queries' deploy writes search:* keys with no TTL. They can never be evicted, so sessions are evicted instead, and once those are gone every write fails. Add a TTL in set_search, deploy, then delete the old search:* keys with SCAN and UNLINK."
+  tier3: "Thursday's 'cache results for repeat queries' deploy writes search:* keys with no TTL. They can never be evicted, so sessions are evicted instead, and once those are gone every write fails. Add a TTL in set_search, deploy, then delete the old search:* keys with SCAN and UNLINK (the keys contain spaces: split on newlines, not words)."
 
 rubric:
   - key: impact

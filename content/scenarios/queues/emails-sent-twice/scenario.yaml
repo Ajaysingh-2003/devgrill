@@ -1,5 +1,7 @@
-# Library entry only: not yet runnable (playable: false). Authoring it means adding faults,
-# load, slo, probes, hints and a page (see docs/adr/012-scenario-spec-v1.md).
+# Spec v1 (ADR 012). A week ago the worker started giving up on a charge after half a second
+# ("fail fast") and retrying it. This afternoon the payment provider is slow: one charge in ten
+# takes a second. The worker gives up on those and retries, but the first charge still goes
+# through, so the order is charged twice and the provider emails two receipts.
 schema: devgrill/scenario@1
 slug: emails-sent-twice
 title: Emails sent twice
@@ -8,25 +10,186 @@ topic: idempotency
 difficulty: sev3
 est_minutes: 25
 status: published
-summary: Every receipt arrives twice
+summary: Receipts arrive twice, and so do the charges
 tags:
   - queue
   - idempotency
+  - payments
 base_app: shopkart
-playable: false
 briefing:
-  story: Since this afternoon every customer gets two receipt emails. Finance has noticed some refunds
-    were issued twice too.
+  story: Since this afternoon, some customers get two receipt emails for one order. Finance says their
+    cards were charged twice too.
   system:
     - kind: api
-      name: orders-api
-      note: Python, 2 pods
+      name: product-api
+      note: takes orders, queues them
       role: path
     - kind: queue
-      name: rabbitmq
-      note: orders queue
+      name: valkey
+      note: "orders:pending"
       role: path
     - kind: worker
-      name: mailer
-      note: 2 consumers
+      name: orders-worker
+      note: charges orders
       role: path
+    - kind: lb
+      name: payment-gateway
+      note: the provider; charges, sends receipts
+      role: side
+  goals:
+    - title: Charge each order once
+      detail: No order is charged twice, however slow the provider is.
+    - title: Make retries safe
+      detail: When an answer is lost, a retry must not become a second charge.
+
+page:
+  severity: SEV3
+  title: "payments: 1 in 10 orders charged twice since 14:00"
+
+charts: [duplicate_charge_rate, payments_charged, orders_queue_depth, orders_lag_s]
+
+faults:
+  - use: payments/short-timeout
+    at: T-10080m
+
+load:
+  script: shop.js
+  vus: 30
+  params:
+    HOT_KEYS: "1042,1043,2210,77,9001"
+    ORDER_SHARE: "0.01"
+
+deploy_history:
+  - message: "worker: log order ids on retries"
+    minutes_before: 20160
+    service: worker
+  - message: "orders: show delivery estimates on the receipt"
+    minutes_before: 14400
+    service: api
+  - message: "worker: fail fast on slow payment calls (0.5 s timeout)"
+    minutes_before: 10080
+    from_fault: payments/short-timeout
+
+beats:
+  - persona: priya
+    at: T+20s
+    say: "Support has a dozen customers with two receipts and two charges for one order. The provider says those are two separate charge requests from us. Is our worker sending everything twice?"
+  - persona: arjun
+    at: T+3m
+    say: "The provider's been slow since lunch, some calls take a second. Should I just refund the doubles and wait for them to speed up?"
+  - persona: arjun
+    when: "state:mitigated"
+    say: "No new doubles. If the provider has a slow day again, or a connection drops after they charge, are we safe?"
+  - persona: priya
+    when: "state:resolved"
+    say: "Verified: every order is charged once, even when the provider's answer gets lost. Thanks. Finance will want the write-up, and the list of orders to refund."
+
+constraints:
+  no_scale_up: [worker]
+
+# Paged on correctness: the provider's share of charges for an order already charged.
+slo:
+  p99_latency_ms: 500
+  error_rate: 0.01
+  thresholds:
+    duplicate_charge_rate: { lt: 0.01 }
+  for_s: 30
+
+probes:
+  - key: steady-traffic
+    kind: load
+    title: Steady traffic
+    how: Replays afternoon traffic for 45 seconds; p99 under 500 ms and under 1% errors.
+    target:
+      p99_ms: { lt: 500 }
+      error_rate: { lt: 0.01 }
+  - key: no-double-charges
+    kind: invariant
+    title: One charge per order
+    how: With one charge in ten taking a second, places 40 orders; all are paid, none charged twice.
+    script: double.py
+    target:
+      duplicates: { lt: 1 }
+      unpaid: { lt: 1 }
+  - key: lost-answers
+    kind: invariant
+    title: Answers get lost
+    how: The provider charges but loses half its answers; 10 orders are paid, none charged twice.
+    script: lost.py
+    target:
+      duplicates: { lt: 1 }
+      unpaid: { lt: 1 }
+  - key: correctness
+    kind: hidden_test
+    title: Still correct
+    how: Real product data, 404s for unknown products, search, orders and price changes all work.
+    script: base/correctness.py
+  - key: budget
+    kind: budget
+    title: Within budget
+    how: No bigger worker.
+    weight: 0.5
+
+hints:
+  tier1: "The provider says each double was two separate requests. Follow one doubled order through the worker's logs: what happened between the two charges?"
+  tier2: "The first attempt timed out and the order was retried. Did the first charge fail, or did the worker just stop waiting for it? Look at the worker's timeout and when it last changed."
+  tier3: "A week ago PAYMENT_TIMEOUT_S went to 0.5 s; the provider now takes a second on some charges, which still go through after the worker gives up, so the retry charges again. Send Idempotency-Key: order-<id> with each charge (the provider dedupes by key) and deploy the worker."
+
+rubric:
+  - key: impact
+    max: 2
+    description: States what customers saw and since when.
+    anchors:
+      "0": "No impact stated."
+      "1": "Some customers got two emails, without the double charges or when."
+      "2": "Since the provider slowed down this afternoon, about one order in ten was charged twice and got two receipts; the money was really taken twice."
+  - key: root-cause
+    max: 4
+    description: Explains why orders were charged twice.
+    anchors:
+      "0": "Blames the provider or the email system."
+      "2": "Says the worker retried, without why a retry became a second charge."
+      "4": "A worker deploy cut the payment timeout to 0.5 s. Slow charges went through at the provider after the worker had stopped waiting; the worker treated the timeout as a failure and retried, and with no idempotency key the provider took the retry as a new charge, with its own receipt."
+  - key: rejected-fixes
+    max: 2
+    description: Explains why a longer timeout or checking first isn't enough.
+    anchors:
+      "0": "Recommends a longer timeout or a rollback as the whole fix."
+      "1": "Rejects one without saying why."
+      "2": "A longer timeout still retries an answer that was lost on the way back; checking for a charge first misses the one still in flight; only an idempotency key makes a retry safe."
+  - key: prevention
+    max: 2
+    description: Proposes guards against duplicate side effects.
+    anchors:
+      "0": "No action items."
+      "1": "One vague action."
+      "2": "Idempotency keys on every call with a side effect; a test that loses the provider's answer; alert on repeat charges per order; refund the doubles from the provider's charge list."
+
+ttl_minutes: 35
+par_minutes: 10
+
+replay:
+  - when: deploy.viewed
+    match: "worker"
+    mark: clue
+    note: The worker's "fail fast" deploy is where the half-second timeout came from.
+  - when: worker.rolledback
+    mark: clue
+    note: Rolling back restores the long timeout; retries still aren't safe.
+  - when: worker.restarted
+    mark: lost
+    note: A restart changes nothing; the next slow charge is retried again.
+
+ai:
+  spoilers:
+    - "idempoten"
+    - "Idempotency-Key"
+    - "PAYMENT_TIMEOUT"
+    - "time[sd]? ?out"
+    - "retr(y|ied) (charge|creat)"
+  root_cause: >-
+    A worker deploy cut PAYMENT_TIMEOUT_S to 0.5 s. This afternoon one provider charge in ten
+    takes a second: the worker stops waiting, treats it as a failure and retries, but the first
+    charge still goes through. With no idempotency key the provider takes the retry as a new
+    charge and emails a second receipt. An idempotency key per order makes retries return the
+    charge already made; a longer timeout only narrows the window.

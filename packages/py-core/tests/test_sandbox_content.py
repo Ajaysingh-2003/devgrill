@@ -104,6 +104,8 @@ def test_quantile_needs_q() -> None:
         "flag-on-for-everyone",
         "redis-restart-herd",
         "evicted-at-the-worst-time",
+        "retry-storm",
+        "emails-sent-twice",
     ],
 )
 def test_playable_scenarios_load_with_their_faults(slug: str) -> None:

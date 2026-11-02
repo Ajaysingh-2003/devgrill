@@ -1,0 +1,17 @@
+schema: devgrill/approach@1
+key: one-consumer
+name: Go back to one consumer
+outcome: fails
+idea: >-
+  CONSUMERS=1, keeping the immediate retries. One consumer that retries the instant it is
+  refused still calls the provider hundreds of times a second, and every refused call keeps the
+  limit full.
+steps:
+  - patch: one-consumer.diff
+    service: worker
+    message: "config: one consumer"
+pros:
+  - Easy to try
+cons:
+  - "Retries without a pause flood the limit from a single thread too"
+fails_probes: [outage-recovery]

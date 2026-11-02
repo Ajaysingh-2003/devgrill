@@ -1,0 +1,20 @@
+schema: devgrill/fault@1
+name: payments/short-timeout
+kind: config
+summary: A worker config change gives up on a charge after half a second and retries it; when the provider is slow, the first charge still goes through, so the retry charges the order again.
+base_apps: [shopkart]
+params: {}
+# The config deploy (a week ago), then the provider's slow afternoon that sets it off.
+apply:
+  env:
+    PAYMENT_TIMEOUT_S: "0.5"
+  service: worker
+also:
+  script: slow.py
+  service: payment-gateway
+deploy_message: "worker: fail fast on slow payment calls (0.5 s timeout)"
+symptom:
+  metric: duplicate_charge_rate
+  op: gt
+  value: 0.02
+  within_s: 120

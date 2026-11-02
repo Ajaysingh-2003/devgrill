@@ -1,0 +1,21 @@
+schema: devgrill/fault@1
+name: payments/no-backoff
+kind: config
+summary: A worker config change runs eight consumers that retry provider errors at once; a short provider outage turns into retries that keep its rate limit full, so no charge gets through again.
+base_apps: [shopkart]
+params: {}
+# The config deploy, then the outage that sets it off.
+apply:
+  env:
+    CONSUMERS: "8"
+    RETRY_BACKOFF_S: "0"
+  service: worker
+also:
+  script: outage.py
+  service: payment-gateway
+deploy_message: "worker: 8 consumers, retry payment errors at once"
+symptom:
+  metric: orders_queue_depth
+  op: gt
+  value: 50
+  within_s: 90

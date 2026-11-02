@@ -1,0 +1,18 @@
+schema: devgrill/approach@1
+key: idempotency-key
+name: An idempotency key per order
+outcome: full
+idea: >-
+  Send Idempotency-Key: order-<id> with every charge. The provider makes one charge per key: a
+  retry gets the charge it already made (or "still in progress", and the worker tries again
+  shortly), never a second one.
+steps:
+  - patch: idempotency-key.diff
+    service: worker
+    message: "worker: an idempotency key per order on every charge"
+pros:
+  - Retries become safe, whatever the timeout and whatever goes wrong on the way back
+cons:
+  - Charges that time out still slow the worker down; a longer timeout helps there too
+match:
+  diff: "Idempotency-Key"

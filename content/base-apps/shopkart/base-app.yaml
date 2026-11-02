@@ -64,6 +64,17 @@ services:
     cpus: 0.5
     memory_mb: 128
 
+  # The payment provider: someone else's service (the player can call it, not change it).
+  # Port 8081 is the sandbox's control panel for faults and probes.
+  payment-gateway:
+    build: payments
+    healthcheck:
+      ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz')"]
+    logs: false
+    metrics_port: 8080
+    cpus: 0.5
+    memory_mb: 128
+
   api:
     build: api
     # DATABASE_URL and the tunables live in config/app.env (config-as-code, deployed).
@@ -87,13 +98,14 @@ services:
     env:
       DATABASE_URL: postgresql://shopkart:shopkart@postgres:5432/shopkart
       REDIS_URL: redis://redis:6379/0
+      PAYMENTS_URL: http://payment-gateway:8080
     # The player edits this source in tools:/workspace/worker and deploys it, like the API.
     source:
       dest: /srv/worker
       paths: [worker.py, config]
       config_file: config/worker.env
     metrics_port: 9100
-    depends_on: [toxiproxy]
+    depends_on: [toxiproxy, payment-gateway]
     cpus: 0.5
     memory_mb: 256
 
@@ -217,6 +229,23 @@ metrics:
     type: rate
     job: redis-exporter
     metric: redis_evicted_keys_total
+  # Share of the provider's charges made for an order that had already been charged.
+  duplicate_charge_rate:
+    type: ratio
+    job: payment-gateway
+    metric: payments_charges_total
+    labels: { repeat: "true" }
+  # Charges the provider made, and calls it refused for the rate limit, per second.
+  payments_charged:
+    type: rate
+    job: payment-gateway
+    metric: payments_requests_total
+    labels: { result: charged }
+  payments_limited:
+    type: rate
+    job: payment-gateway
+    metric: payments_requests_total
+    labels: { result: limited }
   cache_memory_bytes:
     type: gauge
     job: redis-exporter

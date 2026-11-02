@@ -1,0 +1,10 @@
+--- config/worker.env
++++ config/worker.env
+@@ -8,6 +8,6 @@
+ # Seconds a failed order waits before it is tried again (it keeps its place at the head).
+ RETRY_BACKOFF_S=0.2
+ # Seconds to wait for the payment provider to answer a charge.
+-PAYMENT_TIMEOUT_S=0.5
++PAYMENT_TIMEOUT_S=30
+ # Orders charged at once. One consumer charges them strictly in the order they were placed.
+ CONSUMERS=1

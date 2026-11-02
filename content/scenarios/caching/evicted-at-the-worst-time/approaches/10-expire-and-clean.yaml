@@ -9,7 +9,7 @@ steps:
   - patch: expire-searches.diff
     service: api
     message: "search: cached results expire after five minutes"
-  - run: redis-cli -h redis-db --scan --pattern 'search:*' | xargs -r -n 1000 redis-cli -h redis-db unlink > /dev/null
+  - run: redis-cli -h redis-db --scan --pattern 'search:*' | tr '\n' '\0' | xargs -0 -r -n 1000 redis-cli -h redis-db unlink > /dev/null
     service: tools
 pros:
   - Sessions are safe again and the search cache keeps working

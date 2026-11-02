@@ -464,6 +464,8 @@ async def test_daily_rotation_only_has_playable_scenarios(seeded: AsyncSession) 
         "flag-on-for-everyone",
         "redis-restart-herd",
         "evicted-at-the-worst-time",
+        "retry-storm",
+        "emails-sent-twice",
     }
 
 

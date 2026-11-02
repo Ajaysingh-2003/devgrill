@@ -1,0 +1,17 @@
+schema: devgrill/approach@1
+key: check-first
+name: Ask the provider before charging
+outcome: fails
+idea: >-
+  Before each charge, list the order's charges at the provider and skip if there is one. But a
+  slow first charge is still in flight when the retry asks: the list is empty, and the retry
+  charges again.
+steps:
+  - patch: check-first.diff
+    service: worker
+    message: "worker: skip orders the provider has already charged"
+pros:
+  - Catches retries of charges that finished
+cons:
+  - "Check-then-act: it misses the charge still in flight, today's exact case"
+fails_probes: [no-double-charges]

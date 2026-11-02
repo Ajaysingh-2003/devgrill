@@ -1,0 +1,12 @@
+--- worker.py
++++ worker.py
+@@ -100,6 +100,9 @@
+     row = conn.execute("SELECT total_cents FROM orders WHERE id = %s", (order["id"],)).fetchone()
+     amount = row[0] if row else 0
+     try:
++        if payments.get("/charges", params={"order_id": order["id"]}).json():
++            return  # charged already
++
+         res = payments.post("/charges", json={"order_id": order["id"], "amount_cents": amount})
+     except httpx.HTTPError as exc:
+         raise ProviderUnavailable(type(exc).__name__) from exc

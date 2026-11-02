@@ -7,7 +7,7 @@ idea: >-
   still writes search results that never expire: the pile grows back, and the next full cache
   signs everyone out again.
 steps:
-  - run: redis-cli -h redis-db --scan --pattern 'search:*' | xargs -r -n 1000 redis-cli -h redis-db unlink > /dev/null
+  - run: redis-cli -h redis-db --scan --pattern 'search:*' | tr '\n' '\0' | xargs -0 -r -n 1000 redis-cli -h redis-db unlink > /dev/null
     service: tools
 pros:
   - The fastest mitigation, no deploy

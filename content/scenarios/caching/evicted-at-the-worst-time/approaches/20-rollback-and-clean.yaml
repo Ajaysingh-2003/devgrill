@@ -8,7 +8,7 @@ idea: >-
 steps:
   - rollback_to: "checkout: show saved addresses"
     service: api
-  - run: redis-cli -h redis-db --scan --pattern 'search:*' | xargs -r -n 1000 redis-cli -h redis-db unlink > /dev/null
+  - run: redis-cli -h redis-db --scan --pattern 'search:*' | tr '\n' '\0' | xargs -0 -r -n 1000 redis-cli -h redis-db unlink > /dev/null
     service: tools
 pros:
   - Back to known-good behaviour in two steps

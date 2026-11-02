@@ -1,0 +1,44 @@
+--- worker.py
++++ worker.py
+@@ -13,6 +13,7 @@
+ import json
+ import logging
+ import os
++import random
+ import signal
+ import sys
+ import threading
+@@ -81,6 +82,16 @@
+ log = logging.getLogger("worker")
+ 
+ running = True
++#: Each consumer's run of provider failures in a row, for its backoff.
++_failures = threading.local()
++
++
++def provider_backoff() -> float:
++    """Exponential and capped, with jitter: after a blip, eight consumers don't come back at
++    the same moment, and a provider that is refusing calls gets fewer of them, not more."""
++    failures = getattr(_failures, "count", 0) + 1
++    _failures.count = failures
++    return random.uniform(0.5, 1.0) * min(10.0, 0.25 * 2**failures)
+ 
+ 
+ def stop(*_: Any) -> None:
+@@ -122,6 +133,7 @@
+                 (order["id"],),
+             )
+         PROCESSED.labels("paid").inc()
++        _failures.count = 0
+         log.info("order paid", extra={"x_order_id": order["id"], "x_attempt": attempt})
+     except ProviderUnavailable as exc:
+         # Back at the head, attempt unchanged: the provider failed, not the order.
+@@ -131,7 +143,7 @@
+             "payment provider unavailable, retrying",
+             extra={"x_order_id": order["id"], "x_error": str(exc)},
+         )
+-        time.sleep(RETRY_BACKOFF_S)
++        time.sleep(provider_backoff())
+     except Exception as exc:
+         order["attempt"] = attempt
+         if MAX_ATTEMPTS and attempt >= MAX_ATTEMPTS:

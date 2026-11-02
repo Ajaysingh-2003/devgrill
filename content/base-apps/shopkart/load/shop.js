@@ -6,7 +6,8 @@
 // the "customers also bought" box, as the storefront does), DEALS_RATE (share of iterations
 // that open the sale landing page first; default 0), SEARCH_RANDOM (1: shoppers type their own
 // searches, "trail kettle 17", instead of SEARCH_TERMS: almost every query is new), SESSIONS (1:
-// shoppers sign in, and every page asks who is signed in, as the storefront header does), RATE (iterations per second: an
+// shoppers sign in, and every page asks who is signed in, as the storefront header does),
+// ORDER_SHARE (share of iterations that place an order; default 0.05), RATE (iterations per second: an
 // open model, where a slow system queues shoppers instead of slowing them down; default off,
 // VUS shoppers in a loop), P99_MS and ERROR_RATE (thresholds).
 import http from "k6/http";
@@ -21,6 +22,7 @@ const alsoBought = __ENV.ALSO_BOUGHT === "1";
 const dealsRate = Number(__ENV.DEALS_RATE || 0);
 const searchRandom = __ENV.SEARCH_RANDOM === "1";
 const sessions = __ENV.SESSIONS === "1";
+const orderShare = Number(__ENV.ORDER_SHARE || 0.05);
 const rate = Number(__ENV.RATE || 0);
 const vus = Number(__ENV.VUS || 20);
 const duration = __ENV.DURATION || "3m";
@@ -124,7 +126,7 @@ export default function () {
   }
   if (sessions) signedInVisit();
   const roll = Math.random();
-  if (roll < 0.85) {
+  if (roll < 0.9 - orderShare) {
     const id = pick();
     const res = http.get(`${target}/products/${id}`, { tags: { name: "product" } });
     productLatency.add(res.timings.duration);
@@ -137,7 +139,7 @@ export default function () {
       });
       check(box, { "also bought 200": (r) => r.status === 200 });
     }
-  } else if (roll < 0.95) {
+  } else if (roll < 1 - orderShare) {
     const term = searchRandom
       ? `${any(ADJECTIVES)} ${any(NOUNS)} ${1 + Math.floor(Math.random() * 230)}`
       : searchTerms[Math.floor(Math.random() * searchTerms.length)];
