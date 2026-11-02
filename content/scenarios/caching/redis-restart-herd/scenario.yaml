@@ -1,5 +1,7 @@
-# Library entry only: not yet runnable (playable: false). Authoring it means adding faults,
-# load, slo, probes, hints and a page (see docs/adr/012-scenario-spec-v1.md).
+# Spec v1 (ADR 012). Platform restarts Valkey (no persistence) mid-afternoon. The sale landing
+# page (/deals) is cached and refreshed ahead by one request at a time, but with no copy at all
+# every request builds it. Dozens of builds share one database CPU, each takes longer than the
+# 500 ms build limit, all are cancelled, and the copy is never written: a herd that never ends.
 schema: devgrill/scenario@1
 slug: redis-restart-herd
 title: Redis restart herd
@@ -12,8 +14,8 @@ summary: A routine cache restart takes the site down
 tags:
   - redis
   - postgres
+  - stampede
 base_app: shopkart
-playable: false
 briefing:
   story: Platform restarted the Redis cluster for a minor version bump. It was supposed to take thirty
     seconds. The site has been down for six minutes.
@@ -24,13 +26,173 @@ briefing:
       role: path
     - kind: api
       name: product-api
-      note: Python, 4 pods
+      note: Python, 4 workers
       role: path
     - kind: cache
-      name: redis
-      note: just restarted
+      name: valkey
+      note: just restarted, empty
       role: path
     - kind: db
       name: postgres
-      note: products
+      note: products, reviews
       role: path
+  goals:
+    - title: Bring the landing page back
+      detail: The deals page loads again and errors drop under 1%.
+    - title: Survive the next restart
+      detail: An empty cache must cost one rebuild, not one per shopper.
+
+page:
+  severity: SEV2
+  title: "product-api: error rate over 10% since the cache restart"
+
+charts: [error_rate, deals_builds, db_connections, cache_hit_rate]
+
+faults:
+  - use: cache/restart
+    at: T-1m
+
+load:
+  script: shop.js
+  vus: 40
+  params:
+    HOT_KEYS: "1042,1043,2210,77,9001"
+    # Three in ten shoppers land on the sale page first.
+    DEALS_RATE: "0.3"
+
+deploy_history:
+  - message: "landing: sale deals page, refreshed ahead of expiry"
+    minutes_before: 20160
+    service: api
+  - message: "catalogue: add trail-running category"
+    minutes_before: 2880
+    service: api
+  - message: "product page: show stock badge"
+    minutes_before: 600
+    service: api
+
+beats:
+  - persona: priya
+    at: T+20s
+    say: "Platform bumped Redis at two. Their dashboard says it was back in thirty seconds, but the sale page has been throwing errors ever since. Did they break something?"
+  - persona: arjun
+    at: T+3m
+    say: "Redis is up and nearly empty, memory's tiny. Postgres is pinned at 100% CPU though. Want me to restart the API? Or I can restart Redis again, maybe it didn't come up right."
+  - persona: arjun
+    when: "state:mitigated"
+    say: "Errors are gone. Platform has another Redis bump scheduled for Thursday. Do we go down again?"
+  - persona: priya
+    when: "state:resolved"
+    say: "Verified: a restart of Redis mid-traffic now costs one rebuild and the sale page stays up. Thanks. Can you write up why thirty seconds turned into an outage?"
+
+constraints:
+  no_scale_up: [postgres-db]
+  cache_max_memory_mb: 256
+
+slo:
+  p99_latency_ms: 500
+  error_rate: 0.01
+  for_s: 30
+
+probes:
+  - key: steady-traffic
+    kind: load
+    title: Steady traffic
+    how: Replays afternoon traffic, sale page included, for 45 seconds; p99 under 500 ms and under 1% errors.
+    target:
+      p99_ms: { lt: 500 }
+      error_rate: { lt: 0.01 }
+  - key: restart-mid-traffic
+    kind: chaos
+    title: Redis restarts again
+    how: Restarts Valkey during traffic; the SLO recovers within 20 seconds.
+    steps:
+      - restart: redis-db
+    target:
+      recovery_s: { lt: 20 }
+  - key: herd-guard
+    kind: invariant
+    title: One rebuild, not thirty
+    how: Empties the cache and sends 30 shoppers to the sale page at once; all get the real deals from one build.
+    script: herd.py
+    target:
+      builds: { lt: 2.5 }
+      failed: { lt: 1 }
+      wrong: { lt: 1 }
+  - key: correctness
+    kind: hidden_test
+    title: Still correct
+    how: Real product data, 404s for unknown products, search, orders and price changes all work.
+    script: base/correctness.py
+  - key: budget
+    kind: budget
+    title: Within budget
+    how: No bigger database, no bigger cache.
+    weight: 0.5
+
+hints:
+  tier1: "Redis came back in seconds, so why is the site still down? Find which requests fail, and what the database is busy with."
+  tier2: "Every failing request is the sale page, cancelled after 500 ms. Count how many builds of the deals page run at once, and ask what happens when the cache has no copy at all."
+  tier3: "With no cached copy, every request builds the deals page itself. Forty builds share one database CPU, each takes longer than DEALS_TIMEOUT_MS, all are cancelled, and the copy is never written. On a miss, build only under cache.claim_deals_refresh() and let everyone else poll for that copy."
+
+rubric:
+  - key: impact
+    max: 2
+    description: States what customers saw and since when.
+    anchors:
+      "0": "No impact stated."
+      "1": "The site had errors, without which pages or since when."
+      "2": "From the Redis restart on, most sale-page loads failed after half a second and the rest of the site slowed down; it did not recover on its own."
+  - key: root-cause
+    max: 4
+    description: Explains why a thirty-second restart became an outage.
+    anchors:
+      "0": "Blames Platform, Redis or Postgres capacity."
+      "2": "Says the empty cache overloaded the database, without why it never recovered."
+      "4": "The restart emptied the cache. With no copy, every request built the deals page itself; forty builds shared one database CPU, so each took longer than the 500 ms build limit and was cancelled, and the copy was never written. The overload kept itself going: a stampede that never ends."
+  - key: rejected-fixes
+    max: 2
+    description: Explains why restarting things or a bigger database wasn't the fix.
+    anchors:
+      "0": "Recommends restarting the API or Redis, or a bigger database."
+      "1": "Rejects one without saying why."
+      "2": "Restarting the API or Redis just starts the herd again; removing the time limit lets one build finish but every cold start still costs a build per shopper; one build at a time fixes the cause."
+  - key: prevention
+    max: 2
+    description: Proposes guards for the next empty cache.
+    anchors:
+      "0": "No action items."
+      "1": "One vague action."
+      "2": "Single-flight builds on a miss (or a background job that writes the copy); a restart of Redis under load in a game day; warn on cancelled builds; persist or replicate the cache when a cold start is this costly."
+
+ttl_minutes: 35
+par_minutes: 10
+
+replay:
+  - when: redis-db.restarted
+    mark: lost
+    note: Restarting Redis empties it again and restarts the herd.
+  - when: api.restarted
+    mark: lost
+    note: The API comes back to the same empty cache, and every request builds the page again.
+  - when: deploy.viewed
+    match: "api"
+    mark: clue
+    note: The deals page and its refresh-ahead cache came in two weeks ago.
+
+ai:
+  spoilers:
+    - "single[- ]?flight"
+    - "stampede"
+    - "thundering"
+    - "claim_deals_refresh"
+    - "\\bherd\\b"
+    - "every request (builds|rebuilds)"
+    - "DEALS_TIMEOUT"
+  root_cause: >-
+    Platform restarted Valkey, which keeps nothing on disk, so the cache came back empty. With no
+    cached copy of the sale page (/deals), every request built it: about forty builds, each
+    reading the whole reviews table, shared one database CPU, each ran past DEALS_TIMEOUT_MS
+    (500 ms) and was cancelled, so the copy was never written and the overload fed itself.
+    Building on a miss only under the refresh claim, with everyone else waiting for that copy,
+    fixes it; lifting the time limit lets a build finish but keeps the herd.

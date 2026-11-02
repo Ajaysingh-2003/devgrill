@@ -1,0 +1,11 @@
+schema: devgrill/approach@1
+key: cheat-empty-on-miss
+name: Show an empty deals page on a miss
+outcome: fails
+cheat: true
+idea: Return an empty page when nothing is cached, so no request ever builds it and nothing fails.
+steps:
+  - patch: empty-on-miss.diff
+    service: api
+    message: "deals: skip the build when the cache is empty"
+fails_probes: [herd-guard]

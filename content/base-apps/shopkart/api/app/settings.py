@@ -49,6 +49,13 @@ CACHE_TTL_SECONDS = _int("CACHE_TTL_SECONDS", 300)
 #: Namespace prefix for cache keys, bumped when the cached shape changes.
 CACHE_KEY_PREFIX = os.environ.get("CACHE_KEY_PREFIX", "")
 
+#: The sale landing page (/deals): rebuilt by one request once its copy is this old (seconds),
+#: kept in the cache this long at most, and given this long to build (milliseconds; 0 = no
+#: limit) before Postgres cancels it.
+DEALS_REFRESH_S = _int("DEALS_REFRESH_S", 60)
+DEALS_TTL_S = _int("DEALS_TTL_S", 600)
+DEALS_TIMEOUT_MS = _int("DEALS_TIMEOUT_MS", 500)
+
 #: Feature flag: the share of users (0-100, bucketed by user id) who see "customers also bought".
 ALSO_BOUGHT_PERCENT = _int("ALSO_BOUGHT_PERCENT", 0)
 

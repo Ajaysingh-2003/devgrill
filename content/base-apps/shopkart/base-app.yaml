@@ -175,6 +175,12 @@ metrics:
     job: api
     metric: checkout_price_checks_total
     labels: { result: mismatch }
+  # Builds of the sale landing page (/deals) per second, finished or cancelled: ~0 while
+  # its cached copy serves everyone.
+  deals_builds:
+    type: rate
+    job: api
+    metric: deals_builds_total
   db_qps_product:
     type: rate
     job: api

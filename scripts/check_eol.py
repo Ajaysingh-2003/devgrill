@@ -28,11 +28,18 @@ def repo_files() -> list[Path]:
 
 
 def main() -> int:
+    fix = "--fix" in sys.argv[1:]
     offenders = []
     for path in repo_files():
         if path.suffix.lower() in CRLF_ALLOWED | BINARY_EXT or not path.is_file():
             continue
-        if b"\r\n" in path.read_bytes():
+        data = path.read_bytes()
+        if b"\r\n" not in data or b"\0" in data:
+            continue
+        if fix:
+            path.write_bytes(data.replace(b"\r\n", b"\n"))
+            print(f"fixed {path.as_posix()}")
+        else:
             offenders.append(path.as_posix())
     if offenders:
         print("CRLF line endings found (run `just eol-fix`):")

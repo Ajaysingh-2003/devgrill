@@ -48,10 +48,11 @@ Every file names its format: `schema: devgrill/<kind>@1`.
      - `env`: overrides;
      - `toxic`: a Toxiproxy toxic;
      - `script`: `.sql` via psql, `.py` or `.sh`; it may be `detach`ed for faults that must
-       keep running, such as a transaction holding a lock.
+       keep running, such as a transaction holding a lock;
+     - `restart`: restart the step's service (a routine cache restart that empties it).
    - An optional second step, `also`.
    - An optional `revert`. Patch, env and toxic revert automatically; scripts need an
-     explicit revert.
+     explicit revert, and a restart has nothing to revert.
    - **Typed params** with defaults, substituted as `{{name}}`. Unknown params and unknown
      placeholders are errors.
    - **The symptom contract**: `metric op value within_s`.

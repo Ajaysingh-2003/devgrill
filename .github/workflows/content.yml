@@ -27,6 +27,11 @@ on:
   schedule:
     - cron: "30 20 * * *" # 02:00 IST
   workflow_dispatch:
+    inputs:
+      scenario:
+        description: "Test only these scenarios (comma-separated slugs); empty tests every playable one"
+        required: false
+        default: ""
 
 concurrency:
   group: content-${{ github.ref }}
@@ -49,7 +54,14 @@ jobs:
           version: "0.13.0"
       - run: uv sync --all-packages --locked
       - id: list
-        run: echo "scenarios=$(uv run python -m devgrill_content.cli list --playable --json)" >> "$GITHUB_OUTPUT"
+        env:
+          ONLY: ${{ inputs.scenario }}
+        run: |
+          if [ -n "$ONLY" ]; then
+            echo "scenarios=$(jq -cn --arg s "$ONLY" '$s | split(",") | map(select(length > 0))')" >> "$GITHUB_OUTPUT"
+          else
+            echo "scenarios=$(uv run python -m devgrill_content.cli list --playable --json)" >> "$GITHUB_OUTPUT"
+          fi
 
   break-fix:
     # Phase 5 gate (ADR 015): the reference fix passes verify, every known approach gives its
@@ -89,6 +101,8 @@ jobs:
     # gateway, Temporal, Docker sandboxes): start, terminal, logs and metrics, roll back,
     # mitigated (detected), edit and deploy, the in-sandbox CLI, verify, debrief, postmortem.
     name: workspace · real sandbox, browser end to end
+    # A run for one scenario (workflow_dispatch) tests that scenario only.
+    if: ${{ !inputs.scenario }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:

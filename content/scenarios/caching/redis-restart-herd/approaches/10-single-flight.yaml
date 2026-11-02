@@ -1,0 +1,19 @@
+schema: devgrill/approach@1
+key: single-flight
+name: One build at a time
+outcome: full
+idea: >-
+  On a miss, take the same claim the refresh uses (SET NX with an expiry). The request that gets
+  it builds the page; everyone else polls the cache for a few seconds and gets that copy. One
+  build alone takes tens of milliseconds, so the page is back almost at once.
+steps:
+  - patch: single-flight.diff
+    service: api
+    message: "deals: one build on a cache miss, everyone else waits for it"
+pros:
+  - A cold cache costs one build, however many shoppers arrive
+  - Survives the next restart or flush without anyone noticing
+cons:
+  - Waiters hold a request slot while they poll; a build that never finishes needs the claim to expire
+match:
+  diff: 'claim_deals_refresh\(\)|\bnx=True'

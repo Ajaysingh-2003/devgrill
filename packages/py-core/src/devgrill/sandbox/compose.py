@@ -552,6 +552,8 @@ class ComposeDriver:
             return
         step = render_apply(fault.spec.apply, values)
         app = bundle.base_app
+        if step.restart:
+            return  # a restart can't be undone, and leaves nothing behind to remove
         if step.toxic:
             await self.toxic_delete(
                 handle, bundle, str(step.toxic["proxy"]), f"dg-{fault.ref.replace('/', '-')}"
@@ -629,6 +631,9 @@ class ComposeDriver:
                 await self._recreate(handle, bundle, step.service, dict(step.env))
         elif step.script:
             await self._script(handle, bundle, fault, step)
+        elif step.restart:
+            await self.restart(handle, step.service)
+            await self._wait_service(handle, step.service)
 
     async def _set_config(
         self, handle: SandboxHandle, bundle: Bundle, service: str, values: dict[str, str]

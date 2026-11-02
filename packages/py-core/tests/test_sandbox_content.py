@@ -102,6 +102,7 @@ def test_quantile_needs_q() -> None:
         "search-pins-the-cpu",
         "stale-prices",
         "flag-on-for-everyone",
+        "redis-restart-herd",
     ],
 )
 def test_playable_scenarios_load_with_their_faults(slug: str) -> None:
@@ -161,6 +162,14 @@ def test_only_scripts_detach() -> None:
         FaultApply(env={"A": "1"}, service="api", detach=True)
     with pytest.raises(ValidationError):
         FaultApply(script="run.rb", service="api")
+
+
+def test_restart_faults_name_a_service_and_nothing_else() -> None:
+    assert FaultApply(restart=True, service="redis-db").restart
+    with pytest.raises(ValidationError):
+        FaultApply(restart=True)
+    with pytest.raises(ValidationError):
+        FaultApply(restart=True, env={"A": "1"}, service="api")
 
 
 def test_slo_targets_merge_thresholds() -> None:

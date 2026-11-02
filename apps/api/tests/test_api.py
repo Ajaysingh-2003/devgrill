@@ -462,6 +462,7 @@ async def test_daily_rotation_only_has_playable_scenarios(seeded: AsyncSession) 
         "search-pins-the-cpu",
         "stale-prices",
         "flag-on-for-everyone",
+        "redis-restart-herd",
     }
 
 

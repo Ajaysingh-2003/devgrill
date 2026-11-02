@@ -1,0 +1,52 @@
+--- app/main.py
++++ app/main.py
+@@ -230,7 +230,7 @@
+     (a first deploy), the page is built on the spot."""
+     page = cache.get_deals()
+     if page is None:
+-        return _build_deals()
++        return _build_once()
+     stale = time.time() - float(page.get("built_at", 0)) > settings.DEALS_REFRESH_S
+     if stale and cache.claim_deals_refresh():
+         try:
+@@ -238,6 +238,24 @@
+         except pg_errors.QueryCanceled:
+             return page  # the copy is still good: try again on a later request
+     return page
++
++
++def _build_once() -> dict[str, Any]:
++    """No copy at all (a first deploy, or an emptied cache): one request builds the page and
++    everyone else waits for its copy. A build per shopper would all run at once, and on a busy
++    database none of them would finish within DEALS_TIMEOUT_MS."""
++    if cache.claim_deals_refresh():
++        try:
++            return _build_deals()
++        finally:
++            cache.release_deals_refresh()
++    deadline = time.monotonic() + 3.0
++    while time.monotonic() < deadline:
++        time.sleep(0.05)
++        page = cache.get_deals()
++        if page is not None:
++            return page
++    raise HTTPException(503, "the deals page is being rebuilt, try again")
+ 
+ 
+ def _build_deals() -> dict[str, Any]:
+--- app/cache.py
++++ app/cache.py
+@@ -58,6 +58,13 @@
+         log.warning("cache invalidate failed", extra=fields(error=type(exc).__name__))
+ 
+ 
++def release_deals_refresh() -> None:
++    try:
++        client.delete(DEALS_REFRESH_LOCK)
++    except redis.RedisError as exc:
++        log.warning("cache unavailable", extra=fields(error=type(exc).__name__))
++
++
+ def healthy() -> bool:
+     try:
+         return bool(client.ping())

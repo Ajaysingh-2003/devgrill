@@ -3,7 +3,8 @@
 // of the reads, like a sale landing page), SEARCH_TERMS (comma list of search queries, picked
 // at random; repeat one to weight it), PRICE_UPDATE_RATE (share of iterations that also
 // reprice a hot product, like a pricing job; default 0), ALSO_BOUGHT (1: product pages also load
-// the "customers also bought" box, as the storefront does), RATE (iterations per second: an
+// the "customers also bought" box, as the storefront does), DEALS_RATE (share of iterations
+// that open the sale landing page first; default 0), RATE (iterations per second: an
 // open model, where a slow system queues shoppers instead of slowing them down; default off,
 // VUS shoppers in a loop), P99_MS and ERROR_RATE (thresholds).
 import http from "k6/http";
@@ -15,6 +16,7 @@ const hot = (__ENV.HOT_KEYS || "1042,1043,2210,77,9001").split(",").map(Number);
 const searchTerms = (__ENV.SEARCH_TERMS || "Trail").split(",").map((s) => s.trim());
 const priceUpdateRate = Number(__ENV.PRICE_UPDATE_RATE || 0);
 const alsoBought = __ENV.ALSO_BOUGHT === "1";
+const dealsRate = Number(__ENV.DEALS_RATE || 0);
 const rate = Number(__ENV.RATE || 0);
 const vus = Number(__ENV.VUS || 20);
 const duration = __ENV.DURATION || "3m";
@@ -60,6 +62,10 @@ export default function () {
       JSON.stringify({ price_cents: 999 + Math.floor(Math.random() * 9000) }),
       { headers: { "Content-Type": "application/json" }, tags: { name: "price" } },
     );
+  }
+  if (dealsRate > 0 && Math.random() < dealsRate) {
+    const res = http.get(`${target}/deals`, { tags: { name: "deals" } });
+    check(res, { "deals 200": (r) => r.status === 200 });
   }
   const roll = Math.random();
   if (roll < 0.85) {

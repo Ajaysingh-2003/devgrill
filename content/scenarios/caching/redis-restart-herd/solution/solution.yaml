@@ -1,0 +1,10 @@
+schema: devgrill/solution@1
+summary: >-
+  With no cached copy, every request built the deals page itself. After the cache restart,
+  dozens of builds shared one database CPU, none finished within DEALS_TIMEOUT_MS, and the copy
+  was never written. Build on a miss only under the refresh claim, and have everyone else wait
+  for that one copy.
+steps:
+  - patch: single-flight.diff
+    service: api
+    message: "deals: one build on a cache miss, everyone else waits for it"

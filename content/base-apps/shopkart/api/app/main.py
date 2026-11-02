@@ -45,6 +45,8 @@ DB_QUERIES = Counter("db_queries_total", "Database queries", ["query"])
 PRICE_CHECKS = Counter(
     "checkout_price_checks_total", "Charged price versus the product page", ["result"]
 )
+#: Builds of the deals page, by outcome: ok, or timeout (cancelled by DEALS_TIMEOUT_MS).
+DEALS_BUILDS = Counter("deals_builds_total", "Deals page builds", ["result"])
 # Four uvicorn processes share these through PROMETHEUS_MULTIPROC_DIR, so /metrics reports
 # the whole service whichever process answers the scrape.
 DB_POOL_IN_USE = Gauge(
@@ -218,6 +220,37 @@ def set_price(product_id: int, body: PriceUpdate) -> dict[str, Any]:
         raise HTTPException(404, "no such product")
     cache.invalidate(product_id)
     return {"id": product_id, "price_cents": body.price_cents}
+
+
+@app.get("/deals")
+def deals() -> dict[str, Any]:
+    """The sale landing page. Building it reads every review, so the cache holds a copy and
+    keeps it fresh ahead of time: once the copy is DEALS_REFRESH_S old, the one request that
+    claims the refresh rebuilds it while everyone else is served the copy. With no copy at all
+    (a first deploy), the page is built on the spot."""
+    page = cache.get_deals()
+    if page is None:
+        return _build_deals()
+    stale = time.time() - float(page.get("built_at", 0)) > settings.DEALS_REFRESH_S
+    if stale and cache.claim_deals_refresh():
+        try:
+            return _build_deals()
+        except pg_errors.QueryCanceled:
+            return page  # the copy is still good: try again on a later request
+    return page
+
+
+def _build_deals() -> dict[str, Any]:
+    DB_QUERIES.labels("deals").inc()
+    try:
+        items = db.deals()
+    except pg_errors.QueryCanceled:
+        DEALS_BUILDS.labels("timeout").inc()
+        raise
+    DEALS_BUILDS.labels("ok").inc()
+    page = {"built_at": time.time(), "items": items}
+    cache.set_deals(page)
+    return page
 
 
 class OrderIn(BaseModel):

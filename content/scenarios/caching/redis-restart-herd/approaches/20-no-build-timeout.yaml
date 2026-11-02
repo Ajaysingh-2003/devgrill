@@ -1,0 +1,19 @@
+schema: devgrill/approach@1
+key: no-build-timeout
+name: Let the build run as long as it needs
+outcome: partial
+idea: >-
+  Set DEALS_TIMEOUT_MS=0. The herd still starts, but the builds are no longer cancelled: after a
+  few slow seconds one finishes, writes the copy, and the page recovers.
+steps:
+  - patch: no-build-timeout.diff
+    service: api
+    message: "config: no time limit on the deals build"
+pros:
+  - A one-line config change, and the page comes back
+cons:
+  - "Every empty cache still costs one build per waiting shopper, and the slowest seconds of the day"
+  - "With more traffic than today, the builds pile up faster than they finish"
+fails_probes: [herd-guard]
+match:
+  diff: '\+DEALS_TIMEOUT_MS=(0|\d{4,})'
