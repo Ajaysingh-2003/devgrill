@@ -1,8 +1,0 @@
---- config/worker.env
-+++ config/worker.env
-@@ -10,4 +10,4 @@
- # Seconds to wait for the payment provider to answer a charge.
- PAYMENT_TIMEOUT_S=10
- # Orders charged at once. One consumer charges them strictly in the order they were placed.
--CONSUMERS=8
-+CONSUMERS=1

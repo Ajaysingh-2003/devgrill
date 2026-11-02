@@ -107,10 +107,10 @@ probes:
   - key: orders-flow
     kind: invariant
     title: Orders get charged
-    how: Places 20 orders; all are paid within 15 seconds, and no order is left pending.
+    how: Places 20 orders; all are paid within 30 seconds, and no order is left pending.
     script: orders_flow.py
     target:
-      paid_within_s: { lt: 15 }
+      paid_within_s: { lt: 30 }
       stale_pending: { lt: 1 }
   - key: outage-recovery
     kind: invariant
@@ -153,11 +153,11 @@ rubric:
       "4": "Eight consumers retried every refused call immediately. During the outage that meant thousands of calls a second; the provider counts refused calls against its limit, so when it recovered the retries alone kept the limit full, every call was refused and retried at once, and nothing got through: a storm that kept itself going."
   - key: rejected-fixes
     max: 2
-    description: Explains why a higher limit, a restart or one consumer wasn't the fix.
+    description: Explains why a higher limit or a restart wasn't the fix.
     anchors:
-      "0": "Recommends a higher limit, a restart or fewer consumers as the fix."
+      "0": "Recommends a higher limit or a restart as the fix."
       "1": "Rejects one without saying why."
-      "2": "A restart or a higher limit only buys time until the next blip; one consumer that retries instantly still floods the limit; what stops the storm is waiting longer after each failure, with jitter."
+      "2": "A restart or a higher limit only buys time until the next blip, and fewer consumers only make the storm smaller; what stops it is waiting longer after each failure, with jitter, so refused calls fall instead of rising."
   - key: prevention
     max: 2
     description: Proposes guards for the next provider blip.

@@ -191,6 +191,10 @@ def main() -> None:
         thread.start()
     while running:
         time.sleep(0.5)
+    # A deploy stops the worker: each consumer finishes the order it holds (taken off the
+    # queue, so it would be lost) before the process exits.
+    for thread in threads:
+        thread.join(timeout=4)
 
 
 if __name__ == "__main__":

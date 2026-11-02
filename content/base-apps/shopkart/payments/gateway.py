@@ -6,8 +6,8 @@
   GET  /charges?order_id=<id>                 -> every charge made for that order
   GET  /healthz, /metrics
 
-Rate limit: RATE_LIMIT_PER_S calls in any one second, counting every call, refused ones too
-(as many real providers do); over it, 429 with Retry-After: 1.
+Rate limit: RATE_LIMIT_PER_S calls (default 200) in any one second, counting every call,
+refused ones too (as many real providers do); over it, 429 with Retry-After: 1.
 
 Port 8081 is the sandbox's control panel for faults and probes, not part of the provider:
   POST /_config {"latency_ms", "slow_share", "slow_ms", "drop_share", "rate_limit", "down_s"}
@@ -21,6 +21,7 @@ import json
 import os
 import random
 import secrets
+import socket
 import threading
 import time
 from collections import deque
@@ -29,11 +30,11 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 config: dict[str, float] = {
-    "latency_ms": float(os.environ.get("LATENCY_MS", "10")),
+    "latency_ms": float(os.environ.get("LATENCY_MS", "5")),
     "slow_share": float(os.environ.get("SLOW_SHARE", "0")),
     "slow_ms": float(os.environ.get("SLOW_MS", "1000")),
     "drop_share": 0.0,
-    "rate_limit": float(os.environ.get("RATE_LIMIT_PER_S", "60")),
+    "rate_limit": float(os.environ.get("RATE_LIMIT_PER_S", "200")),
     "down_until": 0.0,
 }
 
@@ -60,6 +61,12 @@ def limited() -> bool:
 
 class Gateway(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
+
+    def setup(self) -> None:
+        super().setup()
+        # Headers and body go out as separate writes: without this, Nagle's algorithm and the
+        # caller's delayed ACK add 40 ms to every answer on a kept-alive connection.
+        self.connection.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
 
     def log_message(self, format: str, *args: Any) -> None:
         pass

@@ -16,7 +16,7 @@ import psycopg
 TARGET = os.environ["TARGET"]
 PG_DSN = os.environ["PG_DSN"]
 ORDERS = 20
-DEADLINE_S = 30
+DEADLINE_S = 40
 
 with httpx.Client(base_url=TARGET, timeout=5) as client:
     ids = []

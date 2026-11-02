@@ -11,7 +11,7 @@ Phase 7 runs in waves, each tested and committed on its own:
 | 7C | Quick Fire cards and onboarding calibration | Done |
 | 7D | Streak freezes and on-call leave, email digests (Mailpit) | Done |
 | 7E | Admin console: RBAC, audit log, review queue, publish and retire | Done |
-| 7F | Content sprint toward 20 drills, the Ledger app | In progress (8 of 8 drills built; Ledger and the rest later) |
+| 7F | Content sprint toward 20 drills, the Ledger app | In progress (15 playable; Ledger and the rest later) |
 | 7G | Case files | |
 
 ## Wave 7A: what was built
@@ -209,8 +209,19 @@ The owner chose four drills first, each tested in real sandboxes and committed o
   6. Search pins the CPU (memory/runaway-regex).
   7. Stale prices (caching/invalidation): the library placeholder, made playable.
   8. A feature flag on for everyone (deploys/feature-flags).
-- **Later:** the Ledger app and the drills that need it (concurrency, idempotency), the
-  remaining placeholders, and case files (7G).
+- **Third batch (four more, same process):** four of the six library placeholders, all on
+  ShopKart:
+  9. Redis restart herd (caching/stampedes).
+  10. Evicted at the worst time (caching/eviction).
+  11. Retry storm (queues/retries).
+  12. Emails sent twice (queues/idempotency).
+- **Still deferred:** "Ghost reads" needs a Postgres replica and "One celebrity, one key" needs
+  Redis shards. Also later: the Ledger app and its drills (concurrency, double-spend), and case
+  files (7G).
+- **Tested in CI:** WSL stopped starting on this machine (Windows refuses its VM a logon
+  right), so Docker and local sandboxes were down for this batch. Every drill was tested in
+  real sandboxes on GitHub's runners instead. `content.yml` now takes a `scenario` input
+  (comma-separated slugs) so one drill can be run on its own.
 
 ### Drill 1: The 3 a.m. table lock (databases/migrations, SEV2)
 
