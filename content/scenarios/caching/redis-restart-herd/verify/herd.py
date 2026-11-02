@@ -49,10 +49,15 @@ def visit(client: httpx.Client) -> list[int] | None:
         return None
 
 
+# The truth, on a connection of its own: closing it flushes its statistics, so its own read
+# of the reviews table can't land in the count below.
 with psycopg.connect(PG_DSN, autocommit=True, connect_timeout=5) as conn:
     conn.execute("SET search_path = pg_catalog, public")
     expected = [row[0] for row in conn.execute(EXPECTED).fetchall()]
-    time.sleep(STATS_SETTLE_S)
+time.sleep(STATS_SETTLE_S)
+
+with psycopg.connect(PG_DSN, autocommit=True, connect_timeout=5) as conn:
+    conn.execute("SET search_path = pg_catalog, public")
     before, rows = conn.execute(SEQ_READ).fetchone()
     redis.Redis(host=os.environ["CACHE_HOST"], port=6379, socket_timeout=5).flushall()
     with (
@@ -65,5 +70,4 @@ with psycopg.connect(PG_DSN, autocommit=True, connect_timeout=5) as conn:
 
 failed = sum(page is None for page in pages)
 wrong = sum(page is not None and page != expected for page in pages)
-# The expected list was read before `before`: only the app's reads count.
 print(json.dumps({"builds": round((after - before) / rows, 1), "failed": failed, "wrong": wrong}))

@@ -1,0 +1,16 @@
+schema: devgrill/approach@1
+key: clean-only
+name: Delete the search keys
+outcome: partial
+idea: >-
+  Delete every search:* key. Valkey has room again and sign-ins work at once, but the code
+  still writes search results that never expire: the pile grows back, and the next full cache
+  signs everyone out again.
+steps:
+  - run: redis-cli -h redis-db --scan --pattern 'search:*' | xargs -r -n 1000 redis-cli -h redis-db unlink > /dev/null
+    service: tools
+pros:
+  - The fastest mitigation, no deploy
+cons:
+  - "The cause is still running: new search keys never expire"
+fails_probes: [nothing-forever]

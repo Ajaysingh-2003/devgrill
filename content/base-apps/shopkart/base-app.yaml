@@ -30,6 +30,8 @@ services:
     memory_mb: 768
 
   redis-db:
+    # One Valkey for the product cache, sessions and the orders queue. volatile-lru: when it is
+    # full, only keys with a TTL (cache entries, sessions) may be evicted, never the queue.
     image: valkey/valkey:9.1-alpine
     command:
       [
@@ -41,7 +43,7 @@ services:
         "--maxmemory",
         "256mb",
         "--maxmemory-policy",
-        "allkeys-lru",
+        "volatile-lru",
       ]
     healthcheck: ["valkey-cli", "ping"]
     cache: true
@@ -204,6 +206,17 @@ metrics:
     type: gauge
     job: worker
     metric: orders_consumer_lag_seconds
+  # Share of signed-in page views whose session was gone (the shopper is signed out).
+  signed_out_rate:
+    type: ratio
+    job: api
+    metric: session_checks_total
+    labels: { result: missing }
+  # Keys Valkey dropped per second to stay under maxmemory (measured by the exporter).
+  cache_evictions:
+    type: rate
+    job: redis-exporter
+    metric: redis_evicted_keys_total
   cache_memory_bytes:
     type: gauge
     job: redis-exporter

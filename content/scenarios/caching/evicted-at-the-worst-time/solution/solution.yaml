@@ -1,0 +1,12 @@
+schema: devgrill/solution@1
+summary: >-
+  Thursday's deploy cached search results with no TTL. Valkey also holds sessions, and with
+  volatile-lru only keys that can expire may be evicted, so the pile of searches pushed the
+  sessions out and then filled the cache for good. Give search results a TTL, then delete the
+  ones already cached without one.
+steps:
+  - patch: expire-searches.diff
+    service: api
+    message: "search: cached results expire after five minutes"
+  - run: redis-cli -h redis-db --scan --pattern 'search:*' | xargs -r -n 1000 redis-cli -h redis-db unlink > /dev/null
+    service: tools

@@ -1,6 +1,6 @@
 --- app/main.py
 +++ app/main.py
-@@ -230,7 +230,7 @@
+@@ -232,7 +232,7 @@
      (a first deploy), the page is built on the spot."""
      page = cache.get_deals()
      if page is None:

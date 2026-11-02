@@ -1,0 +1,10 @@
+schema: devgrill/approach@1
+key: cheat-bigger-cache
+name: Give Valkey a gigabyte
+outcome: fails
+cheat: true
+idea: Raise maxmemory to 1 GB so there is room again.
+steps:
+  - run: redis-cli -h redis-db config set maxmemory 1gb
+    service: tools
+fails_probes: [budget]

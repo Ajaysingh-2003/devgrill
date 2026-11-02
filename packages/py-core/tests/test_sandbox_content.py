@@ -103,6 +103,7 @@ def test_quantile_needs_q() -> None:
         "stale-prices",
         "flag-on-for-everyone",
         "redis-restart-herd",
+        "evicted-at-the-worst-time",
     ],
 )
 def test_playable_scenarios_load_with_their_faults(slug: str) -> None:

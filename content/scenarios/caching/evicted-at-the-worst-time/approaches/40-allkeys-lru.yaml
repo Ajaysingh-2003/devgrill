@@ -1,0 +1,17 @@
+schema: devgrill/approach@1
+key: allkeys-lru
+name: Let Valkey evict anything
+outcome: partial
+idea: >-
+  CONFIG SET maxmemory-policy allkeys-lru: the old searches are the least recently used keys,
+  so they go first and sessions survive. But Valkey runs full for good, and anything without a
+  TTL, the orders queue included, can now be evicted.
+steps:
+  - run: redis-cli -h redis-db config set maxmemory-policy allkeys-lru
+    service: tools
+pros:
+  - One command, and shoppers stay signed in
+cons:
+  - "The orders queue can be evicted, the reason volatile-lru was chosen"
+  - Search results still never expire, and a restart of Valkey brings back the old policy
+fails_probes: [nothing-forever]

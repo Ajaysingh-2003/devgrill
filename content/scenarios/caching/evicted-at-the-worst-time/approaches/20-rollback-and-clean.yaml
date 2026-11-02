@@ -1,0 +1,18 @@
+schema: devgrill/approach@1
+key: rollback-and-clean
+name: Roll back the search cache, delete its keys
+outcome: full
+idea: >-
+  Deploy the commit before "search: cache results for repeat queries" and delete the search:*
+  keys it left behind.
+steps:
+  - rollback_to: "checkout: show saved addresses"
+    service: api
+  - run: redis-cli -h redis-db --scan --pattern 'search:*' | xargs -r -n 1000 redis-cli -h redis-db unlink > /dev/null
+    service: tools
+pros:
+  - Back to known-good behaviour in two steps
+cons:
+  - Searches go back to Postgres every time
+match:
+  rollback: true

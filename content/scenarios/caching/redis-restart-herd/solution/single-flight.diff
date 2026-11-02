@@ -1,6 +1,6 @@
 --- app/main.py
 +++ app/main.py
-@@ -230,7 +230,7 @@
+@@ -232,7 +232,7 @@
      (a first deploy), the page is built on the spot."""
      page = cache.get_deals()
      if page is None:
@@ -9,7 +9,7 @@
      stale = time.time() - float(page.get("built_at", 0)) > settings.DEALS_REFRESH_S
      if stale and cache.claim_deals_refresh():
          try:
-@@ -238,6 +238,24 @@
+@@ -240,6 +240,24 @@
          except pg_errors.QueryCanceled:
              return page  # the copy is still good: try again on a later request
      return page
@@ -36,7 +36,7 @@
  def _build_deals() -> dict[str, Any]:
 --- app/cache.py
 +++ app/cache.py
-@@ -58,6 +58,13 @@
+@@ -59,6 +59,13 @@
          log.warning("cache invalidate failed", extra=fields(error=type(exc).__name__))
  
  

@@ -1,0 +1,11 @@
+schema: devgrill/approach@1
+key: cheat-any-token
+name: Treat every token as signed in
+outcome: fails
+cheat: true
+idea: Answer /me with 200 for any token, so nobody looks signed out.
+steps:
+  - patch: any-token.diff
+    service: api
+    message: "sessions: don't sign shoppers out on a cache miss"
+fails_probes: [signed-in]

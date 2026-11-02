@@ -47,6 +47,8 @@ PRICE_CHECKS = Counter(
 )
 #: Builds of the deals page, by outcome: ok, or timeout (cancelled by DEALS_TIMEOUT_MS).
 DEALS_BUILDS = Counter("deals_builds_total", "Deals page builds", ["result"])
+#: Signed-in page views, by whether the shopper's session was still there (ok) or not (missing).
+SESSION_CHECKS = Counter("session_checks_total", "Session lookups", ["result"])
 # Four uvicorn processes share these through PROMETHEUS_MULTIPROC_DIR, so /metrics reports
 # the whole service whichever process answers the scrape.
 DB_POOL_IN_USE = Gauge(
@@ -251,6 +253,31 @@ def _build_deals() -> dict[str, Any]:
     page = {"built_at": time.time(), "items": items}
     cache.set_deals(page)
     return page
+
+
+class SignIn(BaseModel):
+    user_id: int = Field(ge=1)
+
+
+@app.post("/sessions", status_code=201)
+def sign_in(body: SignIn) -> Any:
+    """Signs a shopper in (no passwords in this demo shop): a token for later requests."""
+    token = cache.create_session(body.user_id)
+    if token is None:
+        return JSONResponse({"error": "sign-in is unavailable, try again"}, status_code=503)
+    return {"token": token, "user_id": body.user_id}
+
+
+@app.get("/me")
+def me(request: Request) -> dict[str, Any]:
+    """Who is signed in (every storefront page asks, for the header)."""
+    token = request.headers.get("authorization", "").removeprefix("Bearer ").strip()
+    user_id = cache.session_user(token) if token else None
+    if user_id is None:
+        SESSION_CHECKS.labels("missing").inc()
+        raise HTTPException(401, "signed out")
+    SESSION_CHECKS.labels("ok").inc()
+    return {"user_id": user_id}
 
 
 class OrderIn(BaseModel):

@@ -56,6 +56,9 @@ DEALS_REFRESH_S = _int("DEALS_REFRESH_S", 60)
 DEALS_TTL_S = _int("DEALS_TTL_S", 600)
 DEALS_TIMEOUT_MS = _int("DEALS_TIMEOUT_MS", 500)
 
+#: How long a sign-in lasts (seconds). Sessions live in Valkey next to the cache.
+SESSION_TTL_S = _int("SESSION_TTL_S", 3600)
+
 #: Feature flag: the share of users (0-100, bucketed by user id) who see "customers also bought".
 ALSO_BOUGHT_PERCENT = _int("ALSO_BOUGHT_PERCENT", 0)
 

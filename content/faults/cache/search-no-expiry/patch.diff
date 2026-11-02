@@ -1,0 +1,45 @@
+--- app/main.py
++++ app/main.py
+@@ -207,8 +207,14 @@
+ 
+ @app.get("/products")
+ def search(q: str = "", limit: int = 20) -> list[dict[str, Any]]:
++    limit = min(limit, 100)
++    cached = cache.get_search(q, limit)
++    if cached is not None:
++        return cached
+     DB_QUERIES.labels("search_products").inc()
+-    return db.search_products(q, min(limit, 100))
++    results = db.search_products(q, limit)
++    cache.set_search(q, limit, results)
++    return results
+ 
+ 
+ class PriceUpdate(BaseModel):
+--- app/cache.py
++++ app/cache.py
+@@ -113,3 +113,24 @@
+         log.warning("cache unavailable", extra=fields(error=type(exc).__name__))
+         return None
+     return None if raw is None else int(raw)
++
++
++def search_key(q: str, limit: int) -> str:
++    return f"search:{limit}:{q.strip().lower()}"
++
++
++def get_search(q: str, limit: int) -> list[dict[str, Any]] | None:
++    try:
++        raw = client.get(search_key(q, limit))
++    except redis.RedisError as exc:
++        log.warning("cache unavailable", extra=fields(error=type(exc).__name__))
++        return None
++    return None if raw is None else json.loads(raw)
++
++
++def set_search(q: str, limit: int, results: list[dict[str, Any]]) -> None:
++    """Search results change only when the catalogue does, so they are kept."""
++    try:
++        client.set(search_key(q, limit), json.dumps(results, default=str))
++    except redis.RedisError as exc:
++        log.warning("cache write failed", extra=fields(error=type(exc).__name__))

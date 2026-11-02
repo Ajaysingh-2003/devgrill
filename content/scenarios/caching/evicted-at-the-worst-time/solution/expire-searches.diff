@@ -1,0 +1,14 @@
+--- app/cache.py
++++ app/cache.py
+@@ -129,8 +129,9 @@
+ 
+ 
+ def set_search(q: str, limit: int, results: list[dict[str, Any]]) -> None:
+-    """Search results change only when the catalogue does, so they are kept."""
++    """Search results, for five minutes: every key in this Valkey must be able to expire, or
++    with volatile-lru it can never be evicted and pushes out sessions instead."""
+     try:
+-        client.set(search_key(q, limit), json.dumps(results, default=str))
++        client.set(search_key(q, limit), json.dumps(results, default=str), ex=300)
+     except redis.RedisError as exc:
+         log.warning("cache write failed", extra=fields(error=type(exc).__name__))
