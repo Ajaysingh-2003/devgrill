@@ -1,0 +1,19 @@
+schema: devgrill/fault@1
+name: cache/likes-list
+kind: code_patch
+summary: A deploy keeps product likes as a list and checks "liked by you?" by scanning it; one viral product's list grows to 600,000 likes, and every view of it scans the whole key on Valkey's one thread.
+base_apps: [shopkart]
+params: {}
+# The deploy, then the night a film star posted the product.
+apply:
+  patch: patch.diff
+  service: api
+also:
+  script: surge.py
+  service: tools
+deploy_message: "likes: keep them in order, for the activity feed"
+symptom:
+  metric: cache_cpu
+  op: gt
+  value: 0.3
+  within_s: 90

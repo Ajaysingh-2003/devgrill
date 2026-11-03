@@ -18,7 +18,8 @@ COPY init.sql /docker-entrypoint-initdb.d/init.sql
 RUN sed -i 's/^\texec "\$@"$/\techo "seeded"/' /usr/local/bin/docker-entrypoint.sh \
     && grep -q 'echo "seeded"' /usr/local/bin/docker-entrypoint.sh \
     && mkdir -p "$PGDATA" && chown postgres:postgres "$PGDATA" \
-    && POSTGRES_PASSWORD="$(head -c 32 /dev/urandom | base64)" docker-entrypoint.sh postgres     && echo "host replication replicator all scram-sha-256" >> "$PGDATA/pg_hba.conf"
+    && POSTGRES_PASSWORD="$(head -c 32 /dev/urandom | base64)" docker-entrypoint.sh postgres \
+    && echo "host replication replicator all scram-sha-256" >> "$PGDATA/pg_hba.conf"
 
 FROM postgres:18-alpine
 ENV PGDATA=/srv/pgdata

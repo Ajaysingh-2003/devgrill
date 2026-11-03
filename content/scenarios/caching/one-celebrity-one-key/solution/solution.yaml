@@ -1,0 +1,12 @@
+schema: devgrill/solution@1
+summary: >-
+  "Liked by you?" scans the product's whole likes list (LPOS), and product 4242's list has
+  600,000 entries, so every view of it ties up Valkey's one thread for milliseconds. Keep the
+  list for the feed, but answer "liked by you?" and the count from a set of likers, and fill the
+  set from the lists already there.
+steps:
+  - patch: likers-set.diff
+    service: api
+    message: "likes: a set of likers for liked-by-you, the list only for the feed"
+  - run: 'for k in $(redis-cli -h redis-db --scan --pattern ''likes:list:*''); do redis-cli -h redis-db --raw lrange "$k" 0 -1 | xargs -r -n 5000 redis-cli -h redis-db sadd "likes:${k##*:}" > /dev/null; done'
+    service: tools

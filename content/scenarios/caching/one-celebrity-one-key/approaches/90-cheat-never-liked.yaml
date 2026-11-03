@@ -1,0 +1,11 @@
+schema: devgrill/approach@1
+key: cheat-never-liked
+name: Show every heart empty
+outcome: fails
+cheat: true
+idea: Skip the "liked by you?" check and answer no for everyone.
+steps:
+  - patch: never-liked.diff
+    service: api
+    message: "likes: skip the liked-by-you check"
+fails_probes: [honest-likes]

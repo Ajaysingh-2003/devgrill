@@ -8,7 +8,8 @@
 // searches, "trail kettle 17", instead of SEARCH_TERMS: almost every query is new), SESSIONS (1:
 // shoppers sign in, and every page asks who is signed in, as the storefront header does),
 // ORDER_SHARE (share of iterations that place an order; default 0.05), CHECKOUT_PAGE (1: after
-// placing an order, the shopper lands on its order page, as the storefront does), RATE (iterations per second: an
+// placing an order, the shopper lands on its order page, as the storefront does), LIKES (1:
+// product pages also load their like button, and one view in twenty likes the product), RATE (iterations per second: an
 // open model, where a slow system queues shoppers instead of slowing them down; default off,
 // VUS shoppers in a loop), P99_MS and ERROR_RATE (thresholds).
 import http from "k6/http";
@@ -25,6 +26,7 @@ const searchRandom = __ENV.SEARCH_RANDOM === "1";
 const sessions = __ENV.SESSIONS === "1";
 const orderShare = Number(__ENV.ORDER_SHARE || 0.05);
 const checkoutPage = __ENV.CHECKOUT_PAGE === "1";
+const likes = __ENV.LIKES === "1";
 const rate = Number(__ENV.RATE || 0);
 const vus = Number(__ENV.VUS || 20);
 const duration = __ENV.DURATION || "3m";
@@ -134,6 +136,19 @@ export default function () {
     productLatency.add(res.timings.duration);
     productFailed.add(res.status !== 200);
     check(res, { "product 200": (r) => r.status === 200 });
+    if (likes) {
+      const user = 1 + Math.floor(Math.random() * 2000);
+      const heart = http.get(`${target}/products/${id}/likes?user_id=${user}`, {
+        tags: { name: "likes" },
+      });
+      check(heart, { "likes 200": (r) => r.status === 200 });
+      if (Math.random() < 0.05) {
+        http.post(`${target}/products/${id}/likes`, JSON.stringify({ user_id: user }), {
+          headers: { "Content-Type": "application/json" },
+          tags: { name: "like" },
+        });
+      }
+    }
     if (alsoBought) {
       const user = 1 + Math.floor(Math.random() * 2000);
       const box = http.get(`${target}/products/${id}/also-bought?user_id=${user}`, {

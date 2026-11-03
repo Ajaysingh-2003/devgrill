@@ -1,0 +1,18 @@
+schema: devgrill/approach@1
+key: rollback-only
+name: Roll back
+outcome: fails
+idea: >-
+  Deploy the commit before "keep them in order". The scans stop, but the code now reads the old
+  sets, and every like since the deploy lives only in the lists: 600,000 fans see an empty
+  heart.
+steps:
+  - rollback_to: "product page: show stock badge"
+    service: api
+pros:
+  - One step, and the site is fast again
+cons:
+  - "Every like since the deploy is lost from the button"
+fails_probes: [honest-likes]
+match:
+  rollback: true

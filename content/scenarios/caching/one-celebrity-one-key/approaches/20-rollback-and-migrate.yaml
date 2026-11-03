@@ -1,0 +1,18 @@
+schema: devgrill/approach@1
+key: rollback-and-migrate
+name: Roll back, and bring the likes back into sets
+outcome: full
+idea: >-
+  Deploy the commit before "keep them in order": likes are sets again. The likes made since the
+  deploy are only in the lists, so copy them into the sets.
+steps:
+  - rollback_to: "product page: show stock badge"
+    service: api
+  - run: 'for k in $(redis-cli -h redis-db --scan --pattern ''likes:list:*''); do redis-cli -h redis-db --raw lrange "$k" 0 -1 | xargs -r -n 5000 redis-cli -h redis-db sadd "likes:${k##*:}" > /dev/null; done'
+    service: tools
+pros:
+  - Back to code that was fine at any size
+cons:
+  - "The activity feed loses its order"
+match:
+  rollback: true

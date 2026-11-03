@@ -271,6 +271,11 @@ metrics:
     job: api
     metric: order_lookups_total
     labels: { result: missing }
+  # Share of a core Valkey's main thread spends running commands (measured by the exporter).
+  cache_cpu:
+    type: rate
+    job: redis-exporter
+    metric: redis_cpu_user_seconds_total
   cache_memory_bytes:
     type: gauge
     job: redis-exporter

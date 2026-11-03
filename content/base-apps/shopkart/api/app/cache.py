@@ -94,6 +94,24 @@ def claim_deals_refresh() -> bool:
         return False
 
 
+def _likes_key(product_id: int) -> str:
+    return f"likes:{product_id}"
+
+
+def like(product_id: int, user_id: int) -> None:
+    """A shopper likes a product (the heart on its page). Liking twice changes nothing."""
+    client.sadd(_likes_key(product_id), user_id)
+
+
+def liked(product_id: int, user_id: int) -> tuple[bool, int]:
+    """Whether this shopper likes the product, and how many shoppers do."""
+    pipe = client.pipeline(transaction=False)
+    pipe.sismember(_likes_key(product_id), user_id)
+    pipe.scard(_likes_key(product_id))
+    mine, count = pipe.execute()
+    return bool(mine), int(count)
+
+
 def create_session(user_id: int) -> str | None:
     """A sign-in: a random token for `user_id`, kept for SESSION_TTL_S. None if Valkey refused."""
     token = secrets.token_urlsafe(24)

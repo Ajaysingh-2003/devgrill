@@ -1,5 +1,8 @@
-# Library entry only: not yet runnable (playable: false). Authoring it means adding faults,
-# load, slo, probes, hints and a page (see docs/adr/012-scenario-spec-v1.md).
+# Spec v1 (ADR 012). Two days ago a deploy moved product likes from a set to a list (newest
+# first, for an activity feed), and "liked by you?" became LPOS: a scan of the whole list. Last
+# night a film star posted product 4242, and its list grew to 600,000 likes. Every view of it
+# scans the key on Valkey's one thread, so Valkey runs flat out and everything else waiting on
+# it (product pages, sessions, the orders queue) slows down with it.
 schema: devgrill/scenario@1
 slug: one-celebrity-one-key
 title: One celebrity, one key
@@ -8,14 +11,14 @@ topic: hot-keys
 difficulty: sev1
 est_minutes: 35
 status: published
-summary: A single viral profile melts one cache shard
+summary: A single viral product melts the cache
 tags:
   - redis
   - hot-key
+  - big-key
 base_app: shopkart
-playable: false
 briefing:
-  story: A film star just posted a link to their profile on ShopKart. One Redis shard is at 100% CPU and
+  story: A film star just posted a link to their favourite product on ShopKart. Valkey is at 100% CPU and
     timeouts are spreading.
   system:
     - kind: lb
@@ -23,14 +26,166 @@ briefing:
       note: viral traffic
       role: path
     - kind: api
-      name: profile-api
-      note: Python, 6 pods
+      name: product-api
+      note: Python, 4 workers
       role: path
     - kind: cache
-      name: redis
-      note: 3 shards
+      name: valkey
+      note: cache, likes, sessions, queue
       role: path
     - kind: db
       name: postgres
-      note: profiles
-      role: path
+      note: products
+      role: side
+  goals:
+    - title: Get Valkey breathing again
+      detail: Product pages and like buttons back under 500 ms p99, under 1% errors.
+    - title: Keep the hearts honest
+      detail: Everyone who liked the product still sees it liked.
+
+page:
+  severity: SEV1
+  title: "valkey: CPU at 100%, product-api timeouts on every page"
+
+charts: [cache_cpu, api_p99_ms, error_rate, request_rate]
+
+faults:
+  - use: cache/likes-list
+    at: T-2880m
+
+load:
+  script: shop.js
+  vus: 60
+  params:
+    # The film star's product gets most of the views.
+    HOT_KEYS: "4242"
+    LIKES: "1"
+    RATE: "150"
+
+deploy_history:
+  - message: "catalogue: add trail-running category"
+    minutes_before: 10080
+    service: api
+  - message: "product page: show stock badge"
+    minutes_before: 4320
+    service: api
+  - message: "likes: keep them in order, for the activity feed"
+    minutes_before: 2880
+    from_fault: cache/likes-list
+
+beats:
+  - persona: priya
+    at: T+20s
+    say: "The film star's post is everywhere, and we're timing out on every page, not just theirs. Marketing is asking if we can stay up for the next hour."
+  - persona: arjun
+    at: T+3m
+    say: "Valkey's one core is pinned. I can restart it, or ask for a bigger instance. Or should we shard it?"
+  - persona: arjun
+    when: "state:mitigated"
+    say: "Valkey's calm again. Do the fans who liked it overnight still see their hearts filled?"
+  - persona: priya
+    when: "state:resolved"
+    say: "Verified: the viral product's page is fast and every like still shows. Thanks. Can you write up how one product took the whole cache down?"
+
+constraints:
+  no_scale_up: [redis-db]
+  cache_max_memory_mb: 256
+
+slo:
+  p99_latency_ms: 500
+  error_rate: 0.01
+  thresholds:
+    api_p99_ms: { lt: 500 }
+  for_s: 30
+
+probes:
+  - key: steady-traffic
+    kind: load
+    title: Viral traffic
+    how: Replays the viral traffic for 45 seconds; p99 under 500 ms and under 1% errors.
+    target:
+      p99_ms: { lt: 500 }
+      error_rate: { lt: 0.01 }
+  - key: honest-likes
+    kind: invariant
+    title: Hearts tell the truth
+    how: Old and new fans of the viral product see it liked, others don't, and a new like counts.
+    script: likes.py
+    target:
+      wrong: { lt: 1 }
+  - key: correctness
+    kind: hidden_test
+    title: Still correct
+    how: Real product data, 404s for unknown products, search, orders and price changes all work.
+    script: base/correctness.py
+  - key: budget
+    kind: budget
+    title: Within budget
+    how: Valkey keeps its size.
+    weight: 0.5
+
+hints:
+  tier1: "Valkey is single-threaded and pinned. Which commands is it spending its time on? It keeps a log of the slow ones."
+  tier2: "SLOWLOG GET shows LPOS on likes:list:4242, again and again. How long is that list, and how does LPOS find an element? Look at the last deploy to likes."
+  tier3: "Two days ago likes became a list, and 'liked by you?' became LPOS, a scan of the whole list. Product 4242 now has 600,000 likes. Keep the list for the feed, but answer the button from a set of likers (SISMEMBER, SCARD) and fill the sets from the lists; or roll back and copy the lists into the sets."
+
+rubric:
+  - key: impact
+    max: 2
+    description: States what customers saw and since when.
+    anchors:
+      "0": "No impact stated."
+      "1": "The site was slow, without which pages or since when."
+      "2": "Once the viral product's likes passed hundreds of thousands, every page timed out, not only the viral one: Valkey also holds the product cache, sessions and the orders queue."
+  - key: root-cause
+    max: 4
+    description: Explains how one product took the cache down.
+    anchors:
+      "0": "Blames traffic, Valkey or its size."
+      "2": "Names the hot key, without why each read of it was so expensive."
+      "4": "The likes deploy kept likes in a list and checked 'liked by you?' with LPOS, which scans the list. Product 4242 went viral and its list reached 600,000 entries, so every view ran a scan of hundreds of thousands of elements on Valkey's single thread, and every other command waited behind it."
+  - key: rejected-fixes
+    max: 2
+    description: Explains why a restart, a bigger instance, sharding or a plain rollback wasn't the fix.
+    anchors:
+      "0": "Recommends a restart, more CPU, sharding or a plain rollback as the fix."
+      "1": "Rejects one without saying why."
+      "2": "A restart or more CPU leaves the scan; sharding can't split one key; a plain rollback reads the old sets and loses every like since the deploy; scanning only the newest likes gives wrong answers; the fix makes the check O(1) and keeps the likes."
+  - key: prevention
+    max: 2
+    description: Proposes guards for hot and big keys.
+    anchors:
+      "0": "No action items."
+      "1": "One vague action."
+      "2": "Review the complexity of every command per request; alert on Valkey CPU and SLOWLOG; find big keys (redis-cli --bigkeys, MEMORY USAGE) before they bite; keep sessions and queues off the cache that takes the risk."
+
+ttl_minutes: 45
+par_minutes: 12
+
+replay:
+  - when: redis-db.restarted
+    mark: lost
+    note: A restart empties sessions and the queue, and the viral list is scanned again on the next view.
+  - when: deploy.viewed
+    match: "api"
+    mark: clue
+    note: The likes deploy is where the list and LPOS came from.
+  - when: api.rolledback
+    mark: clue
+    note: Rolling back reads the old sets, which don't have the likes made since.
+
+ai:
+  spoilers:
+    - "\\bLPOS\\b"
+    - "likes:list"
+    - "SISMEMBER"
+    - "scan(s|ning)? the (whole )?list"
+    - "O\\(N\\)"
+    - "big key"
+  root_cause: >-
+    A deploy kept product likes in a Valkey list (newest first, for an activity feed) and
+    answered "liked by you?" with LPOS, which scans the list. A film star made product 4242
+    viral and its list reached 600,000 likes, so every view scanned hundreds of thousands of
+    elements on Valkey's single thread; every other command waited and timeouts spread. A set
+    of likers for the button (SISMEMBER, SCARD), filled from the lists, fixes it; a plain
+    rollback reads the old sets and loses the likes since the deploy.

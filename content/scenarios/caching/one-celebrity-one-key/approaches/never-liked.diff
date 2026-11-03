@@ -1,0 +1,15 @@
+--- app/cache.py
++++ app/cache.py
+@@ -108,10 +108,10 @@
+ def liked(product_id: int, user_id: int) -> tuple[bool, int]:
+     """Whether this shopper likes the product, and how many shoppers do."""
+     pipe = client.pipeline(transaction=False)
+-    pipe.lpos(_likes_key(product_id), user_id)
++    pipe.lindex(_likes_key(product_id), 0)
+     pipe.llen(_likes_key(product_id))
+     position, count = pipe.execute()
+-    return position is not None, int(count)
++    return False, int(count)
+ 
+ 
+ def create_session(user_id: int) -> str | None:

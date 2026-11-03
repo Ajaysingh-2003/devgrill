@@ -1,0 +1,16 @@
+schema: devgrill/approach@1
+key: scan-newest
+name: Only scan the newest thousand likes
+outcome: partial
+idea: >-
+  LPOS with MAXLEN 1000: only the head of the list is searched, so each check is cheap again.
+  Anyone who liked the product before the last thousand likes now sees an empty heart.
+steps:
+  - patch: scan-newest.diff
+    service: api
+    message: "likes: only check the newest 1,000"
+pros:
+  - A one-line change, and Valkey breathes again
+cons:
+  - "The like button is wrong for everyone but the latest thousand fans"
+fails_probes: [honest-likes]

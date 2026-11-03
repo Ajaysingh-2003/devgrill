@@ -11,6 +11,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
+import redis
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 from prometheus_client import (
@@ -292,6 +293,33 @@ def order_page(user_id: int, order_id: int) -> dict[str, Any]:
         raise HTTPException(404, "no such order")
     ORDER_LOOKUPS.labels("found").inc()
     return order
+
+
+class LikeIn(BaseModel):
+    user_id: int = Field(ge=1)
+
+
+@app.post("/products/{product_id}/likes", status_code=201)
+def like_product(product_id: int, body: LikeIn) -> Any:
+    try:
+        cache.like(product_id, body.user_id)
+    except redis.RedisError as exc:
+        log.error("like not saved", extra=fields(product_id=product_id, error=type(exc).__name__))
+        return JSONResponse({"error": "likes are unavailable, try again"}, status_code=503)
+    return {"product_id": product_id, "liked": True}
+
+
+@app.get("/products/{product_id}/likes")
+def product_likes(product_id: int, user_id: int = 0) -> Any:
+    """The heart on the product page: filled if this shopper likes it, and the count."""
+    try:
+        mine, count = cache.liked(product_id, user_id)
+    except redis.RedisError as exc:
+        log.error(
+            "likes unavailable", extra=fields(product_id=product_id, error=type(exc).__name__)
+        )
+        return JSONResponse({"error": "likes are unavailable, try again"}, status_code=503)
+    return {"product_id": product_id, "liked": mine, "count": count}
 
 
 class OrderIn(BaseModel):

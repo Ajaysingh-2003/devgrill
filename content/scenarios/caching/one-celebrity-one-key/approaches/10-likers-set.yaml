@@ -1,0 +1,21 @@
+schema: devgrill/approach@1
+key: likers-set
+name: A set of likers, the list only for the feed
+outcome: full
+idea: >-
+  Keep the list (newest first) for the activity feed, and add a set of who likes each product:
+  SISMEMBER and SCARD answer the like button in one step, however many likes there are. Fill
+  the sets from the lists already in Valkey.
+steps:
+  - patch: likers-set.diff
+    service: api
+    message: "likes: a set of likers for liked-by-you, the list only for the feed"
+  - run: 'for k in $(redis-cli -h redis-db --scan --pattern ''likes:list:*''); do redis-cli -h redis-db --raw lrange "$k" 0 -1 | xargs -r -n 5000 redis-cli -h redis-db sadd "likes:${k##*:}" > /dev/null; done'
+    service: tools
+pros:
+  - The like button costs the same for one like or a million
+  - The feed keeps its order
+cons:
+  - Two keys to keep in step for every like
+match:
+  diff: "sismember|sadd|scard"
