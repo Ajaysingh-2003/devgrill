@@ -1,18 +1,20 @@
 """Smoke test a running stack: api readiness, gateway health, web root, Temporal ping workflow.
 
-Start the stack first (`just dev`, or the CI services), then run `just smoke`.
+Start the stack first (`just dev`, or the CI services), then run `just smoke`. API_PORT moves
+the API, as it does for `just dev`.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sys
 import time
 import urllib.error
 import urllib.request
 
-API = "http://127.0.0.1:8000"
+API = f"http://127.0.0.1:{os.environ.get('API_PORT', '8000')}"
 GATEWAY = "http://127.0.0.1:8100"
 WEB = "http://127.0.0.1:3000"
 

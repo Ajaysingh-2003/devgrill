@@ -218,10 +218,16 @@ The owner chose four drills first, each tested in real sandboxes and committed o
 - **Still deferred:** "Ghost reads" needs a Postgres replica and "One celebrity, one key" needs
   Redis shards. Also later: the Ledger app and its drills (concurrency, double-spend), and case
   files (7G).
-- **Tested in CI:** WSL stopped starting on this machine (Windows refuses its VM a logon
-  right), so Docker and local sandboxes were down for this batch. Every drill was tested in
-  real sandboxes on GitHub's runners instead. `content.yml` now takes a `scenario` input
-  (comma-separated slugs) so one drill can be run on its own.
+- **Tested in CI, then locally:** WSL stopped starting on this machine for a while (Windows
+  refused its VM a logon right), so the drills were first tested in real sandboxes on GitHub's
+  runners. `content.yml` now takes a `scenario` input (comma-separated slugs) so one drill can
+  be run on its own. Once Docker was back, all four drills and Orders stuck in the queue were
+  run again locally, with every approach. That run also passed the full local gate:
+  - lint, types and the unit and web tests;
+  - integration: 146 of 147 pass. The one failure is the known order-dependent flake in the
+    LLM adapter test, which passes on its own and on CI;
+  - smoke (`API_PORT` now moves its API, as for `just dev`);
+  - e2e: 67 passed, 1 skipped.
 
 ### Drill 1: The 3 a.m. table lock (databases/migrations, SEV2)
 
@@ -596,7 +602,8 @@ holds sessions and the orders queue.
 - **Not fixes:**
   - deleting the keys alone, or switching to `allkeys-lru`, leaves new searches that never
     expire (fails `nothing-forever`, which tags its own searches and checks their TTLs);
-  - the TTL alone leaves the cache full for good (fails `signed-in`).
+  - the TTL alone leaves the cache full for good: sessions keep being evicted, then nobody
+    can sign in (fails `sessions-stay`).
 - **Cheats:** a 1 GB cache fails the budget; accepting any token fails `signed-in`.
 
 **Base-app work (ShopKart):**
@@ -608,12 +615,18 @@ holds sessions and the orders queue.
     `shoppers_signed_out`, a verifier metric;
   - `SEARCH_RANDOM=1`: shoppers type their own searches.
 
-**Found by running it:** the reference cleanup first deleted nothing. The cached keys contain
-spaces, and `xargs` split them into words. The cleanup now splits on newlines only, and the
-tier-3 hint warns about it.
+**Found by running it:**
+- **Cleanup deleted nothing:** the cached keys contain spaces, and `xargs` split them into
+  words. The cleanup now splits on newlines only, and the tier-3 hint warns about it.
+- **Late symptom:** the declared symptom was failing sign-ins (the OOM stage). That stage
+  comes once nothing evictable is left: 100 s on CI, up to 236 s on the slower laptop. The
+  fault now declares the first effect, shoppers signed out (over 5% within about 30 s).
+  Applied that early, the TTL-only approach still fails, but on `sessions-stay` (12% signed
+  out) rather than `signed-in`, so that is what it declares.
 
-**Checks (CI):** paged in 5 s; the fix mitigated in 0.3 s and passed every probe. All seven
-approaches gave their declared outcomes.
+**Checks:** on CI, paged in 5 s; the fix mitigated in 0.3 s and passed every probe. Locally in
+Docker, with the earlier symptom, the drill paged in 6 s, the symptom showed at 37 s, and all
+seven approaches gave their declared outcomes.
 
 ### Drill 11: Retry storm (queues/retries, SEV1)
 

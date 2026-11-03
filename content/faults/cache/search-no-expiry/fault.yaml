@@ -12,8 +12,10 @@ also:
   script: fill.py
   service: tools
 deploy_message: "search: cache results for repeat queries"
+# The first thing it breaks: sessions are evicted and shoppers find themselves signed out.
+# (Sign-ins failing outright comes later, once nothing evictable is left: 100 to 240 s.)
 symptom:
-  metric: error_rate
+  metric: signed_out_rate
   op: gt
-  value: 0.01
+  value: 0.05
   within_s: 120
