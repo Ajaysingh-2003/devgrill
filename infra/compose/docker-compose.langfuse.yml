@@ -42,7 +42,7 @@ x-langfuse-env: &langfuse-env
 
 services:
   langfuse-db:
-    image: postgres:18.1
+    image: postgres:18.4
     environment:
       POSTGRES_USER: langfuse
       POSTGRES_PASSWORD: langfuse
@@ -55,7 +55,7 @@ services:
       retries: 20
 
   clickhouse:
-    image: clickhouse/clickhouse-server:26.8
+    image: clickhouse/clickhouse-server:26.10
     user: "101:101"
     environment:
       CLICKHOUSE_DB: default
@@ -71,7 +71,7 @@ services:
 
   # The S3 bucket Langfuse writes to: a signed PUT (200 created, 409 already there).
   langfuse-bucket:
-    image: curlimages/curl:8.17.0
+    image: curlimages/curl:8.23.0
     # The dev object store's identity (infra/compose/seaweedfs-s3.json).
     environment:
       S3_IDENTITY: devgrill:devgrill-dev-secret
@@ -86,7 +86,7 @@ services:
     restart: "no"
 
   langfuse-worker:
-    image: langfuse/langfuse-worker:4.56.0
+    image: langfuse/langfuse-worker:4.71.0
     environment: *langfuse-env
     depends_on:
       langfuse-db: { condition: service_healthy }
@@ -95,7 +95,7 @@ services:
     networks: [default, devgrill]
 
   langfuse-web:
-    image: langfuse/langfuse:4.56.0
+    image: langfuse/langfuse:4.71.0
     environment:
       <<: *langfuse-env
       # Listen on every interface (the health check calls 127.0.0.1).
