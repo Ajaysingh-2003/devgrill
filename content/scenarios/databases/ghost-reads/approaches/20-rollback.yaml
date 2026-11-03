@@ -1,0 +1,15 @@
+schema: devgrill/approach@1
+key: rollback
+name: Roll back to reading from the primary
+outcome: partial
+idea: Deploy the commit before "read order pages from the replica". Every read is on the primary again.
+steps:
+  - rollback_to: "orders: show delivery estimates on the receipt"
+    service: api
+pros:
+  - One step; nothing vanishes any more
+cons:
+  - "The primary takes every read again, which is what the deploy was trying to stop"
+fails_probes: [replica-offload]
+match:
+  rollback: true

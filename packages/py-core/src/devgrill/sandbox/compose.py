@@ -262,6 +262,8 @@ class ComposeDriver:
         app = bundle.base_app
         jobs = []
         for name, svc in app.services.items():
+            if svc.image_from:
+                continue  # the service it borrows from builds the image
             if svc.build:
                 jobs.append(
                     ensure_built(self._docker, app.image_for(name), bundle.base_app_dir / svc.build)
@@ -473,6 +475,7 @@ class ComposeDriver:
         """The patchable services' source as git repos in the shell, with the scenario's history."""
         app = bundle.base_app
         shell = await self._container(handle, app.shell_service)
+        configured: set[str] = set()
         plain = sorted(
             (e for e in bundle.scenario.deploy_history if not e.from_fault),
             key=lambda e: -e.minutes_before,
@@ -493,6 +496,9 @@ class ComposeDriver:
             for entry in plain:
                 if entry.service not in (None, name):
                     continue
+                if entry.env:
+                    await self._set_config(handle, bundle, name, dict(entry.env))
+                    configured.add(name)
                 await self._must(
                     shell,
                     ["sh", "-c", f'printf -- "- %s\\n" "$MSG" >> CHANGELOG.md && {_COMMIT}'],
@@ -501,6 +507,9 @@ class ComposeDriver:
                     workdir=repo,
                 )
             await self._run(shell, ["git", "update-ref", LIVE_REF, "HEAD"], workdir=repo)
+        # The image has the base config; a history that changed it is deployed, as it was.
+        for name in sorted(configured):
+            await self._deploy_checked(handle, bundle, name)
 
     async def _commit(
         self, handle: SandboxHandle, bundle: Bundle, service: str, message: str, minutes_ago: float

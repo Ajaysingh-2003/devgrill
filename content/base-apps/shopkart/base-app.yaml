@@ -29,6 +29,24 @@ services:
     cpus: 1.0
     memory_mb: 768
 
+  # A read replica, in another region: the same image as the primary (identical data) started
+  # as a standby, streaming over postgres-repl. It is the disaster-recovery copy, so it applies
+  # changes a minute late (a bad migration can be stopped before it reaches it).
+  postgres-replica:
+    optional: true
+    image_from: postgres-db
+    command:
+      [
+        "sh",
+        "-c",
+        'touch /srv/pgdata/standby.signal && (grep -q recovery_min_apply_delay /srv/pgdata/postgresql.auto.conf || echo "recovery_min_apply_delay = ''60s''" >> /srv/pgdata/postgresql.auto.conf) && exec docker-entrypoint.sh postgres -c shared_preload_libraries=pg_stat_statements -c hot_standby=on -c "primary_conninfo=host=postgres-repl port=5434 user=replicator password=replicator application_name=replica"',
+      ]
+    healthcheck: ["pg_isready", "-U", "shopkart", "-d", "shopkart", "-h", "127.0.0.1"]
+    logs: false
+    depends_on: [toxiproxy]
+    cpus: 0.5
+    memory_mb: 512
+
   redis-db:
     # One Valkey for the product cache, sessions and the orders queue. volatile-lru: when it is
     # full, only keys with a TTL (cache entries, sessions) may be evicted, never the queue.
@@ -57,7 +75,8 @@ services:
       /config/proxies.json: toxiproxy/proxies.json
     # Inside the sandbox the datastores are reached THROUGH toxiproxy under these names.
     # postgres-dr is the "cross-region" endpoint: same database, a link faults can slow down.
-    aliases: [postgres, postgres-dr, redis]
+    # postgres-repl carries the optional replica's WAL stream.
+    aliases: [postgres, postgres-dr, postgres-repl, redis]
     toxiproxy: { admin_port: 8474 }
     healthcheck: ["/toxiproxy-cli", "-h", "127.0.0.1:8474", "list"]
     depends_on: [postgres-db, redis-db]
@@ -246,6 +265,12 @@ metrics:
     job: payment-gateway
     metric: payments_requests_total
     labels: { result: limited }
+  # Share of order pages that found no order: right after checkout, a ghost read.
+  order_lookup_misses:
+    type: ratio
+    job: api
+    metric: order_lookups_total
+    labels: { result: missing }
   cache_memory_bytes:
     type: gauge
     job: redis-exporter

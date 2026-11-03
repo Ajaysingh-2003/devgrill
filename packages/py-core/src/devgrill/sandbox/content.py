@@ -143,6 +143,7 @@ def load_bundle(content_root: Path, slug: str) -> Bundle:
         raise ContentError(f"{scenario_dir}: slug {scenario.slug!r} does not match its folder")
     try:
         base_dir, base_app = load_base_app(content_root, scenario.base_app)
+        base_app = base_app.for_scenario(list(scenario.services))
     except (OSError, ValueError) as exc:
         raise ContentError(f"{slug}: base app {scenario.base_app!r}: {exc}") from exc
 
@@ -172,6 +173,12 @@ def load_bundle(content_root: Path, slug: str) -> Bundle:
         if entry.service is not None and entry.service not in patchable:
             raise ContentError(
                 f"{slug}: deploy {entry.message!r} is in {entry.service!r}, which has no source"
+            )
+        source = base_app.services[entry.service].source if entry.service else None
+        if entry.env and not (source and source.config_file):
+            raise ContentError(
+                f"{slug}: deploy {entry.message!r} changes config, but {entry.service!r} has no"
+                " config file"
             )
     trusted = {name for name, m in base_app.metrics.items() if m.job not in patchable}
     for probe in scenario.probes:

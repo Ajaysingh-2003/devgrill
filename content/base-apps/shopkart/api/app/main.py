@@ -49,6 +49,8 @@ PRICE_CHECKS = Counter(
 DEALS_BUILDS = Counter("deals_builds_total", "Deals page builds", ["result"])
 #: Signed-in page views, by whether the shopper's session was still there (ok) or not (missing).
 SESSION_CHECKS = Counter("session_checks_total", "Session lookups", ["result"])
+#: Order pages, by whether the order was there (found) or not (missing).
+ORDER_LOOKUPS = Counter("order_lookups_total", "Order page lookups", ["result"])
 # Four uvicorn processes share these through PROMETHEUS_MULTIPROC_DIR, so /metrics reports
 # the whole service whichever process answers the scrape.
 DB_POOL_IN_USE = Gauge(
@@ -278,6 +280,18 @@ def me(request: Request) -> dict[str, Any]:
         raise HTTPException(401, "signed out")
     SESSION_CHECKS.labels("ok").inc()
     return {"user_id": user_id}
+
+
+@app.get("/users/{user_id}/orders/{order_id}")
+def order_page(user_id: int, order_id: int) -> dict[str, Any]:
+    """The order page shoppers land on after checkout, and come back to."""
+    DB_QUERIES.labels("fetch_order").inc()
+    order = db.fetch_order(user_id, order_id)
+    if order is None:
+        ORDER_LOOKUPS.labels("missing").inc()
+        raise HTTPException(404, "no such order")
+    ORDER_LOOKUPS.labels("found").inc()
+    return order
 
 
 class OrderIn(BaseModel):

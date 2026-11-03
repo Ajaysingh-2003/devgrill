@@ -7,7 +7,8 @@
 // that open the sale landing page first; default 0), SEARCH_RANDOM (1: shoppers type their own
 // searches, "trail kettle 17", instead of SEARCH_TERMS: almost every query is new), SESSIONS (1:
 // shoppers sign in, and every page asks who is signed in, as the storefront header does),
-// ORDER_SHARE (share of iterations that place an order; default 0.05), RATE (iterations per second: an
+// ORDER_SHARE (share of iterations that place an order; default 0.05), CHECKOUT_PAGE (1: after
+// placing an order, the shopper lands on its order page, as the storefront does), RATE (iterations per second: an
 // open model, where a slow system queues shoppers instead of slowing them down; default off,
 // VUS shoppers in a loop), P99_MS and ERROR_RATE (thresholds).
 import http from "k6/http";
@@ -23,6 +24,7 @@ const dealsRate = Number(__ENV.DEALS_RATE || 0);
 const searchRandom = __ENV.SEARCH_RANDOM === "1";
 const sessions = __ENV.SESSIONS === "1";
 const orderShare = Number(__ENV.ORDER_SHARE || 0.05);
+const checkoutPage = __ENV.CHECKOUT_PAGE === "1";
 const rate = Number(__ENV.RATE || 0);
 const vus = Number(__ENV.VUS || 20);
 const duration = __ENV.DURATION || "3m";
@@ -148,12 +150,19 @@ export default function () {
     });
     check(res, { "search 200": (r) => r.status === 200 });
   } else {
+    const user = 1 + Math.floor(Math.random() * 2000);
     const res = http.post(
       `${target}/orders`,
-      JSON.stringify({ user_id: 1 + Math.floor(Math.random() * 2000), product_id: pick(), quantity: 1 }),
+      JSON.stringify({ user_id: user, product_id: pick(), quantity: 1 }),
       { headers: { "Content-Type": "application/json" }, tags: { name: "order" } },
     );
     check(res, { "order 201": (r) => r.status === 201 });
+    if (checkoutPage && res.status === 201) {
+      const page = http.get(`${target}/users/${user}/orders/${res.json("id")}`, {
+        tags: { name: "order_page" },
+      });
+      check(page, { "order page 200": (r) => r.status === 200 });
+    }
   }
   sleep(0.05);
 }

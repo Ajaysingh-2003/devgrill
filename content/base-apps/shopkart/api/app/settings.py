@@ -33,6 +33,9 @@ DATABASE_URL = os.environ.get(
     "DATABASE_URL", "postgresql://shopkart:shopkart@postgres:5432/shopkart"
 )
 REDIS_URL = os.environ.get("REDIS_URL", "redis://redis:6379/0")
+#: Reads that may lag a little (order pages, order history) go here when set: a replica takes
+#: them off the primary. Empty means the primary.
+READ_DATABASE_URL = os.environ.get("READ_DATABASE_URL", "")
 
 #: Postgres connections per API process. Four processes share the database's 100 slots.
 DB_POOL_MIN = _int("DB_POOL_MIN", 2)

@@ -1,0 +1,22 @@
+schema: devgrill/fault@1
+name: db/replica-reads
+kind: config
+summary: A config deploy sends order pages and order history to the read replica, which is the disaster-recovery copy and applies changes a minute late; a new order vanishes from its own page.
+base_apps: [shopkart]
+params: {}
+# The deploy, and the replica's link to the primary (another region, 300 ms away).
+apply:
+  env:
+    READ_DATABASE_URL: postgresql://shopkart:shopkart@postgres-replica:5432/shopkart
+  service: api
+also:
+  toxic:
+    proxy: postgres-repl
+    type: latency
+    latency: 300
+deploy_message: "perf: read order pages from the replica"
+symptom:
+  metric: order_lookup_misses
+  op: gt
+  value: 0.2
+  within_s: 90

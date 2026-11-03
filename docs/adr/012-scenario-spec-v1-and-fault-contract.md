@@ -41,6 +41,11 @@ Every file names its format: `schema: devgrill/<kind>@1`.
      label regexes, and is one of four types: `gauge`, `rate`, `ratio` or `quantile`. One
      small evaluator (`devgrill.sandbox.metrics`) computes them from two scrapes. That is all
      the SLOs, symptom checks and probes need, and there is no query engine to run.
+   - **`optional` services** run only in scenarios that list them (`services:` in
+     scenario.yaml), such as a read replica or extra cache nodes. Every other sandbox of the
+     app boots without them, and a scenario's bundle drops their metrics.
+   - **`image_from`** runs the image another service built. A replica needs its primary's
+     exact data directory, so it is started from the same seeded image as a standby.
 2. **Fault module** (`content/faults/<category>/<name>/fault.yaml`). A fault declares:
    - **One mechanism per step**:
      - `patch`: a unified diff with paths relative to the service root, applied with
@@ -69,7 +74,10 @@ Every file names its format: `schema: devgrill/<kind>@1`.
      metric. Capacity incidents (ttl-zero) are paged on database load, not user latency.
    - **`deploy_history`** becomes real git commits in the shell's repo. Commit SHAs are real,
      so the spec no longer carries them. Deploys made by faults must be the newest entries,
-     because faults are committed last.
+     because faults are committed last. An entry can carry `env`, the config it changed in
+     its service's config file. The change is committed and deployed at boot, so the setup a
+     scenario needs (a cache spread over three nodes) is in `git log` like any other deploy,
+     not disguised as a fault.
    - **Beats** fire `at` a time or `when` an event happens. The key is not `on`, because
      YAML 1.1 reads `on` as `true`.
 4. **Solution** (`solution/solution.yaml`): patches (committed and deployed) or commands.

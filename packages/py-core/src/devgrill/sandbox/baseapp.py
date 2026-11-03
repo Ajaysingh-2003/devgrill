@@ -51,6 +51,8 @@ class ToxiproxySpec(_Strict):
 class ServiceSpec(_Strict):
     image: str | None = Field(default=None, max_length=200)
     build: RelPath | None = None
+    #: Runs the image built for another service (a replica needs its primary's exact data).
+    image_from: ServiceName | None = None
     env: dict[str, str] = Field(default_factory=dict)
     command: list[str] | None = None
     #: Files copied into the container before it starts: {container path: base-app path}.
@@ -77,11 +79,14 @@ class ServiceSpec(_Strict):
     depends_on: list[ServiceName] = Field(default_factory=list)
     cpus: float = Field(gt=0, le=8, default=0.5)
     memory_mb: int = Field(ge=32, le=8192, default=256)
+    #: Started only in scenarios that ask for it (`services:` in scenario.yaml), e.g. a read
+    #: replica: every other sandbox of the app boots without it.
+    optional: bool = False
 
     @model_validator(mode="after")
     def _image_or_build(self) -> ServiceSpec:
-        if bool(self.image) == bool(self.build):
-            raise ValueError("a service has exactly one of: image, build")
+        if sum(bool(x) for x in (self.image, self.build, self.image_from)) != 1:
+            raise ValueError("a service has exactly one of: image, build, image_from")
         if self.source and not self.build:
             raise ValueError("a patchable service (source) must be built from a folder")
         return self
@@ -147,6 +152,14 @@ class BaseAppSpec(_Strict):
             for dep in service.depends_on:
                 if dep not in self.services:
                     raise ValueError(f"{name} depends on unknown service {dep}")
+                if self.services[dep].optional and not service.optional:
+                    raise ValueError(f"{name} depends on optional service {dep}")
+        for name, service in self.services.items():
+            source = self.services.get(service.image_from or "")
+            if service.image_from and (source is None or not source.build):
+                raise ValueError(f"{name}: image_from must name a service built from a folder")
+        if any(s.optional and (s.shell or s.source) for s in self.services.values()):
+            raise ValueError("the shell and patchable services can't be optional")
         shells = [n for n, s in self.services.items() if s.shell]
         if len(shells) != 1:
             raise ValueError("a base app needs exactly one shell service (the player's terminal)")
@@ -156,6 +169,16 @@ class BaseAppSpec(_Strict):
                 raise ValueError(f"metric {key}: job {metric.job} is not a scraped service")
         self.ordered()  # raises on a dependency cycle
         return self
+
+    def for_scenario(self, selected: list[str]) -> BaseAppSpec:
+        """The app as one scenario runs it: the optional services it selected, no others, and
+        only the metrics of services that run."""
+        for name in selected:
+            if name not in self.services or not self.services[name].optional:
+                raise ValueError(f"{name!r} is not an optional service of {self.slug}")
+        services = {n: s for n, s in self.services.items() if not s.optional or n in selected}
+        metrics = {k: m for k, m in self.metrics.items() if m.job in services}
+        return self.model_copy(update={"services": services, "metrics": metrics})
 
     @property
     def shell_service(self) -> str:
@@ -187,6 +210,8 @@ class BaseAppSpec(_Strict):
 
     def image_for(self, service: str) -> str:
         spec = self.services[service]
+        if spec.image_from:
+            return self.image_for(spec.image_from)
         return spec.image or f"devgrill/{self.slug}-{service}:{self.version}"
 
     def ordered(self) -> list[str]:

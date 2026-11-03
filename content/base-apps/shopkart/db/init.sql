@@ -7,6 +7,8 @@
 -- fixes can add indexes or migrate them) but is not a superuser: it can't reset statistics,
 -- drop the stats extension, rewrite catalogs or write files. The verifier reads as `verifier`.
 CREATE ROLE shopkart LOGIN PASSWORD 'shopkart';
+-- Streams WAL to the optional read replica (base-app.yaml: postgres-replica).
+CREATE ROLE replicator REPLICATION LOGIN PASSWORD 'replicator';
 GRANT USAGE, CREATE ON SCHEMA public TO shopkart;
 GRANT pg_read_all_stats TO shopkart;
 REVOKE TEMPORARY ON DATABASE shopkart FROM PUBLIC;

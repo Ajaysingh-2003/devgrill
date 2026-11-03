@@ -1,0 +1,20 @@
+schema: devgrill/approach@1
+key: read-your-writes
+name: Read your own writes from the primary
+outcome: full
+idea: >-
+  When a shopper places an order, mark them in Valkey for two minutes (longer than the replica
+  can lag). Their order page and history come from the primary while marked; everyone else's
+  reads still go to the replica.
+steps:
+  - patch: read-your-writes.diff
+    service: api
+    message: "orders: read your own writes from the primary"
+pros:
+  - Shoppers always see what they just did
+  - The replica still takes the reads that can be a little behind
+cons:
+  - "A shopper who writes often reads from the primary all the time"
+  - The marker lives in Valkey; if it can't be read, play safe and use the primary
+match:
+  diff: 'primary\s*=|wrote_recently|mark_wrote'

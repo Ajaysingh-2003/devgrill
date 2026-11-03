@@ -1,5 +1,7 @@
-# Library entry only: not yet runnable (playable: false). Authoring it means adding faults,
-# load, slo, probes, hints and a page (see docs/adr/012-scenario-spec-v1.md).
+# Spec v1 (ADR 012). A config deploy sends order pages and order history to the read replica,
+# to take reads off the primary. That replica is the disaster-recovery copy in another region:
+# it applies changes a minute late, so a bad migration can be stopped before it reaches it. A
+# shopper's new order is missing from its own page for a minute, then appears.
 schema: devgrill/scenario@1
 slug: ghost-reads
 title: Ghost reads
@@ -13,20 +15,184 @@ tags:
   - postgres
   - replication
 base_app: shopkart
-playable: false
+services: [postgres-replica]
 briefing:
   story: Customers place an order, refresh the page and it is gone. A minute later it is back. Support
     is drowning.
   system:
+    - kind: lb
+      name: load-gen
+      note: shoppers checking out
+      role: path
     - kind: api
-      name: orders-api
-      note: Python, 4 pods
+      name: product-api
+      note: Python, 4 workers
       role: path
     - kind: db
-      name: postgres-primary
-      note: writes
+      name: postgres-db
+      note: primary, writes
       role: path
     - kind: db
       name: postgres-replica
-      note: reads
+      note: replica, another region
       role: side
+  goals:
+    - title: Show shoppers their own orders
+      detail: A new order is on its page and in the history the moment it is placed.
+    - title: Keep the replica useful
+      detail: Reads that can be a little behind should still come off the primary.
+
+page:
+  severity: SEV1
+  title: "orders: 1 in 3 order pages answer 404 right after checkout"
+
+charts: [order_lookup_misses, request_rate, db_connections, p99_latency_ms]
+
+faults:
+  - use: db/replica-reads
+    at: T-30m
+
+load:
+  script: shop.js
+  vus: 30
+  params:
+    HOT_KEYS: "1042,1043,2210,77,9001"
+    CHECKOUT_PAGE: "1"
+
+deploy_history:
+  - message: "catalogue: add trail-running category"
+    minutes_before: 2880
+    service: api
+  - message: "orders: show delivery estimates on the receipt"
+    minutes_before: 600
+    service: api
+  - message: "perf: read order pages from the replica"
+    minutes_before: 30
+    from_fault: db/replica-reads
+
+beats:
+  - persona: priya
+    at: T+20s
+    say: "Support's flooded: people check out, get a 'no such order' page, panic and order again. Then the first order shows up. Some customers have three of everything now."
+  - persona: arjun
+    at: T+3m
+    say: "The orders are definitely in Postgres, I can see them on the primary. Should I restart the API? Or the replica?"
+  - persona: arjun
+    when: "state:mitigated"
+    say: "No more 404s after checkout. Is the replica still doing any work, or did we just move everything back onto the primary?"
+  - persona: priya
+    when: "state:resolved"
+    say: "Verified: shoppers see their orders the moment they place them, and the replica still takes the older reads. Thanks. We'll need the postmortem, and a list of the duplicate orders to refund."
+
+constraints:
+  no_scale_up: [postgres-db]
+
+# Paged on order pages that found nothing: error rates stay clean, a 404 isn't a 5xx.
+slo:
+  p99_latency_ms: 500
+  error_rate: 0.01
+  thresholds:
+    order_lookup_misses: { lt: 0.01 }
+  for_s: 30
+
+probes:
+  - key: steady-traffic
+    kind: load
+    title: Steady traffic
+    how: Replays shoppers checking out for 45 seconds; p99 under 500 ms and under 1% failed requests.
+    target:
+      p99_ms: { lt: 500 }
+      error_rate: { lt: 0.01 }
+  - key: read-your-writes
+    kind: invariant
+    title: Shoppers see their own orders
+    how: Places 20 orders; each is on its page and in the shopper's history right away.
+    script: rw.py
+    target:
+      missing_pages: { lt: 1 }
+      missing_in_history: { lt: 1 }
+  - key: replica-offload
+    kind: invariant
+    title: The replica still carries reads
+    how: Opens 50 old orders of shoppers who haven't ordered lately; most are read on the replica.
+    script: offload.py
+    target:
+      replica_share: { gt: 0.8 }
+  - key: correctness
+    kind: hidden_test
+    title: Still correct
+    how: Real product data, 404s for unknown products, search, orders and price changes all work.
+    script: base/correctness.py
+  - key: budget
+    kind: budget
+    title: Within budget
+    how: No bigger database.
+    weight: 0.5
+
+hints:
+  tier1: "The orders are in Postgres. So where does the order page read from, and what does that copy know?"
+  tier2: "Order pages now read from postgres-replica. Compare the newest order on the primary with the newest on the replica, and look at how the replica is configured (SHOW recovery_min_apply_delay)."
+  tier3: "The replica applies changes 60 s late (it's the disaster-recovery copy), and it is 300 ms away anyway. Read your own writes: after a shopper places an order, send their order page and history to the primary for a couple of minutes (a marker in Valkey), and everyone else's reads to the replica."
+
+rubric:
+  - key: impact
+    max: 2
+    description: States what customers saw and since when.
+    anchors:
+      "0": "No impact stated."
+      "1": "Orders went missing, without how long or what customers did."
+      "2": "Since the replica deploy, a new order was missing from its own page and history for about a minute; shoppers ordered again, and some were charged twice or three times."
+  - key: root-cause
+    max: 4
+    description: Explains why orders vanished and came back.
+    anchors:
+      "0": "Blames the database, caching or the API."
+      "2": "Says reads went to a replica that was behind, without why it was a full minute."
+      "4": "The deploy sent order pages to postgres-replica, the disaster-recovery copy, which applies changes a minute late on purpose (recovery_min_apply_delay) and is in another region; a shopper reading their own new order hit a copy that didn't have it yet."
+  - key: rejected-fixes
+    max: 2
+    description: Explains why removing the delay or reading everything from the primary isn't the whole fix.
+    anchors:
+      "0": "Recommends removing the delay or rolling back as the fix."
+      "1": "Rejects one without saying why."
+      "2": "Without the delay the replica still lags, so a page opened right after checkout can still miss the order, and the delayed DR copy is lost; rolling back puts every read back on the primary; reading your own writes from the primary fixes what shoppers see and keeps the replica useful."
+  - key: prevention
+    max: 2
+    description: Proposes guards for reading from replicas.
+    anchors:
+      "0": "No action items."
+      "1": "One vague action."
+      "2": "Read-your-writes for anything a user just changed; separate the DR replica from read replicas; alert on replication lag; a test that reads an order right after placing it."
+
+ttl_minutes: 45
+par_minutes: 12
+
+replay:
+  - when: deploy.viewed
+    match: "api"
+    mark: clue
+    note: The replica deploy is where order pages started reading from postgres-replica.
+  - when: api.restarted
+    mark: lost
+    note: A restart reads from the same replica, a minute behind.
+  - when: postgres-replica.restarted
+    mark: lost
+    note: The replica comes back with the same one-minute delay.
+  - when: api.rolledback
+    mark: clue
+    note: Rolling back reads everything from the primary again.
+
+ai:
+  spoilers:
+    - "recovery_min_apply_delay"
+    - "apply delay"
+    - "read[- ]your[- ](own )?writes"
+    - "a minute (late|behind)"
+    - "(delayed|DR) (replica|copy)"
+  root_cause: >-
+    A config deploy pointed READ_DATABASE_URL, used for order pages and order history, at
+    postgres-replica. That replica is the disaster-recovery copy: it applies changes a minute
+    late on purpose (recovery_min_apply_delay = 60s) and streams from another region, 300 ms
+    away. A shopper's new order wasn't on the replica yet, so its page said "no such order"
+    for a minute. Reading a shopper's own writes from the primary (for a couple of minutes after
+    they write) fixes it and keeps the replica's other reads; removing the delay still leaves lag.

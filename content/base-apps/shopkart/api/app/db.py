@@ -79,7 +79,7 @@ def search_products(query: str, limit: int = 20) -> list[dict[str, Any]]:
 
 
 def fetch_orders_for_user(user_id: int, limit: int = 20) -> list[dict[str, Any]]:
-    with connection() as conn:
+    with read_connection() as conn:
         return conn.execute(
             "SELECT id, user_id, status, total_cents, created_at FROM orders"
             " WHERE user_id = %s ORDER BY created_at DESC LIMIT %s",
@@ -158,3 +158,38 @@ def healthy() -> bool:
         return True
     except Exception:
         return False
+
+
+#: The pool for reads that may lag a little: the replica's when READ_DATABASE_URL is set.
+read_pool = (
+    ConnectionPool(
+        settings.READ_DATABASE_URL,
+        min_size=1,
+        max_size=settings.DB_POOL_MAX,
+        timeout=settings.DB_POOL_TIMEOUT_S,
+        kwargs=_connect_kwargs(),
+        open=True,
+    )
+    if settings.READ_DATABASE_URL
+    else pool
+)
+
+
+@contextmanager
+def read_connection() -> Iterator[Connection[dict[str, Any]]]:
+    try:
+        with read_pool.connection() as conn:
+            yield conn
+    except PoolTimeout as exc:
+        log.error("read pool exhausted", extra=fields(pool_max=settings.DB_POOL_MAX))
+        raise DatabaseBusy() from exc
+
+
+def fetch_order(user_id: int, order_id: int) -> dict[str, Any] | None:
+    """One of a user's orders (the order page)."""
+    with read_connection() as conn:
+        return conn.execute(
+            "SELECT id, user_id, product_id, quantity, status, total_cents, created_at"
+            " FROM orders WHERE id = %s AND user_id = %s",
+            (order_id, user_id),
+        ).fetchone()

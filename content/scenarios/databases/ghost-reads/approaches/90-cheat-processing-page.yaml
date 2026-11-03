@@ -1,0 +1,11 @@
+schema: devgrill/approach@1
+key: cheat-processing-page
+name: Show "processing" for orders the page can't find
+outcome: fails
+cheat: true
+idea: Answer a missing order with a "processing" page, so nothing looks missing.
+steps:
+  - patch: processing-page.diff
+    service: api
+    message: "orders: show missing orders as processing"
+fails_probes: [read-your-writes]

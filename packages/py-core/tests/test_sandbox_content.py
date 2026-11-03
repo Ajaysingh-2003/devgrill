@@ -106,6 +106,7 @@ def test_quantile_needs_q() -> None:
         "evicted-at-the-worst-time",
         "retry-storm",
         "emails-sent-twice",
+        "ghost-reads",
     ],
 )
 def test_playable_scenarios_load_with_their_faults(slug: str) -> None:
@@ -148,6 +149,37 @@ def test_base_app_needs_one_shell_and_no_cycles() -> None:
     }
     with pytest.raises(ValidationError, match="cycle"):
         BaseAppSpec.model_validate({**base, "services": cyclic})
+
+
+def test_optional_services_run_only_where_a_scenario_selects_them() -> None:
+    base = {
+        "schema": "devgrill/base-app@1",
+        "slug": "tiny",
+        "name": "Tiny",
+        "version": 1,
+        "slo": {"p99_latency_ms": 500, "error_rate": 0.01},
+        "load": {"script": "load/x.js", "target": "http://api:8000"},
+        "metrics": {"lag": {"type": "gauge", "job": "replica", "metric": "lag_seconds"}},
+    }
+    services = {
+        "api": {"image": "x", "port": 8000, "shell": True},
+        "replica": {"image": "y", "metrics_port": 9187, "optional": True},
+    }
+    app = BaseAppSpec.model_validate({**base, "services": services})
+    assert set(app.for_scenario([]).services) == {"api"}
+    assert app.for_scenario([]).metrics == {}
+    assert set(app.for_scenario(["replica"]).services) == {"api", "replica"}
+    with pytest.raises(ValueError, match="not an optional service"):
+        app.for_scenario(["api"])
+    leaning = {**services, "api": {**services["api"], "depends_on": ["replica"]}}
+    with pytest.raises(ValidationError, match="optional service"):
+        BaseAppSpec.model_validate({**base, "services": leaning})
+
+
+def test_a_deploy_that_changes_config_names_its_service() -> None:
+    assert DeployEntry(message="m", minutes_before=5, service="api", env={"A": "1"}).env
+    with pytest.raises(ValidationError):
+        DeployEntry(message="m", minutes_before=5, env={"A": "1"})
 
 
 # ---------------------------------------------------------------------------- spec v1

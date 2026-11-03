@@ -1,0 +1,84 @@
+--- app/cache.py
++++ app/cache.py
+@@ -113,3 +113,23 @@
+         log.warning("cache unavailable", extra=fields(error=type(exc).__name__))
+         return None
+     return None if raw is None else int(raw)
++
++
++#: How long a shopper's reads stay on the primary after they write: longer than the replica
++#: can fall behind.
++FRESH_S = 120
++
++
++def mark_wrote(user_id: int) -> None:
++    try:
++        client.set(f"wrote:{user_id}", 1, ex=FRESH_S)
++    except redis.RedisError as exc:
++        log.warning("cache write failed", extra=fields(error=type(exc).__name__))
++
++
++def wrote_recently(user_id: int) -> bool:
++    """Whether this shopper wrote lately (or we can't tell): then read from the primary."""
++    try:
++        return bool(client.exists(f"wrote:{user_id}"))
++    except redis.RedisError:
++        return True
+--- app/db.py
++++ app/db.py
+@@ -78,8 +78,10 @@
+         ).fetchall()
+ 
+ 
+-def fetch_orders_for_user(user_id: int, limit: int = 20) -> list[dict[str, Any]]:
+-    with read_connection() as conn:
++def fetch_orders_for_user(
++    user_id: int, limit: int = 20, primary: bool = False
++) -> list[dict[str, Any]]:
++    with connection() if primary else read_connection() as conn:
+         return conn.execute(
+             "SELECT id, user_id, status, total_cents, created_at FROM orders"
+             " WHERE user_id = %s ORDER BY created_at DESC LIMIT %s",
+@@ -185,9 +187,10 @@
+         raise DatabaseBusy() from exc
+ 
+ 
+-def fetch_order(user_id: int, order_id: int) -> dict[str, Any] | None:
+-    """One of a user's orders (the order page)."""
+-    with read_connection() as conn:
++def fetch_order(user_id: int, order_id: int, primary: bool = False) -> dict[str, Any] | None:
++    """One of a user's orders (the order page). `primary`: the shopper just wrote, and the
++    replica may not have it yet."""
++    with connection() if primary else read_connection() as conn:
+         return conn.execute(
+             "SELECT id, user_id, product_id, quantity, status, total_cents, created_at"
+             " FROM orders WHERE id = %s AND user_id = %s",
+--- app/main.py
++++ app/main.py
+@@ -286,7 +286,7 @@
+ def order_page(user_id: int, order_id: int) -> dict[str, Any]:
+     """The order page shoppers land on after checkout, and come back to."""
+     DB_QUERIES.labels("fetch_order").inc()
+-    order = db.fetch_order(user_id, order_id)
++    order = db.fetch_order(user_id, order_id, primary=cache.wrote_recently(user_id))
+     if order is None:
+         ORDER_LOOKUPS.labels("missing").inc()
+         raise HTTPException(404, "no such order")
+@@ -307,6 +307,8 @@
+         order = db.create_order(body.user_id, body.product_id, body.quantity)
+     except LookupError:
+         raise HTTPException(404, "no such product") from None
++    # Read your writes: this shopper's next reads go to the primary until the replica has it.
++    cache.mark_wrote(body.user_id)
+     _check_price(order, body.product_id, body.quantity)
+     orders_queue.enqueue(order, body.product_id, body.quantity)
+     return order
+@@ -323,7 +325,7 @@
+ @app.get("/users/{user_id}/orders")
+ def user_orders(user_id: int) -> list[dict[str, Any]]:
+     DB_QUERIES.labels("fetch_orders").inc()
+-    return db.fetch_orders_for_user(user_id)
++    return db.fetch_orders_for_user(user_id, primary=cache.wrote_recently(user_id))
+ 
+ 
+ @app.get("/products/{product_id}/also-bought")

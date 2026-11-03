@@ -35,6 +35,7 @@ const CHARTS: Record<string, { title: string; format: (v: number) => string; col
   duplicate_charge_rate: { title: "Repeat charges for one order", format: formatPct, color: 4 },
   payments_charged: { title: "Charges made", format: (v) => `${Math.round(v)}/s`, color: 2 },
   payments_limited: { title: "Charges refused (rate limit)", format: (v) => `${Math.round(v)}/s`, color: 4 },
+  order_lookup_misses: { title: "Order pages that found nothing", format: formatPct, color: 4 },
   signed_out_rate: { title: "Shoppers found signed out", format: formatPct, color: 4 },
   cache_evictions: { title: "Cache evictions", format: (v) => `${compact.format(v)}/s`, color: 8 },
   cache_memory_bytes: { title: "Cache memory", format: formatBytes, color: 2 },

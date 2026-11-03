@@ -1,0 +1,10 @@
+schema: devgrill/solution@1
+summary: >-
+  The deploy sent order pages and order history to the replica, which applies changes a minute
+  late (and is 300 ms away even without the delay). A shopper's own fresh order wasn't there
+  yet. Read your writes: after a shopper places an order, read their pages from the primary for
+  a couple of minutes, and from the replica otherwise.
+steps:
+  - patch: read-your-writes.diff
+    service: api
+    message: "orders: read your own writes from the primary"

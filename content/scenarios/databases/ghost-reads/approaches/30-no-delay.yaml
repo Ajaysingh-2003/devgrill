@@ -1,0 +1,17 @@
+schema: devgrill/approach@1
+key: no-delay
+name: Take the delay off the replica
+outcome: fails
+idea: >-
+  ALTER SYSTEM SET recovery_min_apply_delay = 0 on the replica. Orders show up in a fraction of
+  a second instead of a minute, but a page opened right after checkout is still faster than the
+  replica, and the company loses its delayed disaster-recovery copy.
+steps:
+  - run: psql -U postgres -d shopkart -c "ALTER SYSTEM SET recovery_min_apply_delay = 0" -c "SELECT pg_reload_conf()"
+    service: postgres-replica
+pros:
+  - The minute-long gap is gone
+cons:
+  - "Any replica lags a little: a page opened right after checkout can still miss the order"
+  - The delayed copy was there to catch bad migrations before they reach it
+fails_probes: [read-your-writes]

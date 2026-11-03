@@ -1,0 +1,13 @@
+--- app/main.py
++++ app/main.py
+@@ -288,8 +288,8 @@
+     DB_QUERIES.labels("fetch_order").inc()
+     order = db.fetch_order(user_id, order_id)
+     if order is None:
+-        ORDER_LOOKUPS.labels("missing").inc()
+-        raise HTTPException(404, "no such order")
++        ORDER_LOOKUPS.labels("found").inc()
++        return {"id": order_id, "user_id": user_id, "status": "processing"}
+     ORDER_LOOKUPS.labels("found").inc()
+     return order
+ 

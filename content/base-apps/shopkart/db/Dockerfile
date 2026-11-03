@@ -6,6 +6,9 @@
 # directory. PGDATA lives outside the image's declared VOLUME, so the driver's tmpfs on
 # /var/lib/postgresql doesn't hide it; writes during play go to the container's own layer.
 #
+# The optional read replica runs this same image (identical data, same system identifier), as
+# a standby that streams from the primary: no base backup at boot.
+#
 # The superuser is `postgres`, with a random password generated here and thrown away: the
 # platform uses this container's local socket. The app and the player get the non-superuser
 # `shopkart` role (init.sql, ADR 015).
@@ -15,7 +18,7 @@ COPY init.sql /docker-entrypoint-initdb.d/init.sql
 RUN sed -i 's/^\texec "\$@"$/\techo "seeded"/' /usr/local/bin/docker-entrypoint.sh \
     && grep -q 'echo "seeded"' /usr/local/bin/docker-entrypoint.sh \
     && mkdir -p "$PGDATA" && chown postgres:postgres "$PGDATA" \
-    && POSTGRES_PASSWORD="$(head -c 32 /dev/urandom | base64)" docker-entrypoint.sh postgres
+    && POSTGRES_PASSWORD="$(head -c 32 /dev/urandom | base64)" docker-entrypoint.sh postgres     && echo "host replication replicator all scram-sha-256" >> "$PGDATA/pg_hba.conf"
 
 FROM postgres:18-alpine
 ENV PGDATA=/srv/pgdata

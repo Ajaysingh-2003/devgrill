@@ -197,6 +197,15 @@ class DeployEntry(_Strict):
     service: ServiceName | None = None
     #: If set, this deploy *is* the fault's change (the patch is committed under this sha).
     from_fault: FaultRef | None = None
+    #: Config this deploy changed in the service's config file. Applied when the sandbox boots,
+    #: so what runs matches `git log` (e.g. "cache: spread over three nodes").
+    env: dict[str, str] | None = None
+
+    @model_validator(mode="after")
+    def _env_needs_service(self) -> DeployEntry:
+        if self.env and (self.service is None or self.from_fault):
+            raise ValueError("a deploy with env names its service and is not a fault's deploy")
+        return self
 
 
 class Beat(_Strict):
@@ -433,6 +442,8 @@ class ScenarioSpec(_Strict):
     #: Which plans may play it live (ADR 013). The Daily Incident is open to every plan.
     access: Access = Access.PRO
 
+    #: Optional base-app services this scenario starts (a read replica, more cache nodes).
+    services: list[ServiceName] = Field(default_factory=list, max_length=6)
     page: Page | None = None
     faults: list[FaultStep] = Field(default_factory=list, max_length=6)
     load: LoadProfile | None = None
