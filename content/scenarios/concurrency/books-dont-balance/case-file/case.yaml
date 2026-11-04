@@ -1,0 +1,70 @@
+# The evidence next to this file is generated: devgrill-content record books-dont-balance
+schema: devgrill/case-file@1
+
+captures:
+  - title: Merchants whose balance doesn't match their entries
+    run: >-
+      psql -c "SELECT a.id, a.owner, a.balance_cents, e.total AS entries_cents, e.total - a.balance_cents AS short_by
+      FROM accounts a JOIN (SELECT account_id, sum(amount_cents) AS total FROM entries GROUP BY 1) e ON e.account_id = a.id
+      WHERE a.balance_cents <> e.total ORDER BY short_by DESC LIMIT 8"
+  - title: Do the entries themselves add up?
+    run: psql -c "SELECT sum(amount_cents) AS all_entries_cents, count(*) AS entries FROM entries"
+
+clues:
+  - panel: deploys
+    contains: CONSUMERS
+    note: The worker's latest deploy runs four consumers, and credits each merchant once per batch.
+  - panel: code
+    contains: balance_cents
+    note: The worker reads a merchant's balance, adds the batch in memory and writes the total back.
+  - panel: commands
+    contains: short_by
+    note: Every balance that's off is below its entries, and the entries themselves still add up to zero.
+
+root_cause:
+  options:
+    - key: a
+      text: "Consumers read a merchant's balance, add in memory and write it back, so a concurrent batch's credit is overwritten: a lost update"
+    - key: b
+      text: "A settlement that fails halfway writes its entries but not its balance update, because the two are done in separate transactions"
+    - key: c
+      text: "Two consumers can claim the same settlement batch, so merchants are credited twice and their entries end up higher than they should"
+    - key: d
+      text: "The audit reads balances and entries at slightly different moments, so settlements in flight look like a mismatch that isn't really there"
+  answer: a
+  explanation: >-
+    Balances fall below entries and stay there, and the entries are right, so money isn't being double
+    paid: a credit vanished. Two batches for one merchant read the same balance, each adds its own total
+    and writes it, and the second write wipes out the first. Four consumers and one merchant's traffic make that routine.
+
+mitigation:
+  options:
+    - key: a
+      text: "Roll the worker back to one consumer, then recompute the balances from the entries"
+    - key: b
+      text: "Run a job that recomputes every balance, and leave the worker running as it is"
+    - key: c
+      text: "Restart the worker, so its four consumers start again from a known clean state"
+    - key: d
+      text: "Stop the audit reporting while merchants are paid, so the page can be cleared"
+  answer: a
+  explanation: >-
+    Stop the race first, then repair. Recomputing alone looks right for a moment, but the next two batches
+    lose a credit again. A restart keeps the same code and the same race. Silencing the audit leaves
+    merchants short. The repair has to lock the accounts table, or credits landing mid-way are lost as well.
+
+fix:
+  options:
+    - key: a
+      text: "Credit with an increment (or lock the row first), and recompute the balances already wrong"
+    - key: b
+      text: "Credit with an increment, and leave the balances the race already got wrong as they are"
+    - key: c
+      text: "Recompute every balance from its entries every night, and leave the credit code as it is"
+    - key: d
+      text: "Report zero from the auditor while a batch is running, so the race can't raise an alert"
+  answer: a
+  explanation: >-
+    balance_cents = balance_cents + credit lets Postgres add to the balance as it is when it writes the
+    row, so concurrent batches can't overwrite each other; locking the merchants first works too. The money
+    already lost needs restoring as well, or the books stay wrong. A nightly repair leaves merchants short all day.

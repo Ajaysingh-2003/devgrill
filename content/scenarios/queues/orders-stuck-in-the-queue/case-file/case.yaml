@@ -1,0 +1,66 @@
+# The evidence next to this file is generated: devgrill-content record orders-stuck-in-the-queue
+schema: devgrill/case-file@1
+
+captures:
+  - title: The queue
+    run: >-
+      printf 'pending '; redis-cli -h redis-db llen orders:pending; printf 'dead    '; redis-cli -h redis-db llen orders:dead;
+      echo 'the next order to be processed:'; redis-cli -h redis-db lindex orders:pending -1; redis-cli -h redis-db lindex orders:pending 0
+  - title: Orders by status
+    run: psql -c "SELECT status, count(*) FROM orders GROUP BY status ORDER BY 2 DESC"
+
+clues:
+  - panel: deploys
+    contains: MAX_ATTEMPTS=0
+    note: A worker deploy set MAX_ATTEMPTS to 0, which means never give up.
+  - panel: logs
+    contains: quantity must be positive
+    note: The worker fails the same order again and again, and nothing behind it moves.
+
+root_cause:
+  options:
+    - key: a
+      text: "A bad message at the front can never be charged, and a deploy told the worker to retry forever, so every real order waits behind it"
+    - key: b
+      text: "The payment provider is refusing charges, so the worker keeps backing off and the orders in its queue are piling up behind that"
+    - key: c
+      text: "The worker has crashed and isn't consuming from the queue, so checkout's orders are piling up with nothing there to process them"
+    - key: d
+      text: "Checkout is now enqueuing orders faster than a single worker can charge them, so the queue grows however hard the worker tries"
+  answer: a
+  explanation: >-
+    The worker is up and busy, but its logs show the same order failing over and over. That's a partner's test
+    order with quantity 0, which charge() rejects every time. It used to be dead-lettered after three
+    attempts, but MAX_ATTEMPTS=0 means forever, and a failed order is retried at the head of the queue.
+
+mitigation:
+  options:
+    - key: a
+      text: "Set MAX_ATTEMPTS=3 and deploy the worker, or roll it back, so the bad order is dead-lettered"
+    - key: b
+      text: "Clear orders:pending, so that the worker starts fresh with an empty queue and catches up"
+    - key: c
+      text: "Restart the worker, so that it starts again from a clean state and picks up the backlog"
+    - key: d
+      text: "Add more consumers to the worker, so that the backlog drains even with one order failing"
+  answer: a
+  explanation: >-
+    The bad order goes to orders:dead after three tries, and the backlog drains by itself. Clearing the queue
+    is the trap: every real order in it is lost, and those customers are never charged. A restart gets the
+    same message at the front, and more consumers would all retry it too.
+
+fix:
+  options:
+    - key: a
+      text: "Bound the retries and dead-letter what can't succeed, so one bad message can't stop the line"
+    - key: b
+      text: "Delete the bad message by hand, and leave the worker retrying forever as it does right now"
+    - key: c
+      text: "Clear the queue whenever depth goes over a limit, so that the worker never falls far behind"
+    - key: d
+      text: "Skip the failed order and retry it after the others, and leave it in the queue indefinitely"
+  answer: a
+  explanation: >-
+    "Never drop an order" sounded safe, but a queue with no way out for a bad message is a queue that stops.
+    A dead-letter list keeps the order for a human and lets the rest through. Removing it by hand works today,
+    and the next bad message stops the line again, which is exactly what the check sends.

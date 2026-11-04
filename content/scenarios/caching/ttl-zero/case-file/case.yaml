@@ -1,0 +1,66 @@
+# The evidence next to this file is generated: devgrill-content record ttl-zero
+schema: devgrill/case-file@1
+
+captures:
+  - title: What the cache has stored
+    run: redis-cli -h redis-db info keyspace; redis-cli -h redis-db dbsize
+  - title: Who is reading products
+    run: >-
+      psql -c "SELECT calls, round(mean_exec_time::numeric, 1) AS mean_ms, left(query, 70) AS query
+      FROM pg_stat_statements WHERE query ILIKE '%products%' ORDER BY calls DESC LIMIT 5"
+
+clues:
+  - panel: deploys
+    contains: CACHE_TTL_SECONDS=0
+    note: The ops deploy just before the alert set the cache TTL to 0.
+  - panel: code
+    contains: CACHE_TTL_SECONDS
+    note: The API takes its TTL from config/app.env, and it only stores a product when that TTL is above zero.
+
+root_cause:
+  options:
+    - key: a
+      text: "A config deploy set the TTL to 0, so the API stopped storing products and every read went to Postgres"
+    - key: b
+      text: "Redis restarted and lost its data, so product reads keep missing until the cache has warmed up again"
+    - key: c
+      text: "The catalogue deploy added a category whose query scans the whole products table on every page view"
+    - key: d
+      text: "Traffic has grown past what Redis can serve, so the extra product reads are overflowing to Postgres"
+  answer: a
+  explanation: >-
+    The cache hit rate is flat at zero, the cache holds no product keys, and the last deploy set the
+    TTL to 0, which the API treats as "don't cache". Traffic didn't grow, and Redis stayed up the whole
+    time: nobody asked it to store anything.
+
+mitigation:
+  options:
+    - key: a
+      text: "Roll back the ops deploy, or set the TTL back to 300 and deploy"
+    - key: b
+      text: "Restart Redis, so the cache starts clean and fills up again"
+    - key: c
+      text: "Move Postgres to a bigger instance, so it can absorb the reads"
+    - key: d
+      text: "Answer 503 for product pages, until the load on Postgres drops"
+  answer: a
+  explanation: >-
+    One config value caused this, so undoing it is the fastest safe move: reads hit the cache again
+    within seconds. A restart changes nothing because the cache was healthy, a bigger database pays
+    for the waste, and shedding load makes customers pay for it.
+
+fix:
+  options:
+    - key: a
+      text: "Keep a positive TTL, and reject 0 in a config check or alert on the hit rate, so it can't slip in"
+    - key: b
+      text: "Copy the sale's five products into the API's memory at startup, so those reads never reach Postgres"
+    - key: c
+      text: "Report every product lookup as a cache hit, so the capacity alert goes quiet and stays quiet"
+    - key: d
+      text: "Reset Postgres's statistics after each deploy, so the capacity alert always starts from zero"
+  answer: a
+  explanation: >-
+    The value is the bug, and the durable part is noticing the next one, with a config check or a
+    hit-rate alert. A copy in memory never sees a price change. The other two only hide the load from
+    the people who need to see it: Postgres does the same work either way.

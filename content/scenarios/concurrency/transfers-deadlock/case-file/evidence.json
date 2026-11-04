@@ -1,0 +1,3504 @@
+{
+ "breached_after_s": 6.4,
+ "cache": null,
+ "changes": {
+  "0eb994a5d21766eb65c2e0c0f7264b6e38a75cf3": {
+   "at": 1793722366,
+   "author": "deploy-bot",
+   "diff": "diff --git a/CHANGELOG.md b/CHANGELOG.md\nindex 8b83762..154bf5c 100644\n--- a/CHANGELOG.md\n+++ b/CHANGELOG.md\n@@ -1 +1,2 @@\n - accounts: show the last 20 entries on the statement\n+- payments: show the merchant name on receipts\n",
+   "files": [
+    "CHANGELOG.md"
+   ],
+   "message": "payments: show the merchant name on receipts",
+   "service": "api",
+   "sha": "0eb994a5d21766eb65c2e0c0f7264b6e38a75cf3",
+   "short": "0eb994a"
+  },
+  "3fa744a6447e93a0cecf3035cdcf9052c7e25aa4": {
+   "at": 1790957566,
+   "author": "priya",
+   "diff": "diff --git a/Dockerfile b/Dockerfile\nnew file mode 100644\nindex 0000000..7b3933c\n--- /dev/null\n+++ b/Dockerfile\n@@ -0,0 +1,8 @@\n+FROM python:3.14-slim\n+ENV PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1\n+RUN pip install --quiet \"psycopg[binary]==3.3.6\" \"prometheus-client==0.26.0\"\n+WORKDIR /srv/worker\n+COPY worker.py ./\n+COPY config ./config\n+EXPOSE 9100\n+CMD [\"python\", \"worker.py\"]\ndiff --git a/config/worker.env b/config/worker.env\nnew file mode 100644\nindex 0000000..5548993\n--- /dev/null\n+++ b/config/worker.env\n@@ -0,0 +1,9 @@\n+# ledger worker runtime config. Ships with every deploy (`devgrill deploy worker`).\n+\n+# Settlement consumers (threads), and how many settlements each pays out per transaction.\n+CONSUMERS=1\n+BATCH=20\n+# Seconds a consumer waits when there is nothing to settle.\n+POLL_S=0.2\n+# Seconds between audits of the books.\n+AUDIT_EVERY_S=5\ndiff --git a/worker.py b/worker.py\nnew file mode 100644\nindex 0000000..422acb9\n--- /dev/null\n+++ b/worker.py\n@@ -0,0 +1,211 @@\n+\"\"\"Ledger worker: pays merchants out for card payments, and audits the books.\n+\n+Settlement: each card payment leaves a pending settlement. Consumers take them in batches\n+(FOR UPDATE SKIP LOCKED, so two consumers never take the same one) and pay each one from the\n+house's clearing balance to the merchant: a transfer, two entries and both balances, in the\n+batch's transaction.\n+\n+Audit: every AUDIT_EVERY_S seconds the worker checks the books in one snapshot: customer\n+accounts below zero, accounts whose balance isn't the sum of their entries, and whether all\n+balances still add up to zero. Logs JSON like the API; metrics on :9100. Tunables live in\n+config/worker.env, deployed with the code.\n+\"\"\"\n+\n+from __future__ import annotations\n+\n+import json\n+import logging\n+import os\n+import signal\n+import sys\n+import threading\n+import time\n+from pathlib import Path\n+from typing import Any\n+\n+import psycopg\n+from prometheus_client import Counter, Gauge, start_http_server\n+\n+\n+def _load_env_file(path: Path) -> None:\n+    \"\"\"config/worker.env: KEY=value lines; the process environment wins.\"\"\"\n+    if not path.is_file():\n+        return\n+    for raw in path.read_text(encoding=\"utf-8\").splitlines():\n+        line = raw.strip()\n+        if line and not line.startswith(\"#\") and \"=\" in line:\n+            name, value = line.split(\"=\", 1)\n+            os.environ.setdefault(name.strip(), value.strip())\n+\n+\n+_load_env_file(Path(__file__).resolve().parent / \"config\" / \"worker.env\")\n+\n+DATABASE_URL = os.environ.get(\"DATABASE_URL\", \"postgresql://ledger:ledger@postgres-db:5432/ledger\")\n+HOUSE_ACCOUNT = 0\n+#: Settlement consumers (threads), and settlements each takes per transaction.\n+CONSUMERS = int(os.environ.get(\"CONSUMERS\", \"1\"))\n+BATCH = int(os.environ.get(\"BATCH\", \"20\"))\n+POLL_S = float(os.environ.get(\"POLL_S\", \"0.2\"))\n+AUDIT_EVERY_S = float(os.environ.get(\"AUDIT_EVERY_S\", \"5\"))\n+\n+SETTLED = Counter(\"settlements_processed_total\", \"Settlements paid out\", [\"result\"])\n+PENDING = Gauge(\"settlements_pending\", \"Settlements waiting to be paid out\")\n+OLDEST = Gauge(\"settlements_oldest_seconds\", \"Age of the oldest pending settlement\")\n+NEGATIVE = Gauge(\"ledger_negative_balances\", \"Customer accounts below zero\")\n+ACCOUNTS_OFF = Gauge(\"ledger_accounts_off\", \"Accounts whose balance isn't the sum of entries\")\n+BOOKS_OFF = Gauge(\"ledger_books_off_cents\", \"How far all balances are from adding up to zero\")\n+\n+\n+class JsonFormatter(logging.Formatter):\n+    def format(self, record: logging.LogRecord) -> str:\n+        entry: dict[str, Any] = {\n+            \"ts\": time.strftime(\"%Y-%m-%dT%H:%M:%S\", time.gmtime(record.created))\n+            + f\".{int(record.msecs):03d}Z\",\n+            \"level\": record.levelname.lower(),\n+            \"service\": \"worker\",\n+            \"msg\": record.getMessage(),\n+        }\n+        entry.update({k[2:]: v for k, v in record.__dict__.items() if k.startswith(\"x_\")})\n+        if record.exc_info:\n+            entry[\"exc\"] = self.formatException(record.exc_info)\n+        return json.dumps(entry, separators=(\",\", \":\"))\n+\n+\n+handler = logging.StreamHandler(sys.stdout)\n+handler.setFormatter(JsonFormatter())\n+logging.basicConfig(level=logging.INFO, handlers=[handler])\n+log = logging.getLogger(\"worker\")\n+\n+running = True\n+\n+\n+def stop(*_: Any) -> None:\n+    global running\n+    running = False\n+\n+\n+def pay_out(conn: psycopg.Connection[Any], settlement: tuple[int, int, int]) -> None:\n+    \"\"\"Moves one settlement's amount from the house's clearing balance to the merchant (the\n+    house's balance is debited once per batch, by settle_batch).\"\"\"\n+    settlement_id, merchant_id, amount = settlement\n+    row = conn.execute(\n+        \"INSERT INTO transfers (from_account, to_account, amount_cents, kind)\"\n+        \" VALUES (%s, %s, %s, 'settlement') RETURNING id\",\n+        (HOUSE_ACCOUNT, merchant_id, amount),\n+    ).fetchone()\n+    assert row is not None\n+    transfer_id = row[0]\n+    conn.execute(\n+        \"INSERT INTO entries (transfer_id, account_id, amount_cents)\"\n+        \" VALUES (%s, %s, %s), (%s, %s, %s)\",\n+        (transfer_id, merchant_id, amount, transfer_id, HOUSE_ACCOUNT, -amount),\n+    )\n+    conn.execute(\n+        \"UPDATE accounts SET balance_cents = balance_cents + %s, updated_at = now() WHERE id = %s\",\n+        (amount, merchant_id),\n+    )\n+    conn.execute(\n+        \"UPDATE settlements SET status = 'settled', transfer_id = %s, settled_at = now()\"\n+        \" WHERE id = %s\",\n+        (transfer_id, settlement_id),\n+    )\n+\n+\n+def settle_batch(conn: psycopg.Connection[Any]) -> int:\n+    \"\"\"Pays out up to BATCH pending settlements in one transaction; returns how many.\"\"\"\n+    with conn.transaction():\n+        batch = conn.execute(\n+            \"SELECT id, merchant_id, amount_cents FROM settlements WHERE status = 'pending'\"\n+            \" ORDER BY id LIMIT %s FOR UPDATE SKIP LOCKED\",\n+            (BATCH,),\n+        ).fetchall()\n+        # Credit merchants in id order, as transfers lock accounts: a batch and a transfer\n+        # between two merchants never take the same two locks in opposite orders.\n+        batch.sort(key=lambda settlement: settlement[1])\n+        for settlement in batch:\n+            pay_out(conn, settlement)\n+        if batch:\n+            # Every payment locks the house's row too: debit it once, last, so the batch\n+            # holds that lock for a moment instead of for the whole batch.\n+            conn.execute(\n+                \"UPDATE accounts SET balance_cents = balance_cents - %s, updated_at = now()\"\n+                \" WHERE id = %s\",\n+                (sum(settlement[2] for settlement in batch), HOUSE_ACCOUNT),\n+            )\n+    SETTLED.labels(\"paid\").inc(len(batch))\n+    return len(batch)\n+\n+\n+def consume() -> None:\n+    while running:\n+        try:\n+            with psycopg.connect(DATABASE_URL, autocommit=True) as conn:\n+                while running:\n+                    if settle_batch(conn) < BATCH:\n+                        time.sleep(POLL_S)\n+        except psycopg.Error as exc:\n+            log.error(\"settlement failed, retrying\", extra={\"x_error\": str(exc).strip()[:300]})\n+            SETTLED.labels(\"failed\").inc()\n+            time.sleep(1)\n+\n+\n+AUDIT_SQL = \"\"\"\n+SELECT\n+  (SELECT count(*) FROM accounts WHERE kind <> 'house' AND balance_cents < 0),\n+  (SELECT count(*) FROM accounts a\n+     LEFT JOIN (SELECT account_id, sum(amount_cents) AS total FROM entries GROUP BY account_id) e\n+       ON e.account_id = a.id\n+    WHERE a.balance_cents <> coalesce(e.total, 0)),\n+  (SELECT coalesce(sum(balance_cents), 0) FROM accounts),\n+  (SELECT count(*) FROM settlements WHERE status = 'pending'),\n+  (SELECT coalesce(extract(epoch FROM now() - min(created_at)), 0) FROM settlements\n+    WHERE status = 'pending')\n+\"\"\"\n+\n+\n+def audit() -> None:\n+    while running:\n+        try:\n+            with psycopg.connect(DATABASE_URL, autocommit=True) as conn:\n+                while running:\n+                    row = conn.execute(AUDIT_SQL).fetchone()\n+                    assert row is not None\n+                    negative, off, books, pending, oldest = row\n+                    NEGATIVE.set(negative)\n+                    ACCOUNTS_OFF.set(off)\n+                    BOOKS_OFF.set(abs(books))\n+                    PENDING.set(pending)\n+                    OLDEST.set(float(oldest))\n+                    if negative or off or books:\n+                        log.error(\n+                            \"books don't balance\",\n+                            extra={\n+                                \"x_negative_accounts\": negative,\n+                                \"x_accounts_off\": off,\n+                                \"x_books_off_cents\": books,\n+                            },\n+                        )\n+                    time.sleep(AUDIT_EVERY_S)\n+        except psycopg.Error as exc:\n+            log.error(\"audit failed, retrying\", extra={\"x_error\": str(exc).strip()[:300]})\n+            time.sleep(2)\n+\n+\n+def main() -> None:\n+    signal.signal(signal.SIGTERM, stop)\n+    signal.signal(signal.SIGINT, stop)\n+    start_http_server(9100)\n+    log.info(\"started\", extra={\"x_consumers\": CONSUMERS, \"x_batch\": BATCH})\n+    threads = [threading.Thread(target=consume, daemon=True) for _ in range(CONSUMERS)]\n+    threads.append(threading.Thread(target=audit, daemon=True))\n+    for thread in threads:\n+        thread.start()\n+    while running:\n+        time.sleep(0.5)\n+    # A deploy stops the worker: each consumer finishes its batch before the process exits.\n+    for thread in threads:\n+        thread.join(timeout=4)\n+\n+\n+if __name__ == \"__main__\":\n+    main()\n",
+   "files": [
+    "Dockerfile",
+    "config/worker.env",
+    "worker.py"
+   ],
+   "message": "Ledger worker: initial import",
+   "service": "worker",
+   "sha": "3fa744a6447e93a0cecf3035cdcf9052c7e25aa4",
+   "short": "3fa744a"
+  },
+  "cba887d535fa6981572be9ce2278074a00754042": {
+   "at": 1790957565,
+   "author": "priya",
+   "diff": "diff --git a/Dockerfile b/Dockerfile\nnew file mode 100644\nindex 0000000..11923a9\n--- /dev/null\n+++ b/Dockerfile\n@@ -0,0 +1,19 @@\n+# Ledger API image. The same source is a git repo in the tools container (/workspace/api);\n+# `devgrill deploy` copies app/ and config/ from there into /srv/app and restarts this service.\n+FROM python:3.14-slim\n+\n+ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1 \\\n+    PROMETHEUS_MULTIPROC_DIR=/tmp/prometheus\n+RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*\n+\n+WORKDIR /srv/app\n+COPY pyproject.toml ./\n+RUN pip install --quiet \\\n+    \"fastapi==0.143.3\" \"uvicorn==0.54.0\" \"psycopg[binary,pool]==3.3.6\" \\\n+    \"prometheus-client==0.26.0\"\n+COPY app ./app\n+COPY config ./config\n+\n+EXPOSE 8000\n+# Metric files from a previous run would double-count after a restart: start clean.\n+CMD [\"sh\", \"-c\", \"rm -rf \\\"$PROMETHEUS_MULTIPROC_DIR\\\" && mkdir -p \\\"$PROMETHEUS_MULTIPROC_DIR\\\" && exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4 --no-access-log\"]\ndiff --git a/app/__init__.py b/app/__init__.py\nnew file mode 100644\nindex 0000000..e69de29\ndiff --git a/app/db.py b/app/db.py\nnew file mode 100644\nindex 0000000..a109483\n--- /dev/null\n+++ b/app/db.py\n@@ -0,0 +1,136 @@\n+\"\"\"Postgres access through a connection pool (psycopg 3). Every movement of money is one\n+transaction: a transfer row, two entries that sum to zero, and both balances.\"\"\"\n+\n+from __future__ import annotations\n+\n+import logging\n+from collections.abc import Iterator\n+from contextlib import contextmanager\n+from typing import Any\n+\n+from prometheus_client import Counter\n+from psycopg import Connection\n+from psycopg.rows import dict_row\n+from psycopg_pool import ConnectionPool, PoolTimeout\n+\n+from app import settings\n+from app.logging_setup import fields\n+\n+log = logging.getLogger(\"db\")\n+\n+#: Debits that left a customer's wallet below zero. Never meant to happen.\n+OVERDRAFTS = Counter(\"ledger_overdrafts_total\", \"Debits that took a wallet below zero\")\n+\n+\n+class DatabaseBusy(Exception):\n+    \"\"\"No connection became free within the pool timeout.\"\"\"\n+\n+\n+class InsufficientFunds(Exception):\n+    \"\"\"The payer's balance doesn't cover the amount.\"\"\"\n+\n+\n+pool = ConnectionPool(\n+    settings.DATABASE_URL,\n+    min_size=settings.DB_POOL_MIN,\n+    max_size=settings.DB_POOL_MAX,\n+    timeout=settings.DB_POOL_TIMEOUT_S,\n+    kwargs={\"row_factory\": dict_row},\n+    open=False,\n+)\n+\n+\n+@contextmanager\n+def connection() -> Iterator[Connection[dict[str, Any]]]:\n+    try:\n+        with pool.connection() as conn:\n+            yield conn\n+    except PoolTimeout as exc:\n+        log.error(\"pool exhausted\", extra=fields(pool_max=settings.DB_POOL_MAX))\n+        raise DatabaseBusy() from exc\n+\n+\n+def account(account_id: int) -> dict[str, Any] | None:\n+    with connection() as conn:\n+        return conn.execute(\n+            \"SELECT id, owner, kind, balance_cents, updated_at FROM accounts WHERE id = %s\",\n+            (account_id,),\n+        ).fetchone()\n+\n+\n+def _move(\n+    conn: Connection[dict[str, Any]], from_id: int, to_id: int, amount: int, kind: str\n+) -> dict[str, Any]:\n+    \"\"\"Moves `amount` from one account to another inside the caller's transaction.\"\"\"\n+    # Lock both accounts, always in id order: two transfers in opposite directions take the\n+    # locks in the same order, so neither can hold one row while waiting for the other, and\n+    # the balance read here can't change before the debit below.\n+    rows = conn.execute(\n+        \"SELECT id, kind, balance_cents FROM accounts WHERE id = ANY(%s) ORDER BY id FOR UPDATE\",\n+        ([from_id, to_id],),\n+    ).fetchall()\n+    accounts = {row[\"id\"]: row for row in rows}\n+    if from_id not in accounts or to_id not in accounts:\n+        raise LookupError(\"account\")\n+    payer = accounts[from_id]\n+    if payer[\"kind\"] != \"house\" and payer[\"balance_cents\"] < amount:\n+        raise InsufficientFunds()\n+    transfer = conn.execute(\n+        \"INSERT INTO transfers (from_account, to_account, amount_cents, kind)\"\n+        \" VALUES (%s, %s, %s, %s) RETURNING id, from_account, to_account, amount_cents, kind,\"\n+        \" created_at\",\n+        (from_id, to_id, amount, kind),\n+    ).fetchone()\n+    assert transfer is not None\n+    conn.execute(\n+        \"INSERT INTO entries (transfer_id, account_id, amount_cents)\"\n+        \" VALUES (%s, %s, %s), (%s, %s, %s)\",\n+        (transfer[\"id\"], to_id, amount, transfer[\"id\"], from_id, -amount),\n+    )\n+    debited = conn.execute(\n+        \"UPDATE accounts SET balance_cents = balance_cents - %s, updated_at = now() WHERE id = %s\"\n+        \" RETURNING kind, balance_cents\",\n+        (amount, from_id),\n+    ).fetchone()\n+    if debited and debited[\"kind\"] != \"house\" and debited[\"balance_cents\"] < 0:\n+        OVERDRAFTS.inc()\n+        log.error(\n+            \"wallet overdrawn\",\n+            extra=fields(account_id=from_id, balance_cents=debited[\"balance_cents\"]),\n+        )\n+    conn.execute(\n+        \"UPDATE accounts SET balance_cents = balance_cents + %s, updated_at = now() WHERE id = %s\",\n+        (amount, to_id),\n+    )\n+    return transfer\n+\n+\n+def transfer(from_id: int, to_id: int, amount: int) -> dict[str, Any]:\n+    with connection() as conn, conn.transaction():\n+        return _move(conn, from_id, to_id, amount, \"transfer\")\n+\n+\n+def pay(customer_id: int, merchant_id: int, amount: int) -> dict[str, Any]:\n+    \"\"\"A card payment: the customer is debited now (into the house's clearing balance), and the\n+    merchant is paid out later by the worker's settlement run.\"\"\"\n+    with connection() as conn, conn.transaction():\n+        merchant = conn.execute(\n+            \"SELECT id FROM accounts WHERE id = %s AND kind = 'merchant'\", (merchant_id,)\n+        ).fetchone()\n+        if merchant is None:\n+            raise LookupError(\"merchant\")\n+        payment = _move(conn, customer_id, settings.HOUSE_ACCOUNT, amount, \"payment\")\n+        conn.execute(\n+            \"INSERT INTO settlements (merchant_id, amount_cents) VALUES (%s, %s)\",\n+            (merchant_id, amount),\n+        )\n+        return payment\n+\n+\n+def healthy() -> bool:\n+    try:\n+        with connection() as conn:\n+            conn.execute(\"SELECT 1\")\n+        return True\n+    except Exception:\n+        return False\ndiff --git a/app/logging_setup.py b/app/logging_setup.py\nnew file mode 100644\nindex 0000000..1130280\n--- /dev/null\n+++ b/app/logging_setup.py\n@@ -0,0 +1,45 @@\n+\"\"\"JSON logs on stdout, one object per line, so the Logs panel can filter by field.\"\"\"\n+\n+from __future__ import annotations\n+\n+import json\n+import logging\n+import sys\n+import time\n+from typing import Any\n+\n+from app import settings\n+\n+\n+class JsonFormatter(logging.Formatter):\n+    def format(self, record: logging.LogRecord) -> str:\n+        entry: dict[str, Any] = {\n+            \"ts\": time.strftime(\"%Y-%m-%dT%H:%M:%S\", time.gmtime(record.created))\n+            + f\".{int(record.msecs):03d}Z\",\n+            \"level\": record.levelname.lower(),\n+            \"service\": settings.SERVICE_NAME,\n+            \"logger\": record.name,\n+            \"msg\": record.getMessage(),\n+        }\n+        for key, value in record.__dict__.items():\n+            if key.startswith(\"x_\"):\n+                entry[key[2:]] = value\n+        if record.exc_info:\n+            entry[\"exc\"] = self.formatException(record.exc_info)\n+        return json.dumps(entry, separators=(\",\", \":\"))\n+\n+\n+def configure() -> None:\n+    handler = logging.StreamHandler(sys.stdout)\n+    handler.setFormatter(JsonFormatter())\n+    root = logging.getLogger()\n+    root.handlers[:] = [handler]\n+    root.setLevel(logging.INFO)\n+    # uvicorn's access log duplicates our request log; keep its errors only.\n+    logging.getLogger(\"uvicorn.access\").disabled = True\n+    logging.getLogger(\"uvicorn.error\").setLevel(logging.WARNING)\n+\n+\n+def fields(**values: Any) -> dict[str, Any]:\n+    \"\"\"`log.info(\"cache miss\", extra=fields(product_id=42))` -> a `product_id` JSON field.\"\"\"\n+    return {f\"x_{key}\": value for key, value in values.items()}\ndiff --git a/app/main.py b/app/main.py\nnew file mode 100644\nindex 0000000..7486636\n--- /dev/null\n+++ b/app/main.py\n@@ -0,0 +1,174 @@\n+\"\"\"Ledger payments API: wallets, transfers and card payments. Small on purpose: every line is\n+something an on-call engineer may have to read at 2 a.m., and the money has to add up.\"\"\"\n+\n+from __future__ import annotations\n+\n+import logging\n+import time\n+from collections.abc import AsyncIterator\n+from contextlib import asynccontextmanager\n+from typing import Any\n+\n+from fastapi import FastAPI, HTTPException, Request, Response\n+from fastapi.responses import JSONResponse\n+from prometheus_client import (\n+    CONTENT_TYPE_LATEST,\n+    CollectorRegistry,\n+    Counter,\n+    Gauge,\n+    Histogram,\n+    generate_latest,\n+    multiprocess,\n+)\n+from psycopg import errors as pg_errors\n+from pydantic import BaseModel, Field\n+\n+from app import db, logging_setup, settings\n+from app.logging_setup import fields\n+\n+logging_setup.configure()\n+log = logging.getLogger(\"api\")\n+\n+REQUESTS = Counter(\"http_requests_total\", \"HTTP requests\", [\"method\", \"route\", \"status\"])\n+LATENCY = Histogram(\n+    \"http_request_duration_seconds\",\n+    \"Request latency\",\n+    [\"route\"],\n+    buckets=(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10),\n+)\n+#: Money movements by outcome: ok, insufficient (refused), or failed.\n+MOVEMENTS = Counter(\"ledger_movements_total\", \"Transfers and payments\", [\"kind\", \"result\"])\n+# Four uvicorn processes share these through PROMETHEUS_MULTIPROC_DIR.\n+DB_POOL_IN_USE = Gauge(\n+    \"db_pool_in_use\", \"Connections checked out of the pool\", multiprocess_mode=\"livesum\"\n+)\n+BUILD = Gauge(\"build_info\", \"Build\", [\"sha\"], multiprocess_mode=\"max\")\n+\n+\n+@asynccontextmanager\n+async def lifespan(app: FastAPI) -> AsyncIterator[None]:\n+    BUILD.labels(sha=settings.GIT_SHA).set(1)\n+    db.pool.open()\n+    log.info(\"started\", extra=fields(sha=settings.GIT_SHA))\n+    try:\n+        yield\n+    finally:\n+        db.pool.close()\n+\n+\n+app = FastAPI(title=\"Ledger\", lifespan=lifespan)\n+\n+\n+def _route_name(request: Request) -> str:\n+    route = request.scope.get(\"route\")\n+    return getattr(route, \"path\", \"unmatched\")\n+\n+\n+@app.middleware(\"http\")\n+async def observe(request: Request, call_next: Any) -> Response:\n+    started = time.perf_counter()\n+    try:\n+        response: Response = await call_next(request)\n+    except Exception:\n+        name = _route_name(request)\n+        REQUESTS.labels(request.method, name, \"500\").inc()\n+        LATENCY.labels(name).observe(time.perf_counter() - started)\n+        log.exception(\"request failed\", extra=fields(route=name))\n+        raise\n+    name = _route_name(request)\n+    elapsed = time.perf_counter() - started\n+    stats = db.pool.get_stats()\n+    DB_POOL_IN_USE.set(stats.get(\"pool_size\", 0) - stats.get(\"pool_available\", 0))\n+    REQUESTS.labels(request.method, name, str(response.status_code)).inc()\n+    LATENCY.labels(name).observe(elapsed)\n+    if response.status_code >= 500 or elapsed > 1.0:\n+        log.warning(\n+            \"slow or failed request\",\n+            extra=fields(route=name, status=response.status_code, ms=round(elapsed * 1000)),\n+        )\n+    return response\n+\n+\n+@app.exception_handler(db.DatabaseBusy)\n+async def _busy(request: Request, exc: db.DatabaseBusy) -> JSONResponse:\n+    return JSONResponse({\"error\": \"database busy, try again\"}, status_code=503)\n+\n+\n+@app.exception_handler(pg_errors.DeadlockDetected)\n+async def _deadlock(request: Request, exc: pg_errors.DeadlockDetected) -> JSONResponse:\n+    log.error(\"deadlock detected\", extra=fields(route=_route_name(request), error=str(exc).strip()))\n+    return JSONResponse({\"error\": \"the transfer failed, try again\"}, status_code=503)\n+\n+\n+@app.exception_handler(pg_errors.QueryCanceled)\n+async def _cancelled(request: Request, exc: pg_errors.QueryCanceled) -> JSONResponse:\n+    log.error(\"query cancelled\", extra=fields(route=_route_name(request), error=str(exc).strip()))\n+    return JSONResponse({\"error\": \"the database took too long\"}, status_code=503)\n+\n+\n+@app.get(\"/healthz\")\n+def healthz() -> dict[str, Any]:\n+    return {\"status\": \"ok\", \"sha\": settings.GIT_SHA}\n+\n+\n+@app.get(\"/readyz\")\n+def readyz() -> JSONResponse:\n+    ok = db.healthy()\n+    return JSONResponse({\"database\": ok}, status_code=200 if ok else 503)\n+\n+\n+@app.get(\"/metrics\")\n+def metrics() -> Response:\n+    registry = CollectorRegistry()\n+    multiprocess.MultiProcessCollector(registry)\n+    return Response(generate_latest(registry), media_type=CONTENT_TYPE_LATEST)\n+\n+\n+@app.get(\"/accounts/{account_id}\")\n+def get_account(account_id: int) -> dict[str, Any]:\n+    account = db.account(account_id)\n+    if account is None:\n+        raise HTTPException(404, \"no such account\")\n+    return account\n+\n+\n+class TransferIn(BaseModel):\n+    from_account: int = Field(ge=0)\n+    to_account: int = Field(ge=0)\n+    amount_cents: int = Field(gt=0, le=10_000_000)\n+\n+\n+@app.post(\"/transfers\", status_code=201)\n+def create_transfer(body: TransferIn) -> dict[str, Any]:\n+    if body.from_account == body.to_account:\n+        raise HTTPException(422, \"an account can't pay itself\")\n+    return _record(\n+        \"transfer\", lambda: db.transfer(body.from_account, body.to_account, body.amount_cents)\n+    )\n+\n+\n+class PaymentIn(BaseModel):\n+    account_id: int = Field(ge=1)\n+    merchant_id: int = Field(ge=1)\n+    amount_cents: int = Field(gt=0, le=10_000_000)\n+\n+\n+@app.post(\"/payments\", status_code=201)\n+def create_payment(body: PaymentIn) -> dict[str, Any]:\n+    return _record(\"payment\", lambda: db.pay(body.account_id, body.merchant_id, body.amount_cents))\n+\n+\n+def _record(kind: str, move: Any) -> dict[str, Any]:\n+    try:\n+        result: dict[str, Any] = move()\n+    except LookupError:\n+        MOVEMENTS.labels(kind, \"refused\").inc()\n+        raise HTTPException(404, \"no such account\") from None\n+    except db.InsufficientFunds:\n+        MOVEMENTS.labels(kind, \"insufficient\").inc()\n+        raise HTTPException(409, \"insufficient funds\") from None\n+    except Exception:\n+        MOVEMENTS.labels(kind, \"failed\").inc()\n+        raise\n+    MOVEMENTS.labels(kind, \"ok\").inc()\n+    return result\ndiff --git a/app/settings.py b/app/settings.py\nnew file mode 100644\nindex 0000000..c2649ba\n--- /dev/null\n+++ b/app/settings.py\n@@ -0,0 +1,41 @@\n+\"\"\"Configuration: connection strings from the environment, tunables from config/app.env.\n+\n+config/app.env is part of the repo and ships with every deploy, so a config change is a\n+commit you can find in `git log`, revert, and redeploy. The environment wins over the file.\n+\"\"\"\n+\n+from __future__ import annotations\n+\n+import os\n+from pathlib import Path\n+\n+\n+def _load_env_file(path: Path) -> None:\n+    if not path.is_file():\n+        return\n+    for raw in path.read_text(encoding=\"utf-8\").splitlines():\n+        line = raw.strip()\n+        if not line or line.startswith(\"#\") or \"=\" not in line:\n+            continue\n+        name, value = line.split(\"=\", 1)\n+        os.environ.setdefault(name.strip(), value.strip())\n+\n+\n+_load_env_file(Path(__file__).resolve().parent.parent / \"config\" / \"app.env\")\n+\n+\n+def _int(name: str, default: int) -> int:\n+    return int(os.environ.get(name, default))\n+\n+\n+DATABASE_URL = os.environ.get(\"DATABASE_URL\", \"postgresql://ledger:ledger@postgres-db:5432/ledger\")\n+DB_POOL_MIN = _int(\"DB_POOL_MIN\", 2)\n+DB_POOL_MAX = _int(\"DB_POOL_MAX\", 10)\n+DB_POOL_TIMEOUT_S = float(os.environ.get(\"DB_POOL_TIMEOUT_S\", \"5\"))\n+\n+#: The house account: it funds opening balances and clears card payments until the\n+#: merchant is paid out. It is the only account allowed below zero.\n+HOUSE_ACCOUNT = 0\n+\n+SERVICE_NAME = os.environ.get(\"SERVICE_NAME\", \"ledger-api\")\n+GIT_SHA = os.environ.get(\"GIT_SHA\", \"dev\")\ndiff --git a/config/app.env b/config/app.env\nnew file mode 100644\nindex 0000000..54baede\n--- /dev/null\n+++ b/config/app.env\n@@ -0,0 +1,8 @@\n+# ledger-api runtime config. Ships with\n(cut short in this recording)",
+   "files": [
+    "Dockerfile",
+    "app/__init__.py",
+    "app/db.py",
+    "app/logging_setup.py",
+    "app/main.py",
+    "app/settings.py",
+    "config/app.env",
+    "pyproject.toml"
+   ],
+   "message": "Ledger api: initial import",
+   "service": "api",
+   "sha": "cba887d535fa6981572be9ce2278074a00754042",
+   "short": "cba887d"
+  },
+  "cbc0dc75a04820af50a0f0877352f16964f4a295": {
+   "at": 1793549565,
+   "author": "deploy-bot",
+   "diff": "diff --git a/CHANGELOG.md b/CHANGELOG.md\nnew file mode 100644\nindex 0000000..8b83762\n--- /dev/null\n+++ b/CHANGELOG.md\n@@ -0,0 +1 @@\n+- accounts: show the last 20 entries on the statement\n",
+   "files": [
+    "CHANGELOG.md"
+   ],
+   "message": "accounts: show the last 20 entries on the statement",
+   "service": "api",
+   "sha": "cbc0dc75a04820af50a0f0877352f16964f4a295",
+   "short": "cbc0dc7"
+  },
+  "fbaad4058e0e99bedb5f8b77ba18e9574a945886": {
+   "at": 1793797966,
+   "author": "deploy-bot",
+   "diff": "diff --git a/app/db.py b/app/db.py\nindex a109483..095f081 100644\n--- a/app/db.py\n+++ b/app/db.py\n@@ -62,14 +62,14 @@ def _move(\n     conn: Connection[dict[str, Any]], from_id: int, to_id: int, amount: int, kind: str\n ) -> dict[str, Any]:\n     \"\"\"Moves `amount` from one account to another inside the caller's transaction.\"\"\"\n-    # Lock both accounts, always in id order: two transfers in opposite directions take the\n-    # locks in the same order, so neither can hold one row while waiting for the other, and\n-    # the balance read here can't change before the debit below.\n-    rows = conn.execute(\n-        \"SELECT id, kind, balance_cents FROM accounts WHERE id = ANY(%s) ORDER BY id FOR UPDATE\",\n-        ([from_id, to_id],),\n-    ).fetchall()\n-    accounts = {row[\"id\"]: row for row in rows}\n+    # Lock the payer, then the payee: the balance read here can't change before the debit.\n+    rows = [\n+        conn.execute(\n+            \"SELECT id, kind, balance_cents FROM accounts WHERE id = %s FOR UPDATE\", (account_id,)\n+        ).fetchone()\n+        for account_id in (from_id, to_id)\n+    ]\n+    accounts = {row[\"id\"]: row for row in rows if row is not None}\n     if from_id not in accounts or to_id not in accounts:\n         raise LookupError(\"account\")\n     payer = accounts[from_id]\n",
+   "files": [
+    "app/db.py"
+   ],
+   "message": "transfers: lock the payer, then the payee (clearer)",
+   "service": "api",
+   "sha": "fbaad4058e0e99bedb5f8b77ba18e9574a945886",
+   "short": "fbaad40"
+  }
+ },
+ "commands": [
+  {
+   "command": "devgrill status",
+   "ok": true,
+   "output": "SERVICE               STATE       HEALTH      RESTARTS\napi                   running     healthy     0\npostgres-db           running     healthy     0\npostgres-exporter     running     -           0\ntools                 running     -           0\nworker                running     -           0",
+   "service": "tools",
+   "title": "Every service"
+  },
+  {
+   "command": "psql -c \"SELECT deadlocks, xact_rollback FROM pg_stat_database WHERE datname = current_database()\"",
+   "ok": true,
+   "output": "deadlocks | xact_rollback \n-----------+---------------\n        82 |            99\n(1 row)",
+   "service": "tools",
+   "title": "Deadlocks so far"
+  },
+  {
+   "command": "psql -c \"SELECT pid, pg_blocking_pids(pid) AS blocked_by, wait_event_type, left(query, 60) AS query FROM pg_stat_activity WHERE wait_event_type = 'Lock' LIMIT 6\"",
+   "ok": true,
+   "output": "pid | blocked_by | wait_event_type |                            query                             \n-----+------------+-----------------+--------------------------------------------------------------\n  76 | {90}       | Lock            | SELECT id, kind, balance_cents FROM accounts WHERE id = $1 F\n  85 | {91}       | Lock            | SELECT id, kind, balance_cents FROM accounts WHERE id = $1 F\n  86 | {95}       | Lock            | SELECT id, kind, balance_cents FROM accounts WHERE id = $1 F\n  87 | {85}       | Lock            | SELECT id, kind, balance_cents FROM accounts WHERE id = $1 F\n  90 | {86}       | Lock            | SELECT id, kind, balance_cents FROM accounts WHERE id = $1 F\n  89 | {87,200}   | Lock            | SELECT id, kind, balance_cents FROM accounts WHERE id = $1 F\n(6 rows)",
+   "service": "tools",
+   "title": "Sessions waiting right now"
+  }
+ ],
+ "db": {
+  "active": [
+   {
+    "blocked_by": [
+     85
+    ],
+    "pid": 87,
+    "query": "SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+    "seconds": 2.2,
+    "state": "active",
+    "user": "ledger",
+    "wait_event": "transactionid",
+    "wait_event_type": "Lock"
+   },
+   {
+    "blocked_by": [
+     87
+    ],
+    "pid": 200,
+    "query": "UPDATE accounts SET balance_cents = balance_cents + $1, updated_at = now() WHERE id = $2",
+    "seconds": 2.2,
+    "state": "active",
+    "user": "ledger",
+    "wait_event": "tuple",
+    "wait_event_type": "Lock"
+   },
+   {
+    "blocked_by": [
+     87,
+     200
+    ],
+    "pid": 89,
+    "query": "SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+    "seconds": 2.1,
+    "state": "active",
+    "user": "ledger",
+    "wait_event": "tuple",
+    "wait_event_type": "Lock"
+   },
+   {
+    "blocked_by": [
+     87
+    ],
+    "pid": 95,
+    "query": "SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+    "seconds": 1.3,
+    "state": "active",
+    "user": "ledger",
+    "wait_event": "transactionid",
+    "wait_event_type": "Lock"
+   },
+   {
+    "blocked_by": [
+     91
+    ],
+    "pid": 85,
+    "query": "SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+    "seconds": 0.3,
+    "state": "active",
+    "user": "ledger",
+    "wait_event": "transactionid",
+    "wait_event_type": "Lock"
+   },
+   {
+    "blocked_by": [
+     95
+    ],
+    "pid": 86,
+    "query": "SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+    "seconds": 0.3,
+    "state": "active",
+    "user": "ledger",
+    "wait_event": "tuple",
+    "wait_event_type": "Lock"
+   },
+   {
+    "blocked_by": [
+     87,
+     200,
+     89
+    ],
+    "pid": 91,
+    "query": "SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+    "seconds": 0.3,
+    "state": "active",
+    "user": "ledger",
+    "wait_event": "tuple",
+    "wait_event_type": "Lock"
+   },
+   {
+    "blocked_by": [
+     86
+    ],
+    "pid": 90,
+    "query": "SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+    "seconds": 0.3,
+    "state": "active",
+    "user": "ledger",
+    "wait_event": "transactionid",
+    "wait_event_type": "Lock"
+   },
+   {
+    "blocked_by": [
+     90
+    ],
+    "pid": 76,
+    "query": "SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+    "seconds": 0.2,
+    "state": "active",
+    "user": "ledger",
+    "wait_event": "transactionid",
+    "wait_event_type": "Lock"
+   },
+   {
+    "blocked_by": [
+     90
+    ],
+    "pid": 197,
+    "query": "SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+    "seconds": 0.2,
+    "state": "active",
+    "user": "ledger",
+    "wait_event": "tuple",
+    "wait_event_type": "Lock"
+   }
+  ],
+  "connections": [
+   {
+    "n": 11,
+    "state": "active"
+   },
+   {
+    "n": 7,
+    "state": "idle"
+   }
+  ],
+  "max_connections": 100,
+  "top": [
+   {
+    "calls": 4634,
+    "mean_ms": 80.02,
+    "query": "SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+    "rows": 4634,
+    "total_ms": 370815.0
+   },
+   {
+    "calls": 3508,
+    "mean_ms": 0.0,
+    "query": "BEGIN",
+    "rows": 0,
+    "total_ms": 12.9
+   },
+   {
+    "calls": 3416,
+    "mean_ms": 0.0,
+    "query": "COMMIT",
+    "rows": 0,
+    "total_ms": 6.0
+   },
+   {
+    "calls": 2642,
+    "mean_ms": 0.43,
+    "query": "INSERT INTO entries (transfer_id, account_id, amount_cents) VALUES ($1, $2, $3), ($4, $5, $6)",
+    "rows": 5284,
+    "total_ms": 1143.5
+   },
+   {
+    "calls": 2637,
+    "mean_ms": 6.46,
+    "query": "UPDATE accounts SET balance_cents = balance_cents + $1, updated_at = now() WHERE id = $2",
+    "rows": 2637,
+    "total_ms": 17042.0
+   },
+   {
+    "calls": 2286,
+    "mean_ms": 0.18,
+    "query": "UPDATE accounts SET balance_cents = balance_cents - $1, updated_at = now() WHERE id = $2 RETURNING kind, balance_cents",
+    "rows": 2286,
+    "total_ms": 409.4
+   },
+   {
+    "calls": 2286,
+    "mean_ms": 0.15,
+    "query": "INSERT INTO transfers (from_account, to_account, amount_cents, kind) VALUES ($1, $2, $3, $4) RETURNING id, from_account, to_account, amount_cents, kind, created_at",
+    "rows": 2286,
+    "total_ms": 344.5
+   },
+   {
+    "calls": 821,
+    "mean_ms": 0.13,
+    "query": "SELECT id, owner, kind, balance_cents, updated_at FROM accounts WHERE id = $1",
+    "rows": 821,
+    "total_ms": 104.1
+   },
+   {
+    "calls": 359,
+    "mean_ms": 0.18,
+    "query": "SELECT id FROM accounts WHERE id = $1 AND kind = $2",
+    "rows": 359,
+    "total_ms": 64.5
+   },
+   {
+    "calls": 359,
+    "mean_ms": 0.2,
+    "query": "INSERT INTO settlements (merchant_id, amount_cents) VALUES ($1, $2)",
+    "rows": 359,
+    "total_ms": 72.4
+   }
+  ]
+ },
+ "db_rates": {
+  "BEGIN": 50.2,
+  "COMMIT": 49.1,
+  "INSERT INTO entries (transfer_id, account_id, amount_cents) VALUES ($1, $2, $3), ($4, $5, $6)": 39.2,
+  "INSERT INTO transfers (from_account, to_account, amount_cents, kind) VALUES ($1, $2, $3, $4) RETURNING id, from_account, to_account, amount_cents, kind, created_at": 33.9,
+  "SELECT id FROM accounts WHERE id = $1 AND kind = $2": 5.3,
+  "SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE": 68.5,
+  "SELECT id, owner, kind, balance_cents, updated_at FROM accounts WHERE id = $1": 12.0,
+  "UPDATE accounts SET balance_cents = balance_cents + $1, updated_at = now() WHERE id = $2": 39.1,
+  "UPDATE accounts SET balance_cents = balance_cents - $1, updated_at = now() WHERE id = $2 RETURNING kind, balance_cents": 33.9
+ },
+ "deploys": {
+  "api": {
+   "commits": [
+    {
+     "at": 1793797966,
+     "author": "deploy-bot",
+     "message": "transfers: lock the payer, then the payee (clearer)",
+     "sha": "fbaad4058e0e99bedb5f8b77ba18e9574a945886",
+     "short": "fbaad40"
+    },
+    {
+     "at": 1793722366,
+     "author": "deploy-bot",
+     "message": "payments: show the merchant name on receipts",
+     "sha": "0eb994a5d21766eb65c2e0c0f7264b6e38a75cf3",
+     "short": "0eb994a"
+    },
+    {
+     "at": 1793549565,
+     "author": "deploy-bot",
+     "message": "accounts: show the last 20 entries on the statement",
+     "sha": "cbc0dc75a04820af50a0f0877352f16964f4a295",
+     "short": "cbc0dc7"
+    },
+    {
+     "at": 1790957565,
+     "author": "priya",
+     "message": "Ledger api: initial import",
+     "sha": "cba887d535fa6981572be9ce2278074a00754042",
+     "short": "cba887d"
+    }
+   ],
+   "live": "fbaad4058e0e99bedb5f8b77ba18e9574a945886",
+   "live_dirty": false,
+   "service": "api"
+  },
+  "worker": {
+   "commits": [
+    {
+     "at": 1790957566,
+     "author": "priya",
+     "message": "Ledger worker: initial import",
+     "sha": "3fa744a6447e93a0cecf3035cdcf9052c7e25aa4",
+     "short": "3fa744a"
+    }
+   ],
+   "live": "3fa744a6447e93a0cecf3035cdcf9052c7e25aa4",
+   "live_dirty": false,
+   "service": "worker"
+  }
+ },
+ "duration_s": 77.0,
+ "files": {
+  "api": {
+   "CHANGELOG.md": "- accounts: show the last 20 entries on the statement\n- payments: show the merchant name on receipts\n",
+   "Dockerfile": "# Ledger API image. The same source is a git repo in the tools container (/workspace/api);\n# `devgrill deploy` copies app/ and config/ from there into /srv/app and restarts this service.\nFROM python:3.14-slim\n\nENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1 \\\n    PROMETHEUS_MULTIPROC_DIR=/tmp/prometheus\nRUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*\n\nWORKDIR /srv/app\nCOPY pyproject.toml ./\nRUN pip install --quiet \\\n    \"fastapi==0.143.3\" \"uvicorn==0.54.0\" \"psycopg[binary,pool]==3.3.6\" \\\n    \"prometheus-client==0.26.0\"\nCOPY app ./app\nCOPY config ./config\n\nEXPOSE 8000\n# Metric files from a previous run would double-count after a restart: start clean.\nCMD [\"sh\", \"-c\", \"rm -rf \\\"$PROMETHEUS_MULTIPROC_DIR\\\" && mkdir -p \\\"$PROMETHEUS_MULTIPROC_DIR\\\" && exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4 --no-access-log\"]\n",
+   "app/__init__.py": "",
+   "app/db.py": "\"\"\"Postgres access through a connection pool (psycopg 3). Every movement of money is one\ntransaction: a transfer row, two entries that sum to zero, and both balances.\"\"\"\n\nfrom __future__ import annotations\n\nimport logging\nfrom collections.abc import Iterator\nfrom contextlib import contextmanager\nfrom typing import Any\n\nfrom prometheus_client import Counter\nfrom psycopg import Connection\nfrom psycopg.rows import dict_row\nfrom psycopg_pool import ConnectionPool, PoolTimeout\n\nfrom app import settings\nfrom app.logging_setup import fields\n\nlog = logging.getLogger(\"db\")\n\n#: Debits that left a customer's wallet below zero. Never meant to happen.\nOVERDRAFTS = Counter(\"ledger_overdrafts_total\", \"Debits that took a wallet below zero\")\n\n\nclass DatabaseBusy(Exception):\n    \"\"\"No connection became free within the pool timeout.\"\"\"\n\n\nclass InsufficientFunds(Exception):\n    \"\"\"The payer's balance doesn't cover the amount.\"\"\"\n\n\npool = ConnectionPool(\n    settings.DATABASE_URL,\n    min_size=settings.DB_POOL_MIN,\n    max_size=settings.DB_POOL_MAX,\n    timeout=settings.DB_POOL_TIMEOUT_S,\n    kwargs={\"row_factory\": dict_row},\n    open=False,\n)\n\n\n@contextmanager\ndef connection() -> Iterator[Connection[dict[str, Any]]]:\n    try:\n        with pool.connection() as conn:\n            yield conn\n    except PoolTimeout as exc:\n        log.error(\"pool exhausted\", extra=fields(pool_max=settings.DB_POOL_MAX))\n        raise DatabaseBusy() from exc\n\n\ndef account(account_id: int) -> dict[str, Any] | None:\n    with connection() as conn:\n        return conn.execute(\n            \"SELECT id, owner, kind, balance_cents, updated_at FROM accounts WHERE id = %s\",\n            (account_id,),\n        ).fetchone()\n\n\ndef _move(\n    conn: Connection[dict[str, Any]], from_id: int, to_id: int, amount: int, kind: str\n) -> dict[str, Any]:\n    \"\"\"Moves `amount` from one account to another inside the caller's transaction.\"\"\"\n    # Lock the payer, then the payee: the balance read here can't change before the debit.\n    rows = [\n        conn.execute(\n            \"SELECT id, kind, balance_cents FROM accounts WHERE id = %s FOR UPDATE\", (account_id,)\n        ).fetchone()\n        for account_id in (from_id, to_id)\n    ]\n    accounts = {row[\"id\"]: row for row in rows if row is not None}\n    if from_id not in accounts or to_id not in accounts:\n        raise LookupError(\"account\")\n    payer = accounts[from_id]\n    if payer[\"kind\"] != \"house\" and payer[\"balance_cents\"] < amount:\n        raise InsufficientFunds()\n    transfer = conn.execute(\n        \"INSERT INTO transfers (from_account, to_account, amount_cents, kind)\"\n        \" VALUES (%s, %s, %s, %s) RETURNING id, from_account, to_account, amount_cents, kind,\"\n        \" created_at\",\n        (from_id, to_id, amount, kind),\n    ).fetchone()\n    assert transfer is not None\n    conn.execute(\n        \"INSERT INTO entries (transfer_id, account_id, amount_cents)\"\n        \" VALUES (%s, %s, %s), (%s, %s, %s)\",\n        (transfer[\"id\"], to_id, amount, transfer[\"id\"], from_id, -amount),\n    )\n    debited = conn.execute(\n        \"UPDATE accounts SET balance_cents = balance_cents - %s, updated_at = now() WHERE id = %s\"\n        \" RETURNING kind, balance_cents\",\n        (amount, from_id),\n    ).fetchone()\n    if debited and debited[\"kind\"] != \"house\" and debited[\"balance_cents\"] < 0:\n        OVERDRAFTS.inc()\n        log.error(\n            \"wallet overdrawn\",\n            extra=fields(account_id=from_id, balance_cents=debited[\"balance_cents\"]),\n        )\n    conn.execute(\n        \"UPDATE accounts SET balance_cents = balance_cents + %s, updated_at = now() WHERE id = %s\",\n        (amount, to_id),\n    )\n    return transfer\n\n\ndef transfer(from_id: int, to_id: int, amount: int) -> dict[str, Any]:\n    with connection() as conn, conn.transaction():\n        return _move(conn, from_id, to_id, amount, \"transfer\")\n\n\ndef pay(customer_id: int, merchant_id: int, amount: int) -> dict[str, Any]:\n    \"\"\"A card payment: the customer is debited now (into the house's clearing balance), and the\n    merchant is paid out later by the worker's settlement run.\"\"\"\n    with connection() as conn, conn.transaction():\n        merchant = conn.execute(\n            \"SELECT id FROM accounts WHERE id = %s AND kind = 'merchant'\", (merchant_id,)\n        ).fetchone()\n        if merchant is None:\n            raise LookupError(\"merchant\")\n        payment = _move(conn, customer_id, settings.HOUSE_ACCOUNT, amount, \"payment\")\n        conn.execute(\n            \"INSERT INTO settlements (merchant_id, amount_cents) VALUES (%s, %s)\",\n            (merchant_id, amount),\n        )\n        return payment\n\n\ndef healthy() -> bool:\n    try:\n        with connection() as conn:\n            conn.execute(\"SELECT 1\")\n        return True\n    except Exception:\n        return False\n",
+   "app/logging_setup.py": "\"\"\"JSON logs on stdout, one object per line, so the Logs panel can filter by field.\"\"\"\n\nfrom __future__ import annotations\n\nimport json\nimport logging\nimport sys\nimport time\nfrom typing import Any\n\nfrom app import settings\n\n\nclass JsonFormatter(logging.Formatter):\n    def format(self, record: logging.LogRecord) -> str:\n        entry: dict[str, Any] = {\n            \"ts\": time.strftime(\"%Y-%m-%dT%H:%M:%S\", time.gmtime(record.created))\n            + f\".{int(record.msecs):03d}Z\",\n            \"level\": record.levelname.lower(),\n            \"service\": settings.SERVICE_NAME,\n            \"logger\": record.name,\n            \"msg\": record.getMessage(),\n        }\n        for key, value in record.__dict__.items():\n            if key.startswith(\"x_\"):\n                entry[key[2:]] = value\n        if record.exc_info:\n            entry[\"exc\"] = self.formatException(record.exc_info)\n        return json.dumps(entry, separators=(\",\", \":\"))\n\n\ndef configure() -> None:\n    handler = logging.StreamHandler(sys.stdout)\n    handler.setFormatter(JsonFormatter())\n    root = logging.getLogger()\n    root.handlers[:] = [handler]\n    root.setLevel(logging.INFO)\n    # uvicorn's access log duplicates our request log; keep its errors only.\n    logging.getLogger(\"uvicorn.access\").disabled = True\n    logging.getLogger(\"uvicorn.error\").setLevel(logging.WARNING)\n\n\ndef fields(**values: Any) -> dict[str, Any]:\n    \"\"\"`log.info(\"cache miss\", extra=fields(product_id=42))` -> a `product_id` JSON field.\"\"\"\n    return {f\"x_{key}\": value for key, value in values.items()}\n",
+   "app/main.py": "\"\"\"Ledger payments API: wallets, transfers and card payments. Small on purpose: every line is\nsomething an on-call engineer may have to read at 2 a.m., and the money has to add up.\"\"\"\n\nfrom __future__ import annotations\n\nimport logging\nimport time\nfrom collections.abc import AsyncIterator\nfrom contextlib import asynccontextmanager\nfrom typing import Any\n\nfrom fastapi import FastAPI, HTTPException, Request, Response\nfrom fastapi.responses import JSONResponse\nfrom prometheus_client import (\n    CONTENT_TYPE_LATEST,\n    CollectorRegistry,\n    Counter,\n    Gauge,\n    Histogram,\n    generate_latest,\n    multiprocess,\n)\nfrom psycopg import errors as pg_errors\nfrom pydantic import BaseModel, Field\n\nfrom app import db, logging_setup, settings\nfrom app.logging_setup import fields\n\nlogging_setup.configure()\nlog = logging.getLogger(\"api\")\n\nREQUESTS = Counter(\"http_requests_total\", \"HTTP requests\", [\"method\", \"route\", \"status\"])\nLATENCY = Histogram(\n    \"http_request_duration_seconds\",\n    \"Request latency\",\n    [\"route\"],\n    buckets=(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10),\n)\n#: Money movements by outcome: ok, insufficient (refused), or failed.\nMOVEMENTS = Counter(\"ledger_movements_total\", \"Transfers and payments\", [\"kind\", \"result\"])\n# Four uvicorn processes share these through PROMETHEUS_MULTIPROC_DIR.\nDB_POOL_IN_USE = Gauge(\n    \"db_pool_in_use\", \"Connections checked out of the pool\", multiprocess_mode=\"livesum\"\n)\nBUILD = Gauge(\"build_info\", \"Build\", [\"sha\"], multiprocess_mode=\"max\")\n\n\n@asynccontextmanager\nasync def lifespan(app: FastAPI) -> AsyncIterator[None]:\n    BUILD.labels(sha=settings.GIT_SHA).set(1)\n    db.pool.open()\n    log.info(\"started\", extra=fields(sha=settings.GIT_SHA))\n    try:\n        yield\n    finally:\n        db.pool.close()\n\n\napp = FastAPI(title=\"Ledger\", lifespan=lifespan)\n\n\ndef _route_name(request: Request) -> str:\n    route = request.scope.get(\"route\")\n    return getattr(route, \"path\", \"unmatched\")\n\n\n@app.middleware(\"http\")\nasync def observe(request: Request, call_next: Any) -> Response:\n    started = time.perf_counter()\n    try:\n        response: Response = await call_next(request)\n    except Exception:\n        name = _route_name(request)\n        REQUESTS.labels(request.method, name, \"500\").inc()\n        LATENCY.labels(name).observe(time.perf_counter() - started)\n        log.exception(\"request failed\", extra=fields(route=name))\n        raise\n    name = _route_name(request)\n    elapsed = time.perf_counter() - started\n    stats = db.pool.get_stats()\n    DB_POOL_IN_USE.set(stats.get(\"pool_size\", 0) - stats.get(\"pool_available\", 0))\n    REQUESTS.labels(request.method, name, str(response.status_code)).inc()\n    LATENCY.labels(name).observe(elapsed)\n    if response.status_code >= 500 or elapsed > 1.0:\n        log.warning(\n            \"slow or failed request\",\n            extra=fields(route=name, status=response.status_code, ms=round(elapsed * 1000)),\n        )\n    return response\n\n\n@app.exception_handler(db.DatabaseBusy)\nasync def _busy(request: Request, exc: db.DatabaseBusy) -> JSONResponse:\n    return JSONResponse({\"error\": \"database busy, try again\"}, status_code=503)\n\n\n@app.exception_handler(pg_errors.DeadlockDetected)\nasync def _deadlock(request: Request, exc: pg_errors.DeadlockDetected) -> JSONResponse:\n    log.error(\"deadlock detected\", extra=fields(route=_route_name(request), error=str(exc).strip()))\n    return JSONResponse({\"error\": \"the transfer failed, try again\"}, status_code=503)\n\n\n@app.exception_handler(pg_errors.QueryCanceled)\nasync def _cancelled(request: Request, exc: pg_errors.QueryCanceled) -> JSONResponse:\n    log.error(\"query cancelled\", extra=fields(route=_route_name(request), error=str(exc).strip()))\n    return JSONResponse({\"error\": \"the database took too long\"}, status_code=503)\n\n\n@app.get(\"/healthz\")\ndef healthz() -> dict[str, Any]:\n    return {\"status\": \"ok\", \"sha\": settings.GIT_SHA}\n\n\n@app.get(\"/readyz\")\ndef readyz() -> JSONResponse:\n    ok = db.healthy()\n    return JSONResponse({\"database\": ok}, status_code=200 if ok else 503)\n\n\n@app.get(\"/metrics\")\ndef metrics() -> Response:\n    registry = CollectorRegistry()\n    multiprocess.MultiProcessCollector(registry)\n    return Response(generate_latest(registry), media_type=CONTENT_TYPE_LATEST)\n\n\n@app.get(\"/accounts/{account_id}\")\ndef get_account(account_id: int) -> dict[str, Any]:\n    account = db.account(account_id)\n    if account is None:\n        raise HTTPException(404, \"no such account\")\n    return account\n\n\nclass TransferIn(BaseModel):\n    from_account: int = Field(ge=0)\n    to_account: int = Field(ge=0)\n    amount_cents: int = Field(gt=0, le=10_000_000)\n\n\n@app.post(\"/transfers\", status_code=201)\ndef create_transfer(body: TransferIn) -> dict[str, Any]:\n    if body.from_account == body.to_account:\n        raise HTTPException(422, \"an account can't pay itself\")\n    return _record(\n        \"transfer\", lambda: db.transfer(body.from_account, body.to_account, body.amount_cents)\n    )\n\n\nclass PaymentIn(BaseModel):\n    account_id: int = Field(ge=1)\n    merchant_id: int = Field(ge=1)\n    amount_cents: int = Field(gt=0, le=10_000_000)\n\n\n@app.post(\"/payments\", status_code=201)\ndef create_payment(body: PaymentIn) -> dict[str, Any]:\n    return _record(\"payment\", lambda: db.pay(body.account_id, body.merchant_id, body.amount_cents))\n\n\ndef _record(kind: str, move: Any) -> dict[str, Any]:\n    try:\n        result: dict[str, Any] = move()\n    except LookupError:\n        MOVEMENTS.labels(kind, \"refused\").inc()\n        raise HTTPException(404, \"no such account\") from None\n    except db.InsufficientFunds:\n        MOVEMENTS.labels(kind, \"insufficient\").inc()\n        raise HTTPException(409, \"insufficient funds\") from None\n    except Exception:\n        MOVEMENTS.labels(kind, \"failed\").inc()\n        raise\n    MOVEMENTS.labels(kind, \"ok\").inc()\n    return result\n",
+   "app/settings.py": "\"\"\"Configuration: connection strings from the environment, tunables from config/app.env.\n\nconfig/app.env is part of the repo and ships with every deploy, so a config change is a\ncommit you can find in `git log`, revert, and redeploy. The environment wins over the file.\n\"\"\"\n\nfrom __future__ import annotations\n\nimport os\nfrom pathlib import Path\n\n\ndef _load_env_file(path: Path) -> None:\n    if not path.is_file():\n        return\n    for raw in path.read_text(encoding=\"utf-8\").splitlines():\n        line = raw.strip()\n        if not line or line.startswith(\"#\") or \"=\" not in line:\n            continue\n        name, value = line.split(\"=\", 1)\n        os.environ.setdefault(name.strip(), value.strip())\n\n\n_load_env_file(Path(__file__).resolve().parent.parent / \"config\" / \"app.env\")\n\n\ndef _int(name: str, default: int) -> int:\n    return int(os.environ.get(name, default))\n\n\nDATABASE_URL = os.environ.get(\"DATABASE_URL\", \"postgresql://ledger:ledger@postgres-db:5432/ledger\")\nDB_POOL_MIN = _int(\"DB_POOL_MIN\", 2)\nDB_POOL_MAX = _int(\"DB_POOL_MAX\", 10)\nDB_POOL_TIMEOUT_S = float(os.environ.get(\"DB_POOL_TIMEOUT_S\", \"5\"))\n\n#: The house account: it funds opening balances and clears card payments until the\n#: merchant is paid out. It is the only account allowed below zero.\nHOUSE_ACCOUNT = 0\n\nSERVICE_NAME = os.environ.get(\"SERVICE_NAME\", \"ledger-api\")\nGIT_SHA = os.environ.get(\"GIT_SHA\", \"dev\")\n",
+   "config/app.env": "# ledger-api runtime config. Ships with every deploy (`devgrill deploy`).\n\nDATABASE_URL=postgresql://ledger:ledger@postgres-db:5432/ledger\n# Postgres connections per API process (4 processes share the database's 100 slots).\nDB_POOL_MIN=2\nDB_POOL_MAX=10\n# Seconds a request waits for a free connection before failing with 503.\nDB_POOL_TIMEOUT_S=5\n",
+   "pyproject.toml": "[project]\nname = \"ledger-api\"\nversion = \"1.0.0\"\ndescription = \"Ledger payments API\"\nrequires-python = \">=3.14\"\ndependencies = [\n    \"fastapi==0.143.3\",\n    \"uvicorn==0.54.0\",\n    \"psycopg[binary,pool]==3.3.6\",\n    \"prometheus-client==0.26.0\",\n]\n"
+  },
+  "worker": {
+   "Dockerfile": "FROM python:3.14-slim\nENV PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1\nRUN pip install --quiet \"psycopg[binary]==3.3.6\" \"prometheus-client==0.26.0\"\nWORKDIR /srv/worker\nCOPY worker.py ./\nCOPY config ./config\nEXPOSE 9100\nCMD [\"python\", \"worker.py\"]\n",
+   "config/worker.env": "# ledger worker runtime config. Ships with every deploy (`devgrill deploy worker`).\n\n# Settlement consumers (threads), and how many settlements each pays out per transaction.\nCONSUMERS=1\nBATCH=20\n# Seconds a consumer waits when there is nothing to settle.\nPOLL_S=0.2\n# Seconds between audits of the books.\nAUDIT_EVERY_S=5\n",
+   "worker.py": "\"\"\"Ledger worker: pays merchants out for card payments, and audits the books.\n\nSettlement: each card payment leaves a pending settlement. Consumers take them in batches\n(FOR UPDATE SKIP LOCKED, so two consumers never take the same one) and pay each one from the\nhouse's clearing balance to the merchant: a transfer, two entries and both balances, in the\nbatch's transaction.\n\nAudit: every AUDIT_EVERY_S seconds the worker checks the books in one snapshot: customer\naccounts below zero, accounts whose balance isn't the sum of their entries, and whether all\nbalances still add up to zero. Logs JSON like the API; metrics on :9100. Tunables live in\nconfig/worker.env, deployed with the code.\n\"\"\"\n\nfrom __future__ import annotations\n\nimport json\nimport logging\nimport os\nimport signal\nimport sys\nimport threading\nimport time\nfrom pathlib import Path\nfrom typing import Any\n\nimport psycopg\nfrom prometheus_client import Counter, Gauge, start_http_server\n\n\ndef _load_env_file(path: Path) -> None:\n    \"\"\"config/worker.env: KEY=value lines; the process environment wins.\"\"\"\n    if not path.is_file():\n        return\n    for raw in path.read_text(encoding=\"utf-8\").splitlines():\n        line = raw.strip()\n        if line and not line.startswith(\"#\") and \"=\" in line:\n            name, value = line.split(\"=\", 1)\n            os.environ.setdefault(name.strip(), value.strip())\n\n\n_load_env_file(Path(__file__).resolve().parent / \"config\" / \"worker.env\")\n\nDATABASE_URL = os.environ.get(\"DATABASE_URL\", \"postgresql://ledger:ledger@postgres-db:5432/ledger\")\nHOUSE_ACCOUNT = 0\n#: Settlement consumers (threads), and settlements each takes per transaction.\nCONSUMERS = int(os.environ.get(\"CONSUMERS\", \"1\"))\nBATCH = int(os.environ.get(\"BATCH\", \"20\"))\nPOLL_S = float(os.environ.get(\"POLL_S\", \"0.2\"))\nAUDIT_EVERY_S = float(os.environ.get(\"AUDIT_EVERY_S\", \"5\"))\n\nSETTLED = Counter(\"settlements_processed_total\", \"Settlements paid out\", [\"result\"])\nPENDING = Gauge(\"settlements_pending\", \"Settlements waiting to be paid out\")\nOLDEST = Gauge(\"settlements_oldest_seconds\", \"Age of the oldest pending settlement\")\nNEGATIVE = Gauge(\"ledger_negative_balances\", \"Customer accounts below zero\")\nACCOUNTS_OFF = Gauge(\"ledger_accounts_off\", \"Accounts whose balance isn't the sum of entries\")\nBOOKS_OFF = Gauge(\"ledger_books_off_cents\", \"How far all balances are from adding up to zero\")\n\n\nclass JsonFormatter(logging.Formatter):\n    def format(self, record: logging.LogRecord) -> str:\n        entry: dict[str, Any] = {\n            \"ts\": time.strftime(\"%Y-%m-%dT%H:%M:%S\", time.gmtime(record.created))\n            + f\".{int(record.msecs):03d}Z\",\n            \"level\": record.levelname.lower(),\n            \"service\": \"worker\",\n            \"msg\": record.getMessage(),\n        }\n        entry.update({k[2:]: v for k, v in record.__dict__.items() if k.startswith(\"x_\")})\n        if record.exc_info:\n            entry[\"exc\"] = self.formatException(record.exc_info)\n        return json.dumps(entry, separators=(\",\", \":\"))\n\n\nhandler = logging.StreamHandler(sys.stdout)\nhandler.setFormatter(JsonFormatter())\nlogging.basicConfig(level=logging.INFO, handlers=[handler])\nlog = logging.getLogger(\"worker\")\n\nrunning = True\n\n\ndef stop(*_: Any) -> None:\n    global running\n    running = False\n\n\ndef pay_out(conn: psycopg.Connection[Any], settlement: tuple[int, int, int]) -> None:\n    \"\"\"Moves one settlement's amount from the house's clearing balance to the merchant (the\n    house's balance is debited once per batch, by settle_batch).\"\"\"\n    settlement_id, merchant_id, amount = settlement\n    row = conn.execute(\n        \"INSERT INTO transfers (from_account, to_account, amount_cents, kind)\"\n        \" VALUES (%s, %s, %s, 'settlement') RETURNING id\",\n        (HOUSE_ACCOUNT, merchant_id, amount),\n    ).fetchone()\n    assert row is not None\n    transfer_id = row[0]\n    conn.execute(\n        \"INSERT INTO entries (transfer_id, account_id, amount_cents)\"\n        \" VALUES (%s, %s, %s), (%s, %s, %s)\",\n        (transfer_id, merchant_id, amount, transfer_id, HOUSE_ACCOUNT, -amount),\n    )\n    conn.execute(\n        \"UPDATE accounts SET balance_cents = balance_cents + %s, updated_at = now() WHERE id = %s\",\n        (amount, merchant_id),\n    )\n    conn.execute(\n        \"UPDATE settlements SET status = 'settled', transfer_id = %s, settled_at = now()\"\n        \" WHERE id = %s\",\n        (transfer_id, settlement_id),\n    )\n\n\ndef settle_batch(conn: psycopg.Connection[Any]) -> int:\n    \"\"\"Pays out up to BATCH pending settlements in one transaction; returns how many.\"\"\"\n    with conn.transaction():\n        batch = conn.execute(\n            \"SELECT id, merchant_id, amount_cents FROM settlements WHERE status = 'pending'\"\n            \" ORDER BY id LIMIT %s FOR UPDATE SKIP LOCKED\",\n            (BATCH,),\n        ).fetchall()\n        # Credit merchants in id order, as transfers lock accounts: a batch and a transfer\n        # between two merchants never take the same two locks in opposite orders.\n        batch.sort(key=lambda settlement: settlement[1])\n        for settlement in batch:\n            pay_out(conn, settlement)\n        if batch:\n            # Every payment locks the house's row too: debit it once, last, so the batch\n            # holds that lock for a moment instead of for the whole batch.\n            conn.execute(\n                \"UPDATE accounts SET balance_cents = balance_cents - %s, updated_at = now()\"\n                \" WHERE id = %s\",\n                (sum(settlement[2] for settlement in batch), HOUSE_ACCOUNT),\n            )\n    SETTLED.labels(\"paid\").inc(len(batch))\n    return len(batch)\n\n\ndef consume() -> None:\n    while running:\n        try:\n            with psycopg.connect(DATABASE_URL, autocommit=True) as conn:\n                while running:\n                    if settle_batch(conn) < BATCH:\n                        time.sleep(POLL_S)\n        except psycopg.Error as exc:\n            log.error(\"settlement failed, retrying\", extra={\"x_error\": str(exc).strip()[:300]})\n            SETTLED.labels(\"failed\").inc()\n            time.sleep(1)\n\n\nAUDIT_SQL = \"\"\"\nSELECT\n  (SELECT count(*) FROM accounts WHERE kind <> 'house' AND balance_cents < 0),\n  (SELECT count(*) FROM accounts a\n     LEFT JOIN (SELECT account_id, sum(amount_cents) AS total FROM entries GROUP BY account_id) e\n       ON e.account_id = a.id\n    WHERE a.balance_cents <> coalesce(e.total, 0)),\n  (SELECT coalesce(sum(balance_cents), 0) FROM accounts),\n  (SELECT count(*) FROM settlements WHERE status = 'pending'),\n  (SELECT coalesce(extract(epoch FROM now() - min(created_at)), 0) FROM settlements\n    WHERE status = 'pending')\n\"\"\"\n\n\ndef audit() -> None:\n    while running:\n        try:\n            with psycopg.connect(DATABASE_URL, autocommit=True) as conn:\n                while running:\n                    row = conn.execute(AUDIT_SQL).fetchone()\n                    assert row is not None\n                    negative, off, books, pending, oldest = row\n                    NEGATIVE.set(negative)\n                    ACCOUNTS_OFF.set(off)\n                    BOOKS_OFF.set(abs(books))\n                    PENDING.set(pending)\n                    OLDEST.set(float(oldest))\n                    if negative or off or books:\n                        log.error(\n                            \"books don't balance\",\n                            extra={\n                                \"x_negative_accounts\": negative,\n                                \"x_accounts_off\": off,\n                                \"x_books_off_cents\": books,\n                            },\n                        )\n                    time.sleep(AUDIT_EVERY_S)\n        except psycopg.Error as exc:\n            log.error(\"audit failed, retrying\", extra={\"x_error\": str(exc).strip()[:300]})\n            time.sleep(2)\n\n\ndef main() -> None:\n    signal.signal(signal.SIGTERM, stop)\n    signal.signal(signal.SIGINT, stop)\n    start_http_server(9100)\n    log.info(\"started\", extra={\"x_consumers\": CONSUMERS, \"x_batch\": BATCH})\n    threads = [threading.Thread(target=consume, daemon=True) for _ in range(CONSUMERS)]\n    threads.append(threading.Thread(target=audit, daemon=True))\n    for thread in threads:\n        thread.start()\n    while running:\n        time.sleep(0.5)\n    # A deploy stops the worker: each consumer finishes its batch before the process exits.\n    for thread in threads:\n        thread.join(timeout=4)\n\n\nif __name__ == \"__main__\":\n    main()\n"
+  }
+ },
+ "logs": [
+  {
+   "line": "",
+   "service": "postgres-db",
+   "t": -22.156
+  },
+  {
+   "line": "PostgreSQL Database directory appears to contain a database; Skipping initialization",
+   "service": "postgres-db",
+   "t": -22.156
+  },
+  {
+   "line": "",
+   "service": "postgres-db",
+   "t": -22.156
+  },
+  {
+   "line": "2026-11-04 16:12:33.244 UTC [1] LOG:  starting PostgreSQL 18.6 on x86_64-pc-linux-musl, compiled by gcc (Alpine 15.2.0) 15.2.0, 64-bit",
+   "service": "postgres-db",
+   "t": -22.049
+  },
+  {
+   "line": "2026-11-04 16:12:33.244 UTC [1] LOG:  listening on IPv4 address \"0.0.0.0\", port 5432",
+   "service": "postgres-db",
+   "t": -22.049
+  },
+  {
+   "line": "2026-11-04 16:12:33.244 UTC [1] LOG:  listening on IPv6 address \"::\", port 5432",
+   "service": "postgres-db",
+   "t": -22.049
+  },
+  {
+   "line": "2026-11-04 16:12:33.259 UTC [1] LOG:  listening on Unix socket \"/var/run/postgresql/.s.PGSQL.5432\"",
+   "service": "postgres-db",
+   "t": -22.036
+  },
+  {
+   "line": "2026-11-04 16:12:33.290 UTC [32] LOG:  database system was shut down at 2026-11-03 17:26:54 UTC",
+   "service": "postgres-db",
+   "t": -22.005
+  },
+  {
+   "line": "2026-11-04 16:12:33.406 UTC [1] LOG:  database system is ready to accept connections",
+   "service": "postgres-db",
+   "t": -21.89
+  },
+  {
+   "line": "time=2026-11-04T16:12:35.365Z level=WARN source=main.go:81 msg=\"Error loading config\" err=\"error opening config file \\\"postgres_exporter.yml\\\": open postgres_exporter.yml: no such file or directory\"",
+   "service": "postgres-exporter",
+   "t": -19.928
+  },
+  {
+   "line": "time=2026-11-04T16:12:35.365Z level=INFO source=main.go:91 msg=\"Excluded databases\" databases=[]",
+   "service": "postgres-exporter",
+   "t": -19.928
+  },
+  {
+   "line": "time=2026-11-04T16:12:35.378Z level=INFO source=tls_config.go:372 msg=\"Listening on\" address=[::]:9187",
+   "service": "postgres-exporter",
+   "t": -19.917
+  },
+  {
+   "line": "time=2026-11-04T16:12:35.378Z level=INFO source=tls_config.go:375 msg=\"TLS is disabled.\" http2=false address=[::]:9187",
+   "service": "postgres-exporter",
+   "t": -19.917
+  },
+  {
+   "line": "INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)",
+   "service": "api",
+   "t": -18.757
+  },
+  {
+   "line": "INFO:     Started parent process [1]",
+   "service": "api",
+   "t": -18.757
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:12:37.202Z\",\"level\":\"info\",\"service\":\"worker\",\"msg\":\"started\",\"consumers\":1,\"batch\":20}",
+   "service": "worker",
+   "t": -18.092
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:12:43.672Z\",\"level\":\"info\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"started\",\"sha\":\"dev\"}",
+   "service": "api",
+   "t": -11.624
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:12:43.676Z\",\"level\":\"info\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"started\",\"sha\":\"dev\"}",
+   "service": "api",
+   "t": -11.62
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:12:43.677Z\",\"level\":\"info\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"started\",\"sha\":\"dev\"}",
+   "service": "api",
+   "t": -11.616
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:12:43.689Z\",\"level\":\"info\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"started\",\"sha\":\"dev\"}",
+   "service": "api",
+   "t": -11.607
+  },
+  {
+   "line": "INFO:     Received SIGTERM, exiting.",
+   "service": "api",
+   "t": -7.711
+  },
+  {
+   "line": "INFO:     Terminated child process [16]",
+   "service": "api",
+   "t": -7.711
+  },
+  {
+   "line": "INFO:     Terminated child process [17]",
+   "service": "api",
+   "t": -7.711
+  },
+  {
+   "line": "INFO:     Terminated child process [18]",
+   "service": "api",
+   "t": -7.711
+  },
+  {
+   "line": "INFO:     Terminated child process [19]",
+   "service": "api",
+   "t": -7.711
+  },
+  {
+   "line": "INFO:     Waiting for child process [16]",
+   "service": "api",
+   "t": -7.711
+  },
+  {
+   "line": "INFO:     Waiting for child process [17]",
+   "service": "api",
+   "t": -7.591
+  },
+  {
+   "line": "INFO:     Waiting for child process [18]",
+   "service": "api",
+   "t": -7.58
+  },
+  {
+   "line": "INFO:     Waiting for child process [19]",
+   "service": "api",
+   "t": -7.58
+  },
+  {
+   "line": "INFO:     Stopping parent process [1]",
+   "service": "api",
+   "t": -7.533
+  },
+  {
+   "line": "INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)",
+   "service": "api",
+   "t": -6.094
+  },
+  {
+   "line": "INFO:     Started parent process [1]",
+   "service": "api",
+   "t": -6.093
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:12:54.308Z\",\"level\":\"info\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"started\",\"sha\":\"dev\"}",
+   "service": "api",
+   "t": -0.988
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:12:54.839Z\",\"level\":\"info\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"started\",\"sha\":\"dev\"}",
+   "service": "api",
+   "t": -0.449
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:12:54.951Z\",\"level\":\"info\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"started\",\"sha\":\"dev\"}",
+   "service": "api",
+   "t": -0.337
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:12:55.022Z\",\"level\":\"info\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"started\",\"sha\":\"dev\"}",
+   "service": "api",
+   "t": -0.272
+  },
+  {
+   "line": "time=2026-11-04T16:12:55.764Z level=INFO source=server.go:96 msg=\"Established new database connection\" fingerprint=postgres-db:5432",
+   "service": "postgres-exporter",
+   "t": 0.469
+  },
+  {
+   "line": "time=2026-11-04T16:12:55.882Z level=INFO source=postgres_exporter.go:537 msg=\"Semantic version changed\" server=postgres-db:5432 from=0.0.0 to=18.6.0",
+   "service": "postgres-exporter",
+   "t": 0.588
+  },
+  {
+   "line": "2026-11-04 16:12:56.123 UTC [93] ERROR:  permission denied for function pg_ls_waldir",
+   "service": "postgres-db",
+   "t": 0.827
+  },
+  {
+   "line": "2026-11-04 16:12:56.123 UTC [93] STATEMENT:  ",
+   "service": "postgres-db",
+   "t": 0.827
+  },
+  {
+   "line": "\t\t\tSELECT",
+   "service": "postgres-db",
+   "t": 0.827
+  },
+  {
+   "line": "\t\t\t\tCOUNT(*) AS segments,",
+   "service": "postgres-db",
+   "t": 0.827
+  },
+  {
+   "line": "\t\t\t\tSUM(size) AS size",
+   "service": "postgres-db",
+   "t": 0.827
+  },
+  {
+   "line": "\t\t\tFROM pg_ls_waldir()",
+   "service": "postgres-db",
+   "t": 0.827
+  },
+  {
+   "line": "\t\t\tWHERE name ~ '^[0-9A-F]{24}$'",
+   "service": "postgres-db",
+   "t": 0.827
+  },
+  {
+   "line": "time=2026-11-04T16:12:56.123Z level=ERROR source=collector.go:227 msg=\"collector failed\" name=wal duration_seconds=0.242870259 err=\"pq: permission denied for function pg_ls_waldir\"",
+   "service": "postgres-exporter",
+   "t": 0.828
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:12:57.660Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"deadlock detected\",\"route\":\"/transfers\",\"error\":\"deadlock detected\\nDETAIL:  Process 91 waits for ShareLock on transaction 884; blocked by process 86.\\nProcess 86 waits for ShareLock on transaction 886; blocked by process 88.\\nProcess 88 waits for AccessExclusiveLock on tuple (18,115) of relation 16387 of",
+   "service": "api",
+   "t": 2.367
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:12:57.661Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":503,\"ms\":1183}",
+   "service": "api",
+   "t": 2.367
+  },
+  {
+   "line": "2026-11-04 16:12:57.657 UTC [91] ERROR:  deadlock detected",
+   "service": "postgres-db",
+   "t": 2.367
+  },
+  {
+   "line": "2026-11-04 16:12:57.657 UTC [91] DETAIL:  Process 91 waits for ShareLock on transaction 884; blocked by process 86.",
+   "service": "postgres-db",
+   "t": 2.367
+  },
+  {
+   "line": "\tProcess 86 waits for ShareLock on transaction 886; blocked by process 88.",
+   "service": "postgres-db",
+   "t": 2.367
+  },
+  {
+   "line": "\tProcess 88 waits for AccessExclusiveLock on tuple (18,115) of relation 16387 of database 16384; blocked by process 91.",
+   "service": "postgres-db",
+   "t": 2.367
+  },
+  {
+   "line": "\tProcess 91: SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 2.367
+  },
+  {
+   "line": "\tProcess 86: SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 2.367
+  },
+  {
+   "line": "\tProcess 88: SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 2.367
+  },
+  {
+   "line": "2026-11-04 16:12:57.657 UTC [91] HINT:  See server log for query details.",
+   "service": "postgres-db",
+   "t": 2.367
+  },
+  {
+   "line": "2026-11-04 16:12:57.657 UTC [91] CONTEXT:  while locking tuple (18,115) in relation \"accounts\"",
+   "service": "postgres-db",
+   "t": 2.367
+  },
+  {
+   "line": "2026-11-04 16:12:57.657 UTC [91] STATEMENT:  SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 2.367
+  },
+  {
+   "line": "2026-11-04 16:12:58.658 UTC [88] ERROR:  deadlock detected",
+   "service": "postgres-db",
+   "t": 3.363
+  },
+  {
+   "line": "2026-11-04 16:12:58.658 UTC [88] DETAIL:  Process 88 waits for ShareLock on transaction 884; blocked by process 86.",
+   "service": "postgres-db",
+   "t": 3.363
+  },
+  {
+   "line": "\tProcess 86 waits for ShareLock on transaction 886; blocked by process 88.",
+   "service": "postgres-db",
+   "t": 3.363
+  },
+  {
+   "line": "\tProcess 88: SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 3.363
+  },
+  {
+   "line": "\tProcess 86: SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 3.363
+  },
+  {
+   "line": "2026-11-04 16:12:58.658 UTC [88] HINT:  See server log for query details.",
+   "service": "postgres-db",
+   "t": 3.363
+  },
+  {
+   "line": "2026-11-04 16:12:58.658 UTC [88] CONTEXT:  while locking tuple (18,115) in relation \"accounts\"",
+   "service": "postgres-db",
+   "t": 3.363
+  },
+  {
+   "line": "2026-11-04 16:12:58.658 UTC [88] STATEMENT:  SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 3.363
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:12:58.660Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"deadlock detected\",\"route\":\"/transfers\",\"error\":\"deadlock detected\\nDETAIL:  Process 88 waits for ShareLock on transaction 884; blocked by process 86.\\nProcess 86 waits for ShareLock on transaction 886; blocked by process 88.\\nHINT:  See server log for query details.\\nCONTEXT:  while locking tuple (18,115",
+   "service": "api",
+   "t": 3.365
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:12:58.661Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":503,\"ms\":2022}",
+   "service": "api",
+   "t": 3.365
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:12:58.671Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":2095}",
+   "service": "api",
+   "t": 3.375
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:12:58.676Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":1941}",
+   "service": "api",
+   "t": 3.38
+  },
+  {
+   "line": "2026-11-04 16:12:59.667 UTC [87] ERROR:  deadlock detected",
+   "service": "postgres-db",
+   "t": 4.372
+  },
+  {
+   "line": "2026-11-04 16:12:59.667 UTC [87] DETAIL:  Process 87 waits for AccessExclusiveLock on tuple (1,28) of relation 16387 of database 16384; blocked by process 85.",
+   "service": "postgres-db",
+   "t": 4.372
+  },
+  {
+   "line": "\tProcess 85 waits for ShareLock on transaction 899; blocked by process 90.",
+   "service": "postgres-db",
+   "t": 4.372
+  },
+  {
+   "line": "\tProcess 90 waits for AccessExclusiveLock on tuple (2,33) of relation 16387 of database 16384; blocked by process 75.",
+   "service": "postgres-db",
+   "t": 4.372
+  },
+  {
+   "line": "\tProcess 75 waits for ShareLock on transaction 895; blocked by process 87.",
+   "service": "postgres-db",
+   "t": 4.372
+  },
+  {
+   "line": "\tProcess 87: SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 4.372
+  },
+  {
+   "line": "\tProcess 85: SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 4.372
+  },
+  {
+   "line": "\tProcess 90: SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 4.372
+  },
+  {
+   "line": "\tProcess 75: SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 4.372
+  },
+  {
+   "line": "2026-11-04 16:12:59.667 UTC [87] HINT:  See server log for query details.",
+   "service": "postgres-db",
+   "t": 4.372
+  },
+  {
+   "line": "2026-11-04 16:12:59.667 UTC [87] STATEMENT:  SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 4.372
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:12:59.669Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"deadlock detected\",\"route\":\"/transfers\",\"error\":\"deadlock detected\\nDETAIL:  Process 87 waits for AccessExclusiveLock on tuple (1,28) of relation 16387 of database 16384; blocked by process 85.\\nProcess 85 waits for ShareLock on transaction 899; blocked by process 90.\\nProcess 90 waits for AccessExclusive",
+   "service": "api",
+   "t": 4.374
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:12:59.670Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":503,\"ms\":2883}",
+   "service": "api",
+   "t": 4.374
+  },
+  {
+   "line": "2026-11-04 16:12:59.773 UTC [88] ERROR:  deadlock detected",
+   "service": "postgres-db",
+   "t": 4.477
+  },
+  {
+   "line": "2026-11-04 16:12:59.773 UTC [88] DETAIL:  Process 88 waits for AccessExclusiveLock on tuple (1,27) of relation 16387 of database 16384; blocked by process 95.",
+   "service": "postgres-db",
+   "t": 4.477
+  },
+  {
+   "line": "\tProcess 95 waits for ShareLock on transaction 888; blocked by process 85.",
+   "service": "postgres-db",
+   "t": 4.477
+  },
+  {
+   "line": "\tProcess 85 waits for ShareLock on transaction 899; blocked by process 90.",
+   "service": "postgres-db",
+   "t": 4.477
+  },
+  {
+   "line": "\tProcess 90 waits for ShareLock on transaction 902; blocked by process 75.",
+   "service": "postgres-db",
+   "t": 4.477
+  },
+  {
+   "line": "\tProcess 75 waits for AccessExclusiveLock on tuple (1,27) of relation 16387 of database 16384; blocked by process 88.",
+   "service": "postgres-db",
+   "t": 4.477
+  },
+  {
+   "line": "\tProcess 88: SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 4.477
+  },
+  {
+   "line": "\tProcess 95: SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 4.477
+  },
+  {
+   "line": "\tProcess 85: SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 4.477
+  },
+  {
+   "line": "\tProcess 90: SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 4.477
+  },
+  {
+   "line": "\tProcess 75: SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 4.477
+  },
+  {
+   "line": "2026-11-04 16:12:59.773 UTC [88] HINT:  See server log for query details.",
+   "service": "postgres-db",
+   "t": 4.477
+  },
+  {
+   "line": "2026-11-04 16:12:59.773 UTC [88] STATEMENT:  SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 4.477
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:12:59.785Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"deadlock detected\",\"route\":\"/transfers\",\"error\":\"deadlock detected\\nDETAIL:  Process 88 waits for AccessExclusiveLock on tuple (1,27) of relation 16387 of database 16384; blocked by process 95.\\nProcess 95 waits for ShareLock on transaction 888; blocked by process 85.\\nProcess 85 waits for ShareLock on tr",
+   "service": "api",
+   "t": 4.49
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:12:59.786Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":503,\"ms\":1016}",
+   "service": "api",
+   "t": 4.49
+  },
+  {
+   "line": "2026-11-04 16:13:00.668 UTC [90] ERROR:  deadlock detected",
+   "service": "postgres-db",
+   "t": 5.372
+  },
+  {
+   "line": "2026-11-04 16:13:00.668 UTC [90] DETAIL:  Process 90 waits for ShareLock on transaction 902; blocked by process 75.",
+   "service": "postgres-db",
+   "t": 5.372
+  },
+  {
+   "line": "\tProcess 75 waits for AccessExclusiveLock on tuple (1,27) of relation 16387 of database 16384; blocked by process 95.",
+   "service": "postgres-db",
+   "t": 5.372
+  },
+  {
+   "line": "\tProcess 95 waits for ShareLock on transaction 888; blocked by process 85.",
+   "service": "postgres-db",
+   "t": 5.372
+  },
+  {
+   "line": "\tProcess 85 waits for ShareLock on transaction 899; blocked by process 90.",
+   "service": "postgres-db",
+   "t": 5.372
+  },
+  {
+   "line": "\tProcess 90: SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 5.372
+  },
+  {
+   "line": "\tProcess 75: SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 5.372
+  },
+  {
+   "line": "\tProcess 95: SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 5.372
+  },
+  {
+   "line": "\tProcess 85: SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 5.372
+  },
+  {
+   "line": "2026-11-04 16:13:00.668 UTC [90] HINT:  See server log for query details.",
+   "service": "postgres-db",
+   "t": 5.372
+  },
+  {
+   "line": "2026-11-04 16:13:00.668 UTC [90] CONTEXT:  while locking tuple (2,33) in relation \"accounts\"",
+   "service": "postgres-db",
+   "t": 5.372
+  },
+  {
+   "line": "2026-11-04 16:13:00.668 UTC [90] STATEMENT:  SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 5.372
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:00.669Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"deadlock detected\",\"route\":\"/transfers\",\"error\":\"deadlock detected\\nDETAIL:  Process 90 waits for ShareLock on transaction 902; blocked by process 75.\\nProcess 75 waits for AccessExclusiveLock on tuple (1,27) of relation 16387 of database 16384; blocked by process 95.\\nProcess 95 waits for ShareLock on tr",
+   "service": "api",
+   "t": 5.374
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:00.670Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":503,\"ms\":4004}",
+   "service": "api",
+   "t": 5.374
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:00.723Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":4034}",
+   "service": "api",
+   "t": 5.43
+  },
+  {
+   "line": "2026-11-04 16:13:01.719 UTC [91] ERROR:  deadlock detected",
+   "service": "postgres-db",
+   "t": 6.431
+  },
+  {
+   "line": "2026-11-04 16:13:01.719 UTC [91] DETAIL:  Process 91 waits for ShareLock on transaction 903; blocked by process 95.",
+   "service": "postgres-db",
+   "t": 6.433
+  },
+  {
+   "line": "\tProcess 95 waits for ShareLock on transaction 904; blocked by process 92.",
+   "service": "postgres-db",
+   "t": 6.434
+  },
+  {
+   "line": "\tProcess 92 waits for AccessExclusiveLock on tuple (2,30) of relation 16387 of database 16384; blocked by process 89.",
+   "service": "postgres-db",
+   "t": 6.434
+  },
+  {
+   "line": "\tProcess 89 waits for ShareLock on transaction 898; blocked by process 91.",
+   "service": "postgres-db",
+   "t": 6.434
+  },
+  {
+   "line": "\tProcess 91: SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 6.434
+  },
+  {
+   "line": "\tProcess 95: SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 6.434
+  },
+  {
+   "line": "\tProcess 92: SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 6.434
+  },
+  {
+   "line": "\tProcess 89: SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 6.434
+  },
+  {
+   "line": "2026-11-04 16:13:01.719 UTC [91] HINT:  See server log for query details.",
+   "service": "postgres-db",
+   "t": 6.435
+  },
+  {
+   "line": "2026-11-04 16:13:01.719 UTC [91] CONTEXT:  while locking tuple (1,29) in relation \"accounts\"",
+   "service": "postgres-db",
+   "t": 6.435
+  },
+  {
+   "line": "2026-11-04 16:13:01.719 UTC [91] STATEMENT:  SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 6.435
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:01.744Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"deadlock detected\",\"route\":\"/transfers\",\"error\":\"deadlock detected\\nDETAIL:  Process 91 waits for ShareLock on transaction 903; blocked by process 95.\\nProcess 95 waits for ShareLock on transaction 904; blocked by process 92.\\nProcess 92 waits for AccessExclusiveLock on tuple (2,30) of relation 16387 of d",
+   "service": "api",
+   "t": 6.449
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:01.745Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":503,\"ms\":4019}",
+   "service": "api",
+   "t": 6.449
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:01.784Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":4923}",
+   "service": "api",
+   "t": 6.489
+  },
+  {
+   "line": "2026-11-04 16:13:01.887 UTC [90] ERROR:  deadlock detected",
+   "service": "postgres-db",
+   "t": 6.593
+  },
+  {
+   "line": "2026-11-04 16:13:01.887 UTC [90] DETAIL:  Process 90 waits for ShareLock on transaction 902; blocked by process 75.",
+   "service": "postgres-db",
+   "t": 6.593
+  },
+  {
+   "line": "\tProcess 75 waits for ShareLock on transaction 903; blocked by process 95.",
+   "service": "postgres-db",
+   "t": 6.593
+  },
+  {
+   "line": "\tProcess 95 waits for ShareLock on transaction 904; blocked by process 92.",
+   "service": "postgres-db",
+   "t": 6.593
+  },
+  {
+   "line": "\tProcess 92 waits for ShareLock on transaction 908; blocked by process 86.",
+   "service": "postgres-db",
+   "t": 6.593
+  },
+  {
+   "line": "\tProcess 86 waits for AccessExclusiveLock on tuple (2,33) of relation 16387 of database 16384; blocked by process 90.",
+   "service": "postgres-db",
+   "t": 6.593
+  },
+  {
+   "line": "\tProcess 90: SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 6.593
+  },
+  {
+   "line": "\tProcess 75: SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 6.593
+  },
+  {
+   "line": "\tProcess 95: SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 6.593
+  },
+  {
+   "line": "\tProcess 92: SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 6.593
+  },
+  {
+   "line": "\tProcess 86: SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 6.593
+  },
+  {
+   "line": "2026-11-04 16:13:01.887 UTC [90] HINT:  See server log for query details.",
+   "service": "postgres-db",
+   "t": 6.593
+  },
+  {
+   "line": "2026-11-04 16:13:01.887 UTC [90] CONTEXT:  while locking tuple (2,33) in relation \"accounts\"",
+   "service": "postgres-db",
+   "t": 6.593
+  },
+  {
+   "line": "2026-11-04 16:13:01.887 UTC [90] STATEMENT:  SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 6.593
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:01.892Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"deadlock detected\",\"route\":\"/transfers\",\"error\":\"deadlock detected\\nDETAIL:  Process 90 waits for ShareLock on transaction 902; blocked by process 75.\\nProcess 75 waits for ShareLock on transaction 903; blocked by process 95.\\nProcess 95 waits for ShareLock on transaction 904; blocked by process 92.\\nProc",
+   "service": "api",
+   "t": 6.597
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:01.896Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":503,\"ms\":1012}",
+   "service": "api",
+   "t": 6.601
+  },
+  {
+   "line": "2026-11-04 16:13:01.999 UTC [103] ERROR:  permission denied for function pg_ls_waldir",
+   "service": "postgres-db",
+   "t": 6.704
+  },
+  {
+   "line": "2026-11-04 16:13:01.999 UTC [103] STATEMENT:  ",
+   "service": "postgres-db",
+   "t": 6.704
+  },
+  {
+   "line": "\t\t\tSELECT",
+   "service": "postgres-db",
+   "t": 6.704
+  },
+  {
+   "line": "\t\t\t\tCOUNT(*) AS segments,",
+   "service": "postgres-db",
+   "t": 6.704
+  },
+  {
+   "line": "\t\t\t\tSUM(size) AS size",
+   "service": "postgres-db",
+   "t": 6.704
+  },
+  {
+   "line": "\t\t\tFROM pg_ls_waldir()",
+   "service": "postgres-db",
+   "t": 6.704
+  },
+  {
+   "line": "\t\t\tWHERE name ~ '^[0-9A-F]{24}$'",
+   "service": "postgres-db",
+   "t": 6.704
+  },
+  {
+   "line": "time=2026-11-04T16:13:02.000Z level=ERROR source=collector.go:227 msg=\"collector failed\" name=wal duration_seconds=0.060761959 err=\"pq: permission denied for function pg_ls_waldir\"",
+   "service": "postgres-exporter",
+   "t": 6.704
+  },
+  {
+   "line": "time=2026-11-04T16:13:04.210Z level=ERROR source=collector.go:227 msg=\"collector failed\" name=wal duration_seconds=0.0894558 err=\"pq: permission denied for function pg_ls_waldir\"",
+   "service": "postgres-exporter",
+   "t": 8.914
+  },
+  {
+   "line": "time=2026-11-04T16:13:09.632Z level=ERROR source=collector.go:227 msg=\"collector failed\" name=wal duration_seconds=0.023117525 err=\"pq: permission denied for function pg_ls_waldir\"",
+   "service": "postgres-exporter",
+   "t": 14.336
+  },
+  {
+   "line": "time=2026-11-04T16:13:15.133Z level=ERROR source=collector.go:227 msg=\"collector failed\" name=wal duration_seconds=0.12260308 err=\"pq: permission denied for function pg_ls_waldir\"",
+   "service": "postgres-exporter",
+   "t": 19.837
+  },
+  {
+   "line": "time=2026-11-04T16:13:20.331Z level=ERROR source=collector.go:227 msg=\"collector failed\" name=wal duration_seconds=0.004278604 err=\"pq: permission denied for function pg_ls_waldir\"",
+   "service": "postgres-exporter",
+   "t": 25.035
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:25.176Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":503,\"ms\":1102}",
+   "service": "api",
+   "t": 29.881
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:25.180Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":1203}",
+   "service": "api",
+   "t": 29.884
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:25.578Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"deadlock detected\",\"route\":\"/transfers\",\"error\":\"deadlock detected\\nDETAIL:  Process 95 waits for ShareLock on transaction 1971; blocked by process 87.\\nProcess 87 waits for ShareLock on transaction 1978; blocked by process 92.\\nProcess 92 waits for ShareLock on transaction 1975; blocked by process 95.\\nH",
+   "service": "api",
+   "t": 30.283
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:25.579Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":503,\"ms\":1010}",
+   "service": "api",
+   "t": 30.283
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:25.586Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":1319}",
+   "service": "api",
+   "t": 30.29
+  },
+  {
+   "line": "time=2026-11-04T16:13:25.591Z level=ERROR source=collector.go:227 msg=\"collector failed\" name=wal duration_seconds=0.009526027 err=\"pq: permission denied for function pg_ls_waldir\"",
+   "service": "postgres-exporter",
+   "t": 30.295
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:25.591Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":1211}",
+   "service": "api",
+   "t": 30.295
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:25.598Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":1257}",
+   "service": "api",
+   "t": 30.303
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:25.598Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":1342}",
+   "service": "api",
+   "t": 30.303
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:26.605Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"deadlock detected\",\"route\":\"/transfers\",\"error\":\"deadlock detected\\nDETAIL:  Process 89 waits for ShareLock on transaction 1980; blocked by process 90.\\nProcess 90 waits for ShareLock on transaction 1972; blocked by process 89.\\nHINT:  See server log for query details.\\nCONTEXT:  while locking tuple (2,45",
+   "service": "api",
+   "t": 31.312
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:26.607Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":503,\"ms\":2224}",
+   "service": "api",
+   "t": 31.312
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:26.611Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":2251}",
+   "service": "api",
+   "t": 31.316
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:27.612Z\",\"level\":\"error\",\"service\":\"worker\",\"msg\":\"settlement failed, retrying\",\"error\":\"deadlock detected\\nDETAIL:  Process 43 waits for ShareLock on transaction 1992; blocked by process 75.\\nProcess 75 waits for ShareLock on transaction 1990; blocked by process 91.\\nProcess 91 waits for AccessExclusiveLock on tuple (2,50) of relation 16387 of database 16384; blocked by pr",
+   "service": "worker",
+   "t": 32.317
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:28.613Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"deadlock detected\",\"route\":\"/transfers\",\"error\":\"deadlock detected\\nDETAIL:  Process 91 waits for ShareLock on transaction 1992; blocked by process 75.\\nProcess 75 waits for ShareLock on transaction 1990; blocked by process 91.\\nHINT:  See server log for query details.\\nCONTEXT:  while locking tuple (2,50",
+   "service": "api",
+   "t": 33.318
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:28.613Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":503,\"ms\":2830}",
+   "service": "api",
+   "t": 33.318
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:28.618Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":2958}",
+   "service": "api",
+   "t": 33.323
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:28.628Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":2772}",
+   "service": "api",
+   "t": 33.332
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:28.630Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":1968}",
+   "service": "api",
+   "t": 33.334
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:28.632Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":1955}",
+   "service": "api",
+   "t": 33.337
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:28.635Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":1959}",
+   "service": "api",
+   "t": 33.339
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:28.640Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":1831}",
+   "service": "api",
+   "t": 33.345
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:28.643Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":1908}",
+   "service": "api",
+   "t": 33.35
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:28.657Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":1909}",
+   "service": "api",
+   "t": 33.361
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:28.682Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":1874}",
+   "service": "api",
+   "t": 33.387
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:30.484Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"deadlock detected\",\"route\":\"/transfers\",\"error\":\"deadlock detected\\nDETAIL:  Process 86 waits for ShareLock on transaction 2086; blocked by process 88.\\nProcess 88 waits for ShareLock on transaction 2087; blocked by process 87.\\nProcess 87 waits for AccessExclusiveLock on tuple (5,33) of relation 16387 of",
+   "service": "api",
+   "t": 35.189
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:30.484Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":503,\"ms\":1030}",
+   "service": "api",
+   "t": 35.189
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:30.499Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"deadlock detected\",\"route\":\"/transfers\",\"error\":\"deadlock detected\\nDETAIL:  Process 88 waits for ShareLock on transaction 2087; blocked by process 87.\\nProcess 87 waits for ShareLock on transaction 2086; blocked by process 88.\\nHINT:  See server log for query details.\\nCONTEXT:  while locking tuple (19,1",
+   "service": "api",
+   "t": 35.203
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:30.500Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":503,\"ms\":1055}",
+   "service": "api",
+   "t": 35.204
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:30.504Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":1023}",
+   "service": "api",
+   "t": 35.209
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:30.693Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"deadlock detected\",\"route\":\"/transfers\",\"error\":\"deadlock detected\\nDETAIL:  Process 85 waits for ShareLock on transaction 2097; blocked by process 76.\\nProcess 76 waits for ShareLock on transaction 2103; blocked by process 92.\\nProcess 92 waits for ShareLock on transaction 2100; blocked by process 85.\\nH",
+   "service": "api",
+   "t": 35.397
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:30.694Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":503,\"ms\":1006}",
+   "service": "api",
+   "t": 35.398
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:30.700Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":1110}",
+   "service": "api",
+   "t": 35.404
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:30.715Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":1068}",
+   "service": "api",
+   "t": 35.42
+  },
+  {
+   "line": "time=2026-11-04T16:13:30.961Z level=ERROR source=collector.go:227 msg=\"collector failed\" name=wal duration_seconds=0.042900566 err=\"pq: permission denied for function pg_ls_waldir\"",
+   "service": "postgres-exporter",
+   "t": 35.665
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:31.712Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"deadlock detected\",\"route\":\"/transfers\",\"error\":\"deadlock detected\\nDETAIL:  Process 95 waits for ShareLock on transaction 2106; blocked by process 90.\\nProcess 90 waits for ShareLock on transaction 2104; blocked by process 91.\\nProcess 91 waits for AccessExclusiveLock on tuple (8,17) of relation 16387 of",
+   "service": "api",
+   "t": 36.417
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:31.713Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":503,\"ms\":1936}",
+   "service": "api",
+   "t": 36.417
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:31.714Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"deadlock detected\",\"route\":\"/transfers\",\"error\":\"deadlock detected\\nDETAIL:  Process 90 waits for ShareLock on transaction 2104; blocked by process 91.\\nProcess 91 waits for ShareLock on transaction 2106; blocked by process 90.\\nHINT:  See server log for query details.\\nCONTEXT:  while locking tuple (19,2",
+   "service": "api",
+   "t": 36.418
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:31.714Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":503,\"ms\":2011}",
+   "service": "api",
+   "t": 36.419
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:31.718Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":1963}",
+   "service": "api",
+   "t": 36.423
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:33.394Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"deadlock detected\",\"route\":\"/transfers\",\"error\":\"deadlock detected\\nDETAIL:  Process 95 waits for ShareLock on transaction 2193; blocked by process 92.\\nProcess 92 waits for ShareLock on transaction 2192; blocked by process 95.\\nHINT:  See server log for query details.\\nCONTEXT:  while locking updated ver",
+   "service": "api",
+   "t": 38.099
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:33.398Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":503,\"ms\":1017}",
+   "service": "api",
+   "t": 38.103
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:33.402Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":1027}",
+   "service": "api",
+   "t": 38.106
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:33.578Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"deadlock detected\",\"route\":\"/transfers\",\"error\":\"deadlock detected\\nDETAIL:  Process 89 waits for ShareLock on transaction 2200; blocked by process 86.\\nProcess 86 waits for AccessExclusiveLock on tuple (8,39) of relation 16387 of database 16384; blocked by process 87.\\nProcess 87 waits for ShareLock on t",
+   "service": "api",
+   "t": 38.283
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:33.579Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":503,\"ms\":1010}",
+   "service": "api",
+   "t": 38.283
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:34.401Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"deadlock detected\",\"route\":\"/transfers\",\"error\":\"deadlock detected\\nDETAIL:  Process 87 waits for ShareLock on transaction 2201; blocked by process 85.\\nProcess 85 waits for ShareLock on transaction 2200; blocked by process 86.\\nProcess 86 waits for AccessExclusiveLock on tuple (8,39) of relation 16387 of",
+   "service": "api",
+   "t": 39.106
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:34.404Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":503,\"ms\":1889}",
+   "service": "api",
+   "t": 39.109
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:34.580Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"deadlock detected\",\"route\":\"/transfers\",\"error\":\"deadlock detected\\nDETAIL:  Process 85 waits for ShareLock on transaction 2200; blocked by process 86.\\nProcess 86 waits for ShareLock on transaction 2201; blocked by process 85.\\nHINT:  See server log for query details.\\nCONTEXT:  while locking tuple (19,4",
+   "service": "api",
+   "t": 39.284
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:34.582Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":503,\"ms\":2076}",
+   "service": "api",
+   "t": 39.287
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:34.584Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":2031}",
+   "service": "api",
+   "t": 39.289
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:34.596Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":2069}",
+   "service": "api",
+   "t": 39.309
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:34.601Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":2157}",
+   "service": "api",
+   "t": 39.309
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:34.623Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":1165}",
+   "service": "api",
+   "t": 39.328
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:34.628Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":1162}",
+   "service": "api",
+   "t": 39.333
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:34.629Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":1171}",
+   "service": "api",
+   "t": 39.334
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:34.638Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":1021}",
+   "service": "api",
+   "t": 39.342
+  },
+  {
+   "line": "time=2026-11-04T16:13:36.422Z level=ERROR source=collector.go:227 msg=\"collector failed\" name=wal duration_seconds=0.0326775 err=\"pq: permission denied for function pg_ls_waldir\"",
+   "service": "postgres-exporter",
+   "t": 41.126
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:37.410Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"deadlock detected\",\"route\":\"/transfers\",\"error\":\"deadlock detected\\nDETAIL:  Process 88 waits for ShareLock on transaction 2391; blocked by process 90.\\nProcess 90 waits for ShareLock on transaction 2390; blocked by process 88.\\nHINT:  See server log for query details.\\nCONTEXT:  while locking updated ver",
+   "service": "api",
+   "t": 42.114
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:37.410Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":503,\"ms\":1027}",
+   "service": "api",
+   "t": 42.114
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:37.414Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":1037}",
+   "service": "api",
+   "t": 42.118
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:37.418Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":1005}",
+   "service": "api",
+   "t": 42.122
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:37.459Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":1031}",
+   "service": "api",
+   "t": 42.164
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:37.476Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":1018}",
+   "service": "api",
+   "t": 42.181
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:39.077Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"deadlock detected\",\"route\":\"/transfers\",\"error\":\"deadlock detected\\nDETAIL:  Process 88 waits for ShareLock on transaction 2471; blocked by process 91.\\nProcess 91 waits for ShareLock on transaction 2472; blocked by process 88.\\nHINT:  See server log for query details.\\nCONTEXT:  while locking tuple (19,1",
+   "service": "api",
+   "t": 43.783
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:39.078Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":503,\"ms\":1035}",
+   "service": "api",
+   "t": 43.783
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:39.083Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":1024}",
+   "service": "api",
+   "t": 43.788
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:40.090Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"deadlock detected\",\"route\":\"/transfers\",\"error\":\"deadlock detected\\nDETAIL:  Process 86 waits for ShareLock on transaction 2484; blocked by process 90.\\nProcess 90 waits for ShareLock on transaction 2487; blocked by process 89.\\nProcess 89 waits for ShareLock on transaction 2486; blocked by process 95.\\nP",
+   "service": "api",
+   "t": 44.795
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:40.092Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":503,\"ms\":1877}",
+   "service": "api",
+   "t": 44.796
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:40.107Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"deadlock detected\",\"route\":\"/transfers\",\"error\":\"deadlock detected\\nDETAIL:  Process 90 waits for ShareLock on transaction 2487; blocked by process 89.\\nProcess 89 waits for ShareLock on transaction 2486; blocked by process 95.\\nProcess 95 waits for ShareLock on transaction 2484; blocked by process 90.\\nH",
+   "service": "api",
+   "t": 44.812
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:40.109Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":503,\"ms\":1912}",
+   "service": "api",
+   "t": 44.814
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:40.110Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":1835}",
+   "service": "api",
+   "t": 44.815
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:40.115Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":1681}",
+   "service": "api",
+   "t": 44.82
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:40.155Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":1024}",
+   "service": "api",
+   "t": 44.86
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:40.166Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":1023}",
+   "service": "api",
+   "t": 44.873
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:40.174Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":1027}",
+   "service": "api",
+   "t": 44.879
+  },
+  {
+   "line": "time=2026-11-04T16:13:41.913Z level=ERROR source=collector.go:227 msg=\"collector failed\" name=wal duration_seconds=0.095254695 err=\"pq: permission denied for function pg_ls_waldir\"",
+   "service": "postgres-exporter",
+   "t": 46.617
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:43.463Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"deadlock detected\",\"route\":\"/transfers\",\"error\":\"deadlock detected\\nDETAIL:  Process 76 waits for ShareLock on transaction 2738; blocked by process 96.\\nProcess 96 waits for ShareLock on transaction 2739; blocked by process 76.\\nHINT:  See server log for query details.\\nCONTEXT:  while locking tuple (2,37",
+   "service": "api",
+   "t": 48.167
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:43.463Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":503,\"ms\":1013}",
+   "service": "api",
+   "t": 48.167
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:43.467Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":1017}",
+   "service": "api",
+   "t": 48.172
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:44.467Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"deadlock detected\",\"route\":\"/transfers\",\"error\":\"deadlock detected\\nDETAIL:  Process 90 waits for ShareLock on transaction 2750; blocked by process 91.\\nProcess 91 waits for AccessExclusiveLock on tuple (2,40) of relation 16387 of database 16384; blocked by process 87.\\nProcess 87 waits for ShareLock on t",
+   "service": "api",
+   "t": 49.175
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:44.468Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":503,\"ms\":1861}",
+   "service": "api",
+   "t": 49.177
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:44.482Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"deadlock detected\",\"route\":\"/transfers\",\"error\":\"deadlock detected\\nDETAIL:  Process 95 waits for ShareLock on transaction 2749; blocked by process 88.\\nProcess 88 waits for ShareLock on transaction 2747; blocked by process 90.\\nProcess 90 waits for ShareLock on transaction 2750; blocked by process 91.\\nP",
+   "service": "api",
+   "t": 49.197
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:44.484Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":503,\"ms\":1986}",
+   "service": "api",
+   "t": 49.197
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:44.485Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":2004}",
+   "service": "api",
+   "t": 49.197
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:44.501Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":1970}",
+   "service": "api",
+   "t": 49.207
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:44.509Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":1960}",
+   "service": "api",
+   "t": 49.213
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:44.514Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":1976}",
+   "service": "api",
+   "t": 49.218
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:44.519Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":1977}",
+   "service": "api",
+   "t": 49.226
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:44.529Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":1928}",
+   "service": "api",
+   "t": 49.233
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:44.538Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":1019}",
+   "service": "api",
+   "t": 49.244
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:46.685Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"deadlock detected\",\"route\":\"/transfers\",\"error\":\"deadlock detected\\nDETAIL:  Process 86 waits for ShareLock on transaction 2845; blocked by process 95.\\nProcess 95 waits for AccessExclusiveLock on tuple (19,10) of relation 16387 of database 16384; blocked by process 76.\\nProcess 76 waits for ShareLock on ",
+   "service": "api",
+   "t": 51.389
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:46.686Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":503,\"ms\":1016}",
+   "service": "api",
+   "t": 51.39
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:46.691Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":1019}",
+   "service": "api",
+   "t": 51.395
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:46.699Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":1028}",
+   "service": "api",
+   "t": 51.404
+  },
+  {
+   "line": "time=2026-11-04T16:13:47.089Z level=ERROR source=collector.go:227 msg=\"collector failed\" name=wal duration_seconds=0.037937845 err=\"pq: permission denied for function pg_ls_waldir\"",
+   "service": "postgres-exporter",
+   "t": 51.794
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:47.706Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"deadlock detected\",\"route\":\"/transfers\",\"error\":\"deadlock detected\\nDETAIL:  Process 91 waits for ShareLock on transaction 2855; blocked by process 85.\\nProcess 85 waits for ShareLock on transaction 2854; blocked by process 89.\\nProcess 89 waits for AccessExclusiveLock on tuple (8,69) of relation 16387 of",
+   "service": "api",
+   "t": 52.411
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:47.707Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":503,\"ms\":1913}",
+   "service": "api",
+   "t": 52.412
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:47.709Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"deadlock detected\",\"route\":\"/transfers\",\"error\":\"deadlock detected\\nDETAIL:  Process 85 waits for ShareLock on transaction 2854; blocked by process 89.\\nProcess 89 waits for ShareLock on transaction 2855; blocked by process 85.\\nHINT:  See server log for query details.\\nCONTEXT:  while locking tuple (19,1",
+   "service": "api",
+   "t": 52.413
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:47.709Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":503,\"ms\":1957}",
+   "service": "api",
+   "t": 52.413
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:47.712Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":1970}",
+   "service": "api",
+   "t": 52.416
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:47.721Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":1895}",
+   "service": "api",
+   "t": 52.425
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:47.725Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":1649}",
+   "service": "api",
+   "t": 52.429
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:47.730Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":2059}",
+   "service": "api",
+   "t": 52.434
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:49.664Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"deadlock detected\",\"route\":\"/transfers\",\"error\":\"deadlock detected\\nDETAIL:  Process 88 waits for ShareLock on transaction 2949; blocked by process 87.\\nProcess 87 waits for ShareLock on transaction 2948; blocked by process 88.\\nHINT:  See server log for query details.\\nCONTEXT:  while locking tuple (5,34",
+   "service": "api",
+   "t": 54.378
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:49.665Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":503,\"ms\":1009}",
+   "service": "api",
+   "t": 54.378
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:49.703Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":1042}",
+   "service": "api",
+   "t": 54.408
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:49.801Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":1012}",
+   "service": "api",
+   "t": 54.506
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:49.812Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":1155}",
+   "service": "api",
+   "t": 54.522
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:50.814Z\",\"level\":\"error\",\"service\":\"worker\",\"msg\":\"settlement failed, retrying\",\"error\":\"deadlock detected\\nDETAIL:  Process 147 waits for ShareLock on transaction 2964; blocked by process 90.\\nProcess 90 waits for AccessExclusiveLock on tuple (8,91) of relation 16387 of database 16384; blocked by process 89.\\nProcess 89 waits for ShareLock on transaction 2969; blocked by p",
+   "service": "worker",
+   "t": 55.519
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:50.814Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"deadlock detected\",\"route\":\"/transfers\",\"error\":\"deadlock detected\\nDETAIL:  Process 89 waits for ShareLock on transaction 2969; blocked by process 86.\\nProcess 86 waits for ShareLock on transaction 2974; blocked by process 91.\\nProcess 91 waits for ShareLock on transaction 2970; blocked by process 96.\\nP",
+   "service": "api",
+   "t": 55.523
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:50.817Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":503,\"ms\":2064}",
+   "service": "api",
+   "t": 55.524
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:50.870Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"deadlock detected\",\"route\":\"/transfers\",\"error\":\"deadlock detected\\nDETAIL:  Process 96 waits for AccessExclusiveLock on tuple (8,91) of relation 16387 of database 16384; blocked by process 75.\\nProcess 75 waits for ShareLock on transaction 2969; blocked by process 86.\\nProcess 86 waits for ShareLock on t",
+   "service": "api",
+   "t": 55.581
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:50.879Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":503,\"ms\":1022}",
+   "service": "api",
+   "t": 55.584
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:50.897Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":1100}",
+   "service": "api",
+   "t": 55.602
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:50.927Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":2240}",
+   "service": "api",
+   "t": 55.632
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:51.935Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"deadlock detected\",\"route\":\"/transfers\",\"error\":\"deadlock detected\\nDETAIL:  Process 139 waits for AccessExclusiveLock on tuple (19,45) of relation 16387 of database 16384; blocked by process 75.\\nProcess 75 waits for ShareLock on transaction 2975; blocked by process 85.\\nProcess 85 waits for ShareLock on",
+   "service": "api",
+   "t": 56.641
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:51.938Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":503,\"ms\":1054}",
+   "service": "api",
+   "t": 56.642
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:51.961Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":2082}",
+   "service": "api",
+   "t": 56.667
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:51.980Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":1040}",
+   "service": "api",
+   "t": 56.684
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:51.980Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":3220}",
+   "service": "api",
+   "t": 56.694
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:52.030Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":1072}",
+   "service": "api",
+   "t": 56.735
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:52.055Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":2706}",
+   "service": "api",
+   "t": 56.76
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:52.097Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":2206}",
+   "service": "api",
+   "t": 56.802
+  },
+  {
+   "line": "time=2026-11-04T16:13:52.522Z level=ERROR source=collector.go:227 msg=\"collector failed\" name=wal duration_seconds=0.082193563 err=\"pq: permission denied for function pg_ls_waldir\"",
+   "service": "postgres-exporter",
+   "t": 57.227
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:53.020Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"deadlock detected\",\"route\":\"/transfers\",\"error\":\"deadlock detected\\nDETAIL:  Process 91 waits for ShareLock on transaction 2979; blocked by process 187.\\nProcess 187 waits for ExclusiveLock on tuple (2,108) of relation 16387 of database 16384; blocked by process 95.\\nProcess 95 waits for ShareLock on tran",
+   "service": "api",
+   "t": 57.725
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:53.021Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":503,\"ms\":2028}",
+   "service": "api",
+   "t": 57.725
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:53.025Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":3192}",
+   "service": "api",
+   "t": 57.73
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:54.026Z\",\"level\":\"error\",\"service\":\"worker\",\"msg\":\"settlement failed, retrying\",\"error\":\"deadlock detected\\nDETAIL:  Process 187 waits for ShareLock on transaction 2998; blocked by process 95.\\nProcess 95 waits for ShareLock on transaction 2995; blocked by process 76.\\nProcess 76 waits for AccessExclusiveLock on tuple (2,117) of relation 16387 of database 16384; blocked by ",
+   "service": "worker",
+   "t": 58.73
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:54.027Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"deadlock detected\",\"route\":\"/transfers\",\"error\":\"deadlock detected\\nDETAIL:  Process 95 waits for ShareLock on transaction 2995; blocked by process 76.\\nProcess 76 waits for AccessExclusiveLock on tuple (2,117) of relation 16387 of database 16384; blocked by process 87.\\nProcess 87 waits for ShareLock on ",
+   "service": "api",
+   "t": 58.732
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:54.028Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":503,\"ms\":3941}",
+   "service": "api",
+   "t": 58.732
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:54.036Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":1880}",
+   "service": "api",
+   "t": 58.741
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:54.060Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":1635}",
+   "service": "api",
+   "t": 58.765
+  },
+  {
+   "line": "\tProcess 86: SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 59.747
+  },
+  {
+   "line": "\tProcess 96: SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 59.747
+  },
+  {
+   "line": "2026-11-04 16:13:55.038 UTC [91] HINT:  See server log for query details.",
+   "service": "postgres-db",
+   "t": 59.747
+  },
+  {
+   "line": "2026-11-04 16:13:55.038 UTC [91] STATEMENT:  SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 59.747
+  },
+  {
+   "line": "2026-11-04 16:13:55.040 UTC [76] ERROR:  deadlock detected",
+   "service": "postgres-db",
+   "t": 59.747
+  },
+  {
+   "line": "2026-11-04 16:13:55.040 UTC [76] DETAIL:  Process 76 waits for ShareLock on transaction 3008; blocked by process 85.",
+   "service": "postgres-db",
+   "t": 59.747
+  },
+  {
+   "line": "\tProcess 85 waits for ShareLock on transaction 3009; blocked by process 86.",
+   "service": "postgres-db",
+   "t": 59.747
+  },
+  {
+   "line": "\tProcess 86 waits for ShareLock on transaction 3005; blocked by process 96.",
+   "service": "postgres-db",
+   "t": 59.747
+  },
+  {
+   "line": "\tProcess 96 waits for AccessExclusiveLock on tuple (2,2) of relation 16387 of database 16384; blocked by process 76.",
+   "service": "postgres-db",
+   "t": 59.747
+  },
+  {
+   "line": "\tProcess 76: SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 59.747
+  },
+  {
+   "line": "\tProcess 85: SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 59.747
+  },
+  {
+   "line": "\tProcess 86: SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 59.747
+  },
+  {
+   "line": "\tProcess 96: SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 59.747
+  },
+  {
+   "line": "2026-11-04 16:13:55.040 UTC [76] HINT:  See server log for query details.",
+   "service": "postgres-db",
+   "t": 59.747
+  },
+  {
+   "line": "2026-11-04 16:13:55.040 UTC [76] CONTEXT:  while locking tuple (2,2) in relation \"accounts\"",
+   "service": "postgres-db",
+   "t": 59.747
+  },
+  {
+   "line": "2026-11-04 16:13:55.040 UTC [76] STATEMENT:  SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 59.747
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:55.035Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"deadlock detected\",\"route\":\"/transfers\",\"error\":\"deadlock detected\\nDETAIL:  Process 90 waits for ShareLock on transaction 3005; blocked by process 96.\\nProcess 96 waits for AccessExclusiveLock on tuple (2,2) of relation 16387 of database 16384; blocked by process 76.\\nProcess 76 waits for ShareLock on tr",
+   "service": "api",
+   "t": 59.748
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:55.036Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":503,\"ms\":2859}",
+   "service": "api",
+   "t": 59.748
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:55.044Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"deadlock detected\",\"route\":\"/transfers\",\"error\":\"deadlock detected\\nDETAIL:  Process 88 waits for AccessExclusiveLock on tuple (2,2) of relation 16387 of database 16384; blocked by process 76.\\nProcess 76 waits for ShareLock on transaction 3008; blocked by process 85.\\nProcess 85 waits for ShareLock on tr",
+   "service": "api",
+   "t": 59.749
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:55.046Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":503,\"ms\":1903}",
+   "service": "api",
+   "t": 59.751
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:55.051Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"deadlock detected\",\"route\":\"/transfers\",\"error\":\"deadlock detected\\nDETAIL:  Process 76 waits for ShareLock on transaction 3008; blocked by process 85.\\nProcess 85 waits for ShareLock on transaction 3009; blocked by process 86.\\nProcess 86 waits for ShareLock on transaction 3005; blocked by process 96.\\nP",
+   "service": "api",
+   "t": 59.756
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:55.052Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":503,\"ms\":2592}",
+   "service": "api",
+   "t": 59.757
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:55.058Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"deadlock detected\",\"route\":\"/transfers\",\"error\":\"deadlock detected\\nDETAIL:  Process 91 waits for AccessExclusiveLock on tuple (2,2) of relation 16387 of database 16384; blocked by process 76.\\nProcess 76 waits for ShareLock on transaction 3008; blocked by process 85.\\nProcess 85 waits for ShareLock on tr",
+   "service": "api",
+   "t": 59.764
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:55.058Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":503,\"ms\":1975}",
+   "service": "api",
+   "t": 59.764
+  },
+  {
+   "line": "2026-11-04 16:13:55.061 UTC [85] ERROR:  deadlock detected",
+   "service": "postgres-db",
+   "t": 59.766
+  },
+  {
+   "line": "2026-11-04 16:13:55.061 UTC [85] DETAIL:  Process 85 waits for ShareLock on transaction 3009; blocked by process 86.",
+   "service": "postgres-db",
+   "t": 59.766
+  },
+  {
+   "line": "\tProcess 86 waits for ShareLock on transaction 3005; blocked by process 96.",
+   "service": "postgres-db",
+   "t": 59.766
+  },
+  {
+   "line": "\tProcess 96 waits for ShareLock on transaction 3008; blocked by process 85.",
+   "service": "postgres-db",
+   "t": 59.766
+  },
+  {
+   "line": "\tProcess 85: SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 59.766
+  },
+  {
+   "line": "\tProcess 86: SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 59.766
+  },
+  {
+   "line": "\tProcess 96: SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 59.766
+  },
+  {
+   "line": "2026-11-04 16:13:55.061 UTC [85] HINT:  See server log for query details.",
+   "service": "postgres-db",
+   "t": 59.766
+  },
+  {
+   "line": "2026-11-04 16:13:55.061 UTC [85] CONTEXT:  while locking tuple (5,47) in relation \"accounts\"",
+   "service": "postgres-db",
+   "t": 59.766
+  },
+  {
+   "line": "2026-11-04 16:13:55.061 UTC [85] STATEMENT:  SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 59.766
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:55.097Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"deadlock detected\",\"route\":\"/transfers\",\"error\":\"deadlock detected\\nDETAIL:  Process 85 waits for ShareLock on transaction 3009; blocked by process 86.\\nProcess 86 waits for ShareLock on transaction 3005; blocked by process 96.\\nProcess 96 waits for ShareLock on transaction 3008; blocked by process 85.\\nH",
+   "service": "api",
+   "t": 59.807
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:55.102Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":503,\"ms\":2812}",
+   "service": "api",
+   "t": 59.807
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:55.132Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":1027}",
+   "service": "api",
+   "t": 59.837
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:55.134Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":3004}",
+   "service": "api",
+   "t": 59.859
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:55.164Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":1051}",
+   "service": "api",
+   "t": 59.868
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:55.195Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":2054}",
+   "service": "api",
+   "t": 59.9
+  },
+  {
+   "line": "2026-11-04 16:13:56.189 UTC [88] ERROR:  deadlock detected",
+   "service": "postgres-db",
+   "t": 60.893
+  },
+  {
+   "line": "2026-11-04 16:13:56.189 UTC [88] DETAIL:  Process 88 waits for ShareLock on transaction 3015; blocked by process 91.",
+   "service": "postgres-db",
+   "t": 60.893
+  },
+  {
+   "line": "\tProcess 91 waits for ShareLock on transaction 3017; blocked by process 92.",
+   "service": "postgres-db",
+   "t": 60.893
+  },
+  {
+   "line": "\tProcess 92 waits for ShareLock on transaction 3016; blocked by process 88.",
+   "service": "postgres-db",
+   "t": 60.893
+  },
+  {
+   "line": "\tProcess 88: SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 60.893
+  },
+  {
+   "line": "\tProcess 91: SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 60.893
+  },
+  {
+   "line": "\tProcess 92: SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 60.893
+  },
+  {
+   "line": "2026-11-04 16:13:56.189 UTC [88] HINT:  See server log for query details.",
+   "service": "postgres-db",
+   "t": 60.893
+  },
+  {
+   "line": "2026-11-04 16:13:56.189 UTC [88] CONTEXT:  while locking tuple (8,3) in relation \"accounts\"",
+   "service": "postgres-db",
+   "t": 60.893
+  },
+  {
+   "line": "2026-11-04 16:13:56.189 UTC [88] STATEMENT:  SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 60.893
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:56.192Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"deadlock detected\",\"route\":\"/transfers\",\"error\":\"deadlock detected\\nDETAIL:  Process 88 waits for ShareLock on transaction 3015; blocked by process 91.\\nProcess 91 waits for ShareLock on transaction 3017; blocked by process 92.\\nProcess 92 waits for ShareLock on transaction 3016; blocked by process 88.\\nH",
+   "service": "api",
+   "t": 60.896
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:56.192Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":503,\"ms\":1015}",
+   "service": "api",
+   "t": 60.897
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:56.213Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":2119}",
+   "service": "api",
+   "t": 60.918
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:56.241Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":1085}",
+   "service": "api",
+   "t": 60.946
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:56.311Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":1121}",
+   "service": "api",
+   "t": 61.016
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:56.429Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":1245}",
+   "service": "api",
+   "t": 61.133
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:56.479Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":1377}",
+   "service": "api",
+   "t": 61.184
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:56.501Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":1244}",
+   "service": "api",
+   "t": 61.212
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:56.564Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":1009}",
+   "service": "api",
+   "t": 61.271
+  },
+  {
+   "line": "2026-11-04 16:13:57.631 UTC [92] ERROR:  deadlock detected",
+   "service": "postgres-db",
+   "t": 62.339
+  },
+  {
+   "line": "2026-11-04 16:13:57.631 UTC [92] DETAIL:  Process 92 waits for ShareLock on transaction 3043; blocked by process 87.",
+   "service": "postgres-db",
+   "t": 62.339
+  },
+  {
+   "line": "\tProcess 87 waits for ShareLock on transaction 3036; blocked by process 92.",
+   "service": "postgres-db",
+   "t": 62.339
+  },
+  {
+   "line": "\tProcess 92: SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 62.339
+  },
+  {
+   "line": "\tProcess 87: SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 62.339
+  },
+  {
+   "line": "2026-11-04 16:13:57.631 UTC [92] HINT:  See server log for query details.",
+   "service": "postgres-db",
+   "t": 62.339
+  },
+  {
+   "line": "2026-11-04 16:13:57.631 UTC [92] CONTEXT:  while locking tuple (3,12) in relation \"accounts\"",
+   "service": "postgres-db",
+   "t": 62.339
+  },
+  {
+   "line": "2026-11-04 16:13:57.631 UTC [92] STATEMENT:  SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 62.339
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:57.633Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"deadlock detected\",\"route\":\"/transfers\",\"error\":\"deadlock detected\\nDETAIL:  Process 92 waits for ShareLock on transaction 3043; blocked by process 87.\\nProcess 87 waits for ShareLock on transaction 3036; blocked by process 92.\\nHINT:  See server log for query details.\\nCONTEXT:  while locking tuple (3,12",
+   "service": "api",
+   "t": 62.349
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:57.634Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":503,\"ms\":1117}",
+   "service": "api",
+   "t": 62.349
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:57.686Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":1201}",
+   "service": "api",
+   "t": 62.39
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:57.702Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":1042}",
+   "service": "api",
+   "t": 62.407
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:57.704Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":1070}",
+   "service": "api",
+   "t": 62.409
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:57.712Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":1064}",
+   "service": "api",
+   "t": 62.416
+  },
+  {
+   "line": "2026-11-04 16:13:57.878 UTC [199] ERROR:  permission denied for function pg_ls_waldir",
+   "service": "postgres-db",
+   "t": 62.582
+  },
+  {
+   "line": "2026-11-04 16:13:57.878 UTC [199] STATEMENT:  ",
+   "service": "postgres-db",
+   "t": 62.582
+  },
+  {
+   "line": "\t\t\tSELECT",
+   "service": "postgres-db",
+   "t": 62.582
+  },
+  {
+   "line": "\t\t\t\tCOUNT(*) AS segments,",
+   "service": "postgres-db",
+   "t": 62.582
+  },
+  {
+   "line": "\t\t\t\tSUM(size) AS size",
+   "service": "postgres-db",
+   "t": 62.582
+  },
+  {
+   "line": "\t\t\tFROM pg_ls_waldir()",
+   "service": "postgres-db",
+   "t": 62.582
+  },
+  {
+   "line": "\t\t\tWHERE name ~ '^[0-9A-F]{24}$'",
+   "service": "postgres-db",
+   "t": 62.582
+  },
+  {
+   "line": "time=2026-11-04T16:13:57.884Z level=ERROR source=collector.go:227 msg=\"collector failed\" name=wal duration_seconds=0.072603543 err=\"pq: permission denied for function pg_ls_waldir\"",
+   "service": "postgres-exporter",
+   "t": 62.588
+  },
+  {
+   "line": "2026-11-04 16:13:58.715 UTC [86] ERROR:  deadlock detected",
+   "service": "postgres-db",
+   "t": 63.42
+  },
+  {
+   "line": "2026-11-04 16:13:58.715 UTC [86] DETAIL:  Process 86 waits for ShareLock on transaction 3059; blocked by process 139.",
+   "service": "postgres-db",
+   "t": 63.42
+  },
+  {
+   "line": "\tProcess 139 waits for ShareLock on transaction 3057; blocked by process 86.",
+   "service": "postgres-db",
+   "t": 63.42
+  },
+  {
+   "line": "\tProcess 86: SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 63.42
+  },
+  {
+   "line": "\tProcess 139: SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 63.42
+  },
+  {
+   "line": "2026-11-04 16:13:58.715 UTC [86] HINT:  See server log for query details.",
+   "service": "postgres-db",
+   "t": 63.42
+  },
+  {
+   "line": "2026-11-04 16:13:58.715 UTC [86] CONTEXT:  while locking updated version (3,17) of tuple in relation \"accounts\"",
+   "service": "postgres-db",
+   "t": 63.42
+  },
+  {
+   "line": "2026-11-04 16:13:58.715 UTC [86] STATEMENT:  SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 63.42
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:58.722Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"deadlock detected\",\"route\":\"/transfers\",\"error\":\"deadlock detected\\nDETAIL:  Process 86 waits for ShareLock on transaction 3059; blocked by process 139.\\nProcess 139 waits for ShareLock on transaction 3057; blocked by process 86.\\nHINT:  See server log for query details.\\nCONTEXT:  while locking updated v",
+   "service": "api",
+   "t": 63.427
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:58.722Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":503,\"ms\":1738}",
+   "service": "api",
+   "t": 63.427
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:58.737Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":1857}",
+   "service": "api",
+   "t": 63.442
+  },
+  {
+   "line": "2026-11-04 16:13:59.736 UTC [92] ERROR:  deadlock detected",
+   "service": "postgres-db",
+   "t": 64.441
+  },
+  {
+   "line": "2026-11-04 16:13:59.736 UTC [92] DETAIL:  Process 92 waits for ShareLock on transaction 3069; blocked by process 85.",
+   "service": "postgres-db",
+   "t": 64.441
+  },
+  {
+   "line": "\tProcess 85 waits for ShareLock on transaction 3070; blocked by process 88.",
+   "service": "postgres-db",
+   "t": 64.441
+  },
+  {
+   "line": "\tProcess 88 waits for AccessExclusiveLock on tuple (3,18) of relation 16387 of database 16384; blocked by process 92.",
+   "service": "postgres-db",
+   "t": 64.441
+  },
+  {
+   "line": "\tProcess 92: SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 64.441
+  },
+  {
+   "line": "\tProcess 85: SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 64.441
+  },
+  {
+   "line": "\tProcess 88: SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 64.441
+  },
+  {
+   "line": "2026-11-04 16:13:59.736 UTC [92] HINT:  See server log for query details.",
+   "service": "postgres-db",
+   "t": 64.441
+  },
+  {
+   "line": "2026-11-04 16:13:59.736 UTC [92] CONTEXT:  while locking tuple (3,18) in relation \"accounts\"",
+   "service": "postgres-db",
+   "t": 64.441
+  },
+  {
+   "line": "2026-11-04 16:13:59.736 UTC [92] STATEMENT:  SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 64.441
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:59.743Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"deadlock detected\",\"route\":\"/transfers\",\"error\":\"deadlock detected\\nDETAIL:  Process 92 waits for ShareLock on transaction 3069; blocked by process 85.\\nProcess 85 waits for ShareLock on transaction 3070; blocked by process 88.\\nProcess 88 waits for AccessExclusiveLock on tuple (3,18) of relation 16387 of",
+   "service": "api",
+   "t": 64.448
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:59.743Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":503,\"ms\":1994}",
+   "service": "api",
+   "t": 64.448
+  },
+  {
+   "line": "2026-11-04 16:13:59.755 UTC [85] ERROR:  deadlock detected",
+   "service": "postgres-db",
+   "t": 64.459
+  },
+  {
+   "line": "2026-11-04 16:13:59.755 UTC [85] DETAIL:  Process 85 waits for ShareLock on transaction 3070; blocked by process 88.",
+   "service": "postgres-db",
+   "t": 64.459
+  },
+  {
+   "line": "\tProcess 88 waits for ShareLock on transaction 3069; blocked by process 85.",
+   "service": "postgres-db",
+   "t": 64.459
+  },
+  {
+   "line": "\tProcess 85: SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 64.459
+  },
+  {
+   "line": "\tProcess 88: SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 64.459
+  },
+  {
+   "line": "2026-11-04 16:13:59.755 UTC [85] HINT:  See server log for query details.",
+   "service": "postgres-db",
+   "t": 64.459
+  },
+  {
+   "line": "2026-11-04 16:13:59.755 UTC [85] CONTEXT:  while locking tuple (5,59) in relation \"accounts\"",
+   "service": "postgres-db",
+   "t": 64.459
+  },
+  {
+   "line": "2026-11-04 16:13:59.755 UTC [85] STATEMENT:  SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 64.459
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:59.757Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":1921}",
+   "service": "api",
+   "t": 64.462
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:59.759Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"deadlock detected\",\"route\":\"/transfers\",\"error\":\"deadlock detected\\nDETAIL:  Process 85 waits for ShareLock on transaction 3070; blocked by process 88.\\nProcess 88 waits for ShareLock on transaction 3069; blocked by process 85.\\nHINT:  See server log for query details.\\nCONTEXT:  while locking tuple (5,59",
+   "service": "api",
+   "t": 64.463
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:59.759Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":503,\"ms\":2749}",
+   "service": "api",
+   "t": 64.464
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:13:59.776Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":1951}",
+   "service": "api",
+   "t": 64.48
+  },
+  {
+   "line": "2026-11-04 16:14:00.757 UTC [95] ERROR:  deadlock detected",
+   "service": "postgres-db",
+   "t": 65.462
+  },
+  {
+   "line": "2026-11-04 16:14:00.757 UTC [95] DETAIL:  Process 95 waits for ShareLock on transaction 3075; blocked by process 197.",
+   "service": "postgres-db",
+   "t": 65.462
+  },
+  {
+   "line": "\tProcess 197 waits for AccessExclusiveLock on tuple (5,60) of relation 16387 of database 16384; blocked by process 96.",
+   "service": "postgres-db",
+   "t": 65.462
+  },
+  {
+   "line": "\tProcess 96 waits for ShareLock on transaction 3077; blocked by process 91.",
+   "service": "postgres-db",
+   "t": 65.462
+  },
+  {
+   "line": "\tProcess 91 waits for ShareLock on transaction 3076; blocked by process 139.",
+   "service": "postgres-db",
+   "t": 65.462
+  },
+  {
+   "line": "\tProcess 139 waits for AccessExclusiveLock on tuple (19,74) of relation 16387 of database 16384; blocked by process 95.",
+   "service": "postgres-db",
+   "t": 65.462
+  },
+  {
+   "line": "\tProcess 95: SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 65.462
+  },
+  {
+   "line": "\tProcess 197: SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 65.462
+  },
+  {
+   "line": "\tProcess 96: SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 65.462
+  },
+  {
+   "line": "\tProcess 91: SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 65.462
+  },
+  {
+   "line": "\tProcess 139: SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 65.462
+  },
+  {
+   "line": "2026-11-04 16:14:00.757 UTC [95] HINT:  See server log for query details.",
+   "service": "postgres-db",
+   "t": 65.462
+  },
+  {
+   "line": "2026-11-04 16:14:00.757 UTC [95] CONTEXT:  while locking tuple (19,74) in relation \"accounts\"",
+   "service": "postgres-db",
+   "t": 65.462
+  },
+  {
+   "line": "2026-11-04 16:14:00.757 UTC [95] STATEMENT:  SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 65.462
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:14:00.760Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"deadlock detected\",\"route\":\"/transfers\",\"error\":\"deadlock detected\\nDETAIL:  Process 95 waits for ShareLock on transaction 3075; blocked by process 197.\\nProcess 197 waits for AccessExclusiveLock on tuple (5,60) of relation 16387 of database 16384; blocked by process 96.\\nProcess 96 waits for ShareLock on",
+   "service": "api",
+   "t": 65.465
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:14:00.761Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":503,\"ms\":2908}",
+   "service": "api",
+   "t": 65.465
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:14:00.779Z\",\"level\":\"error\",\"service\":\"worker\",\"msg\":\"settlement failed, retrying\",\"error\":\"deadlock detected\\nDETAIL:  Process 190 waits for ExclusiveLock on tuple (5,60) of relation 16387 of database 16384; blocked by process 96.\\nProcess 96 waits for ShareLock on transaction 3077; blocked by process 91.\\nProcess 91 waits for ShareLock on transaction 3076; blocked by process",
+   "service": "worker",
+   "t": 65.484
+  },
+  {
+   "line": "2026-11-04 16:14:00.776 UTC [190] ERROR:  deadlock detected",
+   "service": "postgres-db",
+   "t": 65.484
+  },
+  {
+   "line": "2026-11-04 16:14:00.776 UTC [190] DETAIL:  Process 190 waits for ExclusiveLock on tuple (5,60) of relation 16387 of database 16384; blocked by process 96.",
+   "service": "postgres-db",
+   "t": 65.484
+  },
+  {
+   "line": "\tProcess 96 waits for ShareLock on transaction 3077; blocked by process 91.",
+   "service": "postgres-db",
+   "t": 65.484
+  },
+  {
+   "line": "\tProcess 91 waits for ShareLock on transaction 3076; blocked by process 139.",
+   "service": "postgres-db",
+   "t": 65.484
+  },
+  {
+   "line": "\tProcess 139 waits for ShareLock on transaction 3075; blocked by process 197.",
+   "service": "postgres-db",
+   "t": 65.484
+  },
+  {
+   "line": "\tProcess 197 waits for AccessExclusiveLock on tuple (5,60) of relation 16387 of database 16384; blocked by process 190.",
+   "service": "postgres-db",
+   "t": 65.484
+  },
+  {
+   "line": "\tProcess 190: UPDATE accounts SET balance_cents = balance_cents + $1, updated_at = now() WHERE id = $2",
+   "service": "postgres-db",
+   "t": 65.484
+  },
+  {
+   "line": "\tProcess 96: SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 65.484
+  },
+  {
+   "line": "\tProcess 91: SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 65.484
+  },
+  {
+   "line": "\tProcess 139: SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 65.484
+  },
+  {
+   "line": "\tProcess 197: SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 65.484
+  },
+  {
+   "line": "2026-11-04 16:14:00.776 UTC [190] HINT:  See server log for query details.",
+   "service": "postgres-db",
+   "t": 65.484
+  },
+  {
+   "line": "2026-11-04 16:14:00.776 UTC [190] STATEMENT:  UPDATE accounts SET balance_cents = balance_cents + $1, updated_at = now() WHERE id = $2",
+   "service": "postgres-db",
+   "t": 65.484
+  },
+  {
+   "line": "2026-11-04 16:14:00.776 UTC [197] ERROR:  deadlock detected",
+   "service": "postgres-db",
+   "t": 65.484
+  },
+  {
+   "line": "2026-11-04 16:14:00.776 UTC [197] DETAIL:  Process 197 waits for AccessExclusiveLock on tuple (5,60) of relation 16387 of database 16384; blocked by process 96.",
+   "service": "postgres-db",
+   "t": 65.484
+  },
+  {
+   "line": "\tProcess 96 waits for ShareLock on transaction 3077; blocked by process 91.",
+   "service": "postgres-db",
+   "t": 65.484
+  },
+  {
+   "line": "\tProcess 91 waits for ShareLock on transaction 3076; blocked by process 139.",
+   "service": "postgres-db",
+   "t": 65.484
+  },
+  {
+   "line": "\tProcess 139 waits for ShareLock on transaction 3075; blocked by process 197.",
+   "service": "postgres-db",
+   "t": 65.484
+  },
+  {
+   "line": "\tProcess 197: SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 65.485
+  },
+  {
+   "line": "\tProcess 96: SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 65.485
+  },
+  {
+   "line": "\tProcess 91: SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 65.485
+  },
+  {
+   "line": "\tProcess 139: SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 65.485
+  },
+  {
+   "line": "2026-11-04 16:14:00.776 UTC [197] HINT:  See server log for query details.",
+   "service": "postgres-db",
+   "t": 65.485
+  },
+  {
+   "line": "2026-11-04 16:14:00.776 UTC [197] STATEMENT:  SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 65.485
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:14:00.781Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"deadlock detected\",\"route\":\"/transfers\",\"error\":\"deadlock detected\\nDETAIL:  Process 197 waits for AccessExclusiveLock on tuple (5,60) of relation 16387 of database 16384; blocked by process 96.\\nProcess 96 waits for ShareLock on transaction 3077; blocked by process 91.\\nProcess 91 waits for ShareLock on ",
+   "service": "api",
+   "t": 65.487
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:14:00.783Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":503,\"ms\":2931}",
+   "service": "api",
+   "t": 65.488
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:14:00.790Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":1923}",
+   "service": "api",
+   "t": 65.494
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:14:00.796Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":1958}",
+   "service": "api",
+   "t": 65.501
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:14:00.801Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":2904}",
+   "service": "api",
+   "t": 65.505
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:14:00.806Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":1934}",
+   "service": "api",
+   "t": 65.51
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:14:00.812Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":1000}",
+   "service": "api",
+   "t": 65.516
+  },
+  {
+   "line": "2026-11-04 16:14:03.074 UTC [208] ERROR:  permission denied for function pg_ls_waldir",
+   "service": "postgres-db",
+   "t": 67.779
+  },
+  {
+   "line": "2026-11-04 16:14:03.074 UTC [208] STATEMENT:  ",
+   "service": "postgres-db",
+   "t": 67.779
+  },
+  {
+   "line": "\t\t\tSELECT",
+   "service": "postgres-db",
+   "t": 67.779
+  },
+  {
+   "line": "\t\t\t\tCOUNT(*) AS segments,",
+   "service": "postgres-db",
+   "t": 67.779
+  },
+  {
+   "line": "\t\t\t\tSUM(size) AS size",
+   "service": "postgres-db",
+   "t": 67.779
+  },
+  {
+   "line": "\t\t\tFROM pg_ls_waldir()",
+   "service": "postgres-db",
+   "t": 67.779
+  },
+  {
+   "line": "\t\t\tWHERE name ~ '^[0-9A-F]{24}$'",
+   "service": "postgres-db",
+   "t": 67.779
+  },
+  {
+   "line": "time=2026-11-04T16:14:03.075Z level=ERROR source=collector.go:227 msg=\"collector failed\" name=wal duration_seconds=0.004390043 err=\"pq: permission denied for function pg_ls_waldir\"",
+   "service": "postgres-exporter",
+   "t": 67.779
+  },
+  {
+   "line": "2026-11-04 16:14:03.466 UTC [96] ERROR:  deadlock detected",
+   "service": "postgres-db",
+   "t": 68.171
+  },
+  {
+   "line": "2026-11-04 16:14:03.466 UTC [96] DETAIL:  Process 96 waits for ShareLock on transaction 3217; blocked by process 197.",
+   "service": "postgres-db",
+   "t": 68.171
+  },
+  {
+   "line": "\tProcess 197 waits for ShareLock on transaction 3216; blocked by process 96.",
+   "service": "postgres-db",
+   "t": 68.171
+  },
+  {
+   "line": "\tProcess 96: SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 68.171
+  },
+  {
+   "line": "\tProcess 197: SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 68.171
+  },
+  {
+   "line": "2026-11-04 16:14:03.466 UTC [96] HINT:  See server log for query details.",
+   "service": "postgres-db",
+   "t": 68.171
+  },
+  {
+   "line": "2026-11-04 16:14:03.466 UTC [96] CONTEXT:  while locking tuple (1,60) in relation \"accounts\"",
+   "service": "postgres-db",
+   "t": 68.171
+  },
+  {
+   "line": "2026-11-04 16:14:03.466 UTC [96] STATEMENT:  SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 68.171
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:14:03.468Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"deadlock detected\",\"route\":\"/transfers\",\"error\":\"deadlock detected\\nDETAIL:  Process 96 waits for ShareLock on transaction 3217; blocked by process 197.\\nProcess 197 waits for ShareLock on transaction 3216; blocked by process 96.\\nHINT:  See server log for query details.\\nCONTEXT:  while locking tuple (1,",
+   "service": "api",
+   "t": 68.178
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:14:03.468Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":503,\"ms\":1008}",
+   "service": "api",
+   "t": 68.178
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:14:03.483Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":1025}",
+   "service": "api",
+   "t": 68.187
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:14:03.488Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":1021}",
+   "service": "api",
+   "t": 68.193
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:14:03.497Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":1024}",
+   "service": "api",
+   "t": 68.202
+  },
+  {
+   "line": "2026-11-04 16:14:04.487 UTC [89] ERROR:  deadlock detected",
+   "service": "postgres-db",
+   "t": 69.194
+  },
+  {
+   "line": "2026-11-04 16:14:04.487 UTC [89] DETAIL:  Process 89 waits for ShareLock on transaction 3225; blocked by process 85.",
+   "service": "postgres-db",
+   "t": 69.194
+  },
+  {
+   "line": "\tProcess 85 waits for ShareLock on transaction 3227; blocked by process 87.",
+   "service": "postgres-db",
+   "t": 69.194
+  },
+  {
+   "line": "\tProcess 87 waits for AccessExclusiveLock on tuple (1,62) of relation 16387 of database 16384; blocked by process 89.",
+   "service": "postgres-db",
+   "t": 69.194
+  },
+  {
+   "line": "\tProcess 89: SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 69.194
+  },
+  {
+   "line": "\tProcess 85: SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 69.194
+  },
+  {
+   "line": "\tProcess 87: SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 69.194
+  },
+  {
+   "line": "2026-11-04 16:14:04.487 UTC [89] HINT:  See server log for query details.",
+   "service": "postgres-db",
+   "t": 69.194
+  },
+  {
+   "line": "2026-11-04 16:14:04.487 UTC [89] CONTEXT:  while locking tuple (1,62) in relation \"accounts\"",
+   "service": "postgres-db",
+   "t": 69.194
+  },
+  {
+   "line": "2026-11-04 16:14:04.487 UTC [89] STATEMENT:  SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 69.194
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:14:04.490Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"deadlock detected\",\"route\":\"/transfers\",\"error\":\"deadlock detected\\nDETAIL:  Process 89 waits for ShareLock on transaction 3225; blocked by process 85.\\nProcess 85 waits for ShareLock on transaction 3227; blocked by process 87.\\nProcess 87 waits for AccessExclusiveLock on tuple (1,62) of relation 16387 of",
+   "service": "api",
+   "t": 69.207
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:14:04.490Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":503,\"ms\":1837}",
+   "service": "api",
+   "t": 69.207
+  },
+  {
+   "line": "2026-11-04 16:14:04.503 UTC [85] ERROR:  deadlock detected",
+   "service": "postgres-db",
+   "t": 69.208
+  },
+  {
+   "line": "2026-11-04 16:14:04.503 UTC [85] DETAIL:  Process 85 waits for ShareLock on transaction 3227; blocked by process 87.",
+   "service": "postgres-db",
+   "t": 69.208
+  },
+  {
+   "line": "\tProcess 87 waits for ShareLock on transaction 3225; blocked by process 85.",
+   "service": "postgres-db",
+   "t": 69.208
+  },
+  {
+   "line": "\tProcess 85: SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 69.208
+  },
+  {
+   "line": "\tProcess 87: SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 69.208
+  },
+  {
+   "line": "2026-11-04 16:14:04.503 UTC [85] HINT:  See server log for query details.",
+   "service": "postgres-db",
+   "t": 69.208
+  },
+  {
+   "line": "2026-11-04 16:14:04.503 UTC [85] CONTEXT:  while locking tuple (8,42) in relation \"accounts\"",
+   "service": "postgres-db",
+   "t": 69.208
+  },
+  {
+   "line": "2026-11-04 16:14:04.503 UTC [85] STATEMENT:  SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 69.208
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:14:04.506Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"deadlock detected\",\"route\":\"/transfers\",\"error\":\"deadlock detected\\nDETAIL:  Process 85 waits for ShareLock on transaction 3227; blocked by process 87.\\nProcess 87 waits for ShareLock on transaction 3225; blocked by process 85.\\nHINT:  See server log for query details.\\nCONTEXT:  while locking tuple (8,42",
+   "service": "api",
+   "t": 69.21
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:14:04.506Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":503,\"ms\":2038}",
+   "service": "api",
+   "t": 69.211
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:14:04.511Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":1987}",
+   "service": "api",
+   "t": 69.22
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:14:04.528Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":1007}",
+   "service": "api",
+   "t": 69.234
+  },
+  {
+   "line": "2026-11-04 16:14:05.526 UTC [96] ERROR:  deadlock detected",
+   "service": "postgres-db",
+   "t": 70.23
+  },
+  {
+   "line": "2026-11-04 16:14:05.526 UTC [96] DETAIL:  Process 96 waits for ShareLock on transaction 3237; blocked by process 88.",
+   "service": "postgres-db",
+   "t": 70.23
+  },
+  {
+   "line": "\tProcess 88 waits for ShareLock on transaction 3229; blocked by process 96.",
+   "service": "postgres-db",
+   "t": 70.23
+  },
+  {
+   "line": "\tProcess 96: SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 70.23
+  },
+  {
+   "line": "\tProcess 88: SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 70.23
+  },
+  {
+   "line": "2026-11-04 16:14:05.526 UTC [96] HINT:  See server log for query details.",
+   "service": "postgres-db",
+   "t": 70.23
+  },
+  {
+   "line": "2026-11-04 16:14:05.526 UTC [96] CONTEXT:  while locking tuple (5,105) in relation \"accounts\"",
+   "service": "postgres-db",
+   "t": 70.23
+  },
+  {
+   "line": "2026-11-04 16:14:05.526 UTC [96] STATEMENT:  SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 70.23
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:14:05.527Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"deadlock detected\",\"route\":\"/transfers\",\"error\":\"deadlock detected\\nDETAIL:  Process 96 waits for ShareLock on transaction 3237; blocked by process 88.\\nProcess 88 waits for ShareLock on transaction 3229; blocked by process 96.\\nHINT:  See server log for query details.\\nCONTEXT:  while locking tuple (5,10",
+   "service": "api",
+   "t": 70.232
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:14:05.528Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":503,\"ms\":1987}",
+   "service": "api",
+   "t": 70.232
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:14:05.533Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":1997}",
+   "service": "api",
+   "t": 70.238
+  },
+  {
+   "line": "2026-11-04 16:14:06.532 UTC [89] ERROR:  deadlock detected",
+   "service": "postgres-db",
+   "t": 71.236
+  },
+  {
+   "line": "2026-11-04 16:14:06.532 UTC [89] DETAIL:  Process 89 waits for ShareLock on transaction 3251; blocked by process 91.",
+   "service": "postgres-db",
+   "t": 71.236
+  },
+  {
+   "line": "\tProcess 91 waits for ShareLock on transaction 3246; blocked by process 89.",
+   "service": "postgres-db",
+   "t": 71.236
+  },
+  {
+   "line": "\tProcess 89: SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 71.236
+  },
+  {
+   "line": "\tProcess 91: SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 71.236
+  },
+  {
+   "line": "2026-11-04 16:14:06.532 UTC [89] HINT:  See server log for query details.",
+   "service": "postgres-db",
+   "t": 71.236
+  },
+  {
+   "line": "2026-11-04 16:14:06.532 UTC [89] CONTEXT:  while locking tuple (3,58) in relation \"accounts\"",
+   "service": "postgres-db",
+   "t": 71.236
+  },
+  {
+   "line": "2026-11-04 16:14:06.532 UTC [89] STATEMENT:  SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 71.236
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:14:06.534Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"deadlock detected\",\"route\":\"/transfers\",\"error\":\"deadlock detected\\nDETAIL:  Process 89 waits for ShareLock on transaction 3251; blocked by process 91.\\nProcess 91 waits for ShareLock on transaction 3246; blocked by process 89.\\nHINT:  See server log for query details.\\nCONTEXT:  while locking tuple (3,58",
+   "service": "api",
+   "t": 71.238
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:14:06.534Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":503,\"ms\":1684}",
+   "service": "api",
+   "t": 71.239
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:14:06.551Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":1700}",
+   "service": "api",
+   "t": 71.258
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:14:06.579Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":3032}",
+   "service": "api",
+   "t": 71.285
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:14:06.591Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":3041}",
+   "service": "api",
+   "t": 71.295
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:14:06.594Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":2925}",
+   "service": "api",
+   "t": 71.298
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:14:06.595Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":2532}",
+   "service": "api",
+   "t": 71.3
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:14:06.598Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":2021}",
+   "service": "api",
+   "t": 71.303
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:14:06.601Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":1444}",
+   "service": "api",
+   "t": 71.305
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:14:06.604Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":1019}",
+   "service": "api",
+   "t": 71.309
+  },
+  {
+   "line": "2026-11-04 16:14:07.741 UTC [95] ERROR:  deadlock detected",
+   "service": "postgres-db",
+   "t": 72.446
+  },
+  {
+   "line": "2026-11-04 16:14:07.741 UTC [95] DETAIL:  Process 95 waits for ShareLock on transaction 3276; blocked by process 92.",
+   "service": "postgres-db",
+   "t": 72.446
+  },
+  {
+   "line": "\tProcess 92 waits for ShareLock on transaction 3277; blocked by process 95.",
+   "service": "postgres-db",
+   "t": 72.446
+  },
+  {
+   "line": "\tProcess 95: SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 72.446
+  },
+  {
+   "line": "\tProcess 92: SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 72.446
+  },
+  {
+   "line": "2026-11-04 16:14:07.741 UTC [95] HINT:  See server log for query details.",
+   "service": "postgres-db",
+   "t": 72.446
+  },
+  {
+   "line": "2026-11-04 16:14:07.741 UTC [95] CONTEXT:  while locking tuple (19,21) in relation \"accounts\"",
+   "service": "postgres-db",
+   "t": 72.446
+  },
+  {
+   "line": "2026-11-04 16:14:07.741 UTC [95] STATEMENT:  SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 72.446
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:14:07.748Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"deadlock detected\",\"route\":\"/transfers\",\"error\":\"deadlock detected\\nDETAIL:  Process 95 waits for ShareLock on transaction 3276; blocked by process 92.\\nProcess 92 waits for ShareLock on transaction 3277; blocked by process 95.\\nHINT:  See server log for query details.\\nCONTEXT:  while locking tuple (19,2",
+   "service": "api",
+   "t": 72.452
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:14:07.755Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":503,\"ms\":1015}",
+   "service": "api",
+   "t": 72.459
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:14:07.761Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":1022}",
+   "service": "api",
+   "t": 72.466
+  },
+  {
+   "line": "2026-11-04 16:14:07.841 UTC [76] ERROR:  deadlock detected",
+   "service": "postgres-db",
+   "t": 72.546
+  },
+  {
+   "line": "2026-11-04 16:14:07.841 UTC [76] DETAIL:  Process 76 waits for ShareLock on transaction 3282; blocked by process 139.",
+   "service": "postgres-db",
+   "t": 72.546
+  },
+  {
+   "line": "\tProcess 139 waits for ShareLock on transaction 3291; blocked by process 96.",
+   "service": "postgres-db",
+   "t": 72.546
+  },
+  {
+   "line": "\tProcess 96 waits for AccessExclusiveLock on tuple (1,72) of relation 16387 of database 16384; blocked by process 76.",
+   "service": "postgres-db",
+   "t": 72.546
+  },
+  {
+   "line": "\tProcess 76: SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 72.546
+  },
+  {
+   "line": "\tProcess 139: SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 72.546
+  },
+  {
+   "line": "\tProcess 96: SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 72.546
+  },
+  {
+   "line": "2026-11-04 16:14:07.841 UTC [76] HINT:  See server log for query details.",
+   "service": "postgres-db",
+   "t": 72.546
+  },
+  {
+   "line": "2026-11-04 16:14:07.841 UTC [76] CONTEXT:  while locking tuple (1,72) in relation \"accounts\"",
+   "service": "postgres-db",
+   "t": 72.546
+  },
+  {
+   "line": "2026-11-04 16:14:07.841 UTC [76] STATEMENT:  SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 72.546
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:14:07.843Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"deadlock detected\",\"route\":\"/transfers\",\"error\":\"deadlock detected\\nDETAIL:  Process 76 waits for ShareLock on transaction 3282; blocked by process 139.\\nProcess 139 waits for ShareLock on transaction 3291; blocked by process 96.\\nProcess 96 waits for AccessExclusiveLock on tuple (1,72) of relation 16387 ",
+   "service": "api",
+   "t": 72.547
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:14:07.843Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":503,\"ms\":1004}",
+   "service": "api",
+   "t": 72.548
+  },
+  {
+   "line": "2026-11-04 16:14:08.134 UTC [86] ERROR:  deadlock detected",
+   "service": "postgres-db",
+   "t": 72.838
+  },
+  {
+   "line": "2026-11-04 16:14:08.134 UTC [86] DETAIL:  Process 86 waits for AccessExclusiveLock on tuple (1,72) of relation 16387 of database 16384; blocked by process 197.",
+   "service": "postgres-db",
+   "t": 72.838
+  },
+  {
+   "line": "\tProcess 197 waits for ShareLock on transaction 3282; blocked by process 139.",
+   "service": "postgres-db",
+   "t": 72.838
+  },
+  {
+   "line": "\tProcess 139 waits for ShareLock on transaction 3291; blocked by process 96.",
+   "service": "postgres-db",
+   "t": 72.838
+  },
+  {
+   "line": "\tProcess 96 waits for AccessExclusiveLock on tuple (1,72) of relation 16387 of database 16384; blocked by process 86.",
+   "service": "postgres-db",
+   "t": 72.838
+  },
+  {
+   "line": "\tProcess 86: SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 72.838
+  },
+  {
+   "line": "\tProcess 197: SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 72.838
+  },
+  {
+   "line": "\tProcess 139: SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 72.838
+  },
+  {
+   "line": "\tProcess 96: SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 72.838
+  },
+  {
+   "line": "2026-11-04 16:14:08.134 UTC [86] HINT:  See server log for query details.",
+   "service": "postgres-db",
+   "t": 72.838
+  },
+  {
+   "line": "2026-11-04 16:14:08.134 UTC [86] STATEMENT:  SELECT id, kind, balance_cents FROM accounts WHERE id = $1 FOR UPDATE",
+   "service": "postgres-db",
+   "t": 72.838
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:14:08.136Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"deadlock detected\",\"route\":\"/transfers\",\"error\":\"deadlock detected\\nDETAIL:  Process 86 waits for AccessExclusiveLock on tuple (1,72) of relation 16387 of database 16384; blocked by process 197.\\nProcess 197 waits for ShareLock on transaction 3282; blocked by process 139.\\nProcess 139 waits for ShareLock ",
+   "service": "api",
+   "t": 72.84
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:14:08.136Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":503,\"ms\":1005}",
+   "service": "api",
+   "t": 72.84
+  },
+  {
+   "line": "2026-11-04 16:14:08.306 UTC [216] ERROR:  permission denied for function pg_ls_waldir",
+   "service": "postgres-db",
+   "t": 73.01
+  },
+  {
+   "line": "2026-11-04 16:14:08.306 UTC [216] STATEMENT:  ",
+   "service": "postgres-db",
+   "t": 73.01
+  },
+  {
+   "line": "\t\t\tSELECT",
+   "service": "postgres-db",
+   "t": 73.01
+  },
+  {
+   "line": "\t\t\t\tCOUNT(*) AS segments,",
+   "service": "postgres-db",
+   "t": 73.01
+  },
+  {
+   "line": "\t\t\t\tSUM(size) AS size",
+   "service": "postgres-db",
+   "t": 73.01
+  },
+  {
+   "line": "\t\t\tFROM pg_ls_waldir()",
+   "service": "postgres-db",
+   "t": 73.01
+  },
+  {
+   "line": "\t\t\tWHERE name ~ '^[0-9A-F]{24}$'",
+   "service": "postgres-db",
+   "t": 73.01
+  },
+  {
+   "line": "time=2026-11-04T16:14:08.306Z level=ERROR source=collector.go:227 msg=\"collector failed\" name=wal duration_seconds=0.001375406 err=\"pq: permission denied for function pg_ls_waldir\"",
+   "service": "postgres-exporter",
+   "t": 73.011
+  }
+ ],
+ "recorded_at": 1793808775.3,
+ "samples": [
+  {
+   "t": 6.4,
+   "values": {
+    "accounts_off": 0.0,
+    "books_off_cents": 0.0,
+    "db_connections": 15.0,
+    "db_pool_in_use": 5.0,
+    "deadlocks": 1.2764,
+    "error_rate": 0.0,
+    "negative_balances": 0.0,
+    "overdrafts": 0.0,
+    "p99_latency_ms": 4515.0,
+    "refused_rate": null,
+    "request_rate": 17.6876,
+    "settlements_pending": 5.0
+   }
+  },
+  {
+   "t": 12.1,
+   "values": {
+    "accounts_off": 0.0,
+    "books_off_cents": 0.0,
+    "db_connections": 15.0,
+    "db_pool_in_use": 0.0,
+    "deadlocks": 0.762,
+    "error_rate": 0.0114,
+    "negative_balances": 0.0,
+    "overdrafts": 0.0,
+    "p99_latency_ms": 2916.6667,
+    "refused_rate": null,
+    "request_rate": 66.6709,
+    "settlements_pending": 1.0
+   }
+  },
+  {
+   "t": 17.3,
+   "values": {
+    "accounts_off": 0.0,
+    "books_off_cents": 0.0,
+    "db_connections": 15.0,
+    "db_pool_in_use": 2.0,
+    "deadlocks": 1.277,
+    "error_rate": 0.0213,
+    "negative_balances": 0.0,
+    "overdrafts": 0.0,
+    "p99_latency_ms": 2306.5,
+    "refused_rate": null,
+    "request_rate": 60.0208,
+    "settlements_pending": 0.0
+   }
+  },
+  {
+   "t": 22.8,
+   "values": {
+    "accounts_off": 0.0,
+    "books_off_cents": 0.0,
+    "db_connections": 15.0,
+    "db_pool_in_use": 5.0,
+    "deadlocks": 0.383,
+    "error_rate": 0.0057,
+    "negative_balances": 0.0,
+    "overdrafts": 0.0,
+    "p99_latency_ms": 2063.75,
+    "refused_rate": null,
+    "request_rate": 66.8345,
+    "settlements_pending": 0.0
+   }
+  },
+  {
+   "t": 28.0,
+   "values": {
+    "accounts_off": 0.0,
+    "books_off_cents": 0.0,
+    "db_connections": 15.0,
+    "db_pool_in_use": 4.0,
+    "deadlocks": 1.1405,
+    "error_rate": 0.0155,
+    "negative_balances": 0.0,
+    "overdrafts": 0.0,
+    "p99_latency_ms": 2197.1875,
+    "refused_rate": null,
+    "request_rate": 61.2075,
+    "settlements_pending": 3.0
+   }
+  },
+  {
+   "t": 33.3,
+   "values": {
+    "accounts_off": 0.0,
+    "books_off_cents": 0.0,
+    "db_connections": 16.0,
+    "db_pool_in_use": 5.0,
+    "deadlocks": 1.1065,
+    "error_rate": 0.0316,
+    "negative_balances": 0.0,
+    "overdrafts": 0.0,
+    "p99_latency_ms": 3425.0,
+    "refused_rate": null,
+    "request_rate": 35.0401,
+    "settlements_pending": 4.0
+   }
+  },
+  {
+   "t": 38.7,
+   "values": {
+    "accounts_off": 0.0,
+    "books_off_cents": 0.0,
+    "db_connections": 16.0,
+    "db_pool_in_use": 0.0,
+    "deadlocks": 1.0861,
+    "error_rate": 0.0169,
+    "negative_balances": 0.0,
+    "overdrafts": 0.0,
+    "p99_latency_ms": 2146.0,
+    "refused_rate": null,
+    "request_rate": 64.0792,
+    "settlements_pending": 7.0
+   }
+  },
+  {
+   "t": 44.2,
+   "values": {
+    "accounts_off": 0.0,
+    "books_off_cents": 0.0,
+    "db_connections": 16.0,
+    "db_pool_in_use": 2.0,
+    "deadlocks": 0.7523,
+    "error_rate": 0.0112,
+    "negative_balances": 0.0,
+    "overdrafts": 0.0,
+    "p99_latency_ms": 2116.4286,
+    "refused_rate": null,
+    "request_rate": 67.1437,
+    "settlements_pending": 0.0
+   }
+  },
+  {
+   "t": 49.6,
+   "values": {
+    "accounts_off": 0.0,
+    "books_off_cents": 0.0,
+    "db_connections": 16.0,
+    "db_pool_in_use": 6.0,
+    "deadlocks": 0.7723,
+    "error_rate": 0.0158,
+    "negative_balances": 0.0,
+    "overdrafts": 0.0,
+    "p99_latency_ms": 2230.0,
+    "refused_rate": null,
+    "request_rate": 48.8494,
+    "settlements_pending": 2.0
+   }
+  },
+  {
+   "t": 54.7,
+   "values": {
+    "accounts_off": 0.0,
+    "books_off_cents": 0.0,
+    "db_connections": 16.0,
+    "db_pool_in_use": 6.0,
+    "deadlocks": 1.2795,
+    "error_rate": 0.0337,
+    "negative_balances": 0.0,
+    "overdrafts": 0.0,
+    "p99_latency_ms": 2775.0,
+    "refused_rate": null,
+    "request_rate": 32.5359,
+    "settlements_pending": 1.0
+   }
+  },
+  {
+   "t": 60.2,
+   "values": {
+    "accounts_off": 0.0,
+    "books_off_cents": 0.0,
+    "db_connections": 17.0,
+    "db_pool_in_use": 3.0,
+    "deadlocks": 1.8816,
+    "error_rate": 0.1047,
+    "negative_balances": 0.0,
+    "overdrafts": 0.0,
+    "p99_latency_ms": 4637.5,
+    "refused_rate": null,
+    "request_rate": 16.1818,
+    "settlements_pending": 3.0
+   }
+  },
+  {
+   "t": 65.5,
+   "values": {
+    "accounts_off": 0.0,
+    "books_off_cents": 0.0,
+    "db_connections": 17.0,
+    "db_pool_in_use": 6.0,
+    "deadlocks": 1.1431,
+    "error_rate": 0.0231,
+    "negative_balances": 0.0,
+    "overdrafts": 0.0,
+    "p99_latency_ms": 3656.25,
+    "refused_rate": null,
+    "request_rate": 41.1526,
+    "settlements_pending": 0.0
+   }
+  },
+  {
+   "t": 70.8,
+   "values": {
+    "accounts_off": 0.0,
+    "books_off_cents": 0.0,
+    "db_connections": 17.0,
+    "db_pool_in_use": 6.0,
+    "deadlocks": 1.5197,
+    "error_rate": 0.0889,
+    "negative_balances": 0.0,
+    "overdrafts": 0.0,
+    "p99_latency_ms": 4437.5,
+    "refused_rate": null,
+    "request_rate": 17.0964,
+    "settlements_pending": 3.0
+   }
+  }
+ ],
+ "schema": "devgrill/case-evidence@1",
+ "source_hash": "32df15877e8140ccbe95df181daa5d02f571ef162598d1008f9e4379de3120e7",
+ "status": [
+  {
+   "health": "healthy",
+   "name": "api",
+   "oom_killed": false,
+   "restarts": 0,
+   "started_at": "2026-11-04T16:12:47.959271013Z",
+   "state": "running"
+  },
+  {
+   "health": "healthy",
+   "name": "postgres-db",
+   "oom_killed": false,
+   "restarts": 0,
+   "started_at": "2026-11-04T16:12:32.44439194Z",
+   "state": "running"
+  },
+  {
+   "health": null,
+   "name": "postgres-exporter",
+   "oom_killed": false,
+   "restarts": 0,
+   "started_at": "2026-11-04T16:12:34.835927935Z",
+   "state": "running"
+  },
+  {
+   "health": null,
+   "name": "tools",
+   "oom_killed": false,
+   "restarts": 0,
+   "started_at": "2026-11-04T16:12:45.26389726Z",
+   "state": "running"
+  },
+  {
+   "health": null,
+   "name": "worker",
+   "oom_killed": false,
+   "restarts": 0,
+   "started_at": "2026-11-04T16:12:34.925590847Z",
+   "state": "running"
+  }
+ ]
+}

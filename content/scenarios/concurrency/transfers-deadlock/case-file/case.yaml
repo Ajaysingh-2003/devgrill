@@ -1,0 +1,66 @@
+# The evidence next to this file is generated: devgrill-content record transfers-deadlock
+schema: devgrill/case-file@1
+
+captures:
+  - title: Deadlocks so far
+    run: psql -c "SELECT deadlocks, xact_rollback FROM pg_stat_database WHERE datname = current_database()"
+  - title: Sessions waiting right now
+    run: >-
+      psql -c "SELECT pid, pg_blocking_pids(pid) AS blocked_by, wait_event_type, left(query, 60) AS query
+      FROM pg_stat_activity WHERE wait_event_type = 'Lock' LIMIT 6"
+
+clues:
+  - panel: logs
+    contains: deadlock detected
+    note: The API's log names the failure, and Postgres's log shows which two transactions were caught.
+  - panel: deploys
+    contains: lock the payer, then the payee
+    note: This morning's refactor changed the order the two rows are locked in.
+
+root_cause:
+  options:
+    - key: a
+      text: "A refactor locks the payer and then the payee, so A to B and B to A take the same two locks in opposite orders"
+    - key: b
+      text: "The connection pool is too small for this traffic, so a transfer holding one connection waits for a second one forever"
+    - key: c
+      text: "A long-running settlement holds row locks on the seller accounts, so transfers queue behind it until they time out"
+    - key: d
+      text: "Postgres's deadlock_timeout is set too low, so ordinary short lock waits are being reported as if they were deadlocks"
+  answer: a
+  explanation: >-
+    Sellers pay each other in both directions. Before the refactor one query locked both rows in id order,
+    so opposite transfers queued for the same first lock. Now A to B holds A and wants B, while B to A holds
+    B and wants A. Postgres breaks the tie after a second by failing one, which is both the errors and the slowness.
+
+mitigation:
+  options:
+    - key: a
+      text: "Roll back the refactor, so that both rows are locked in one query, in id order"
+    - key: b
+      text: "Retry deadlocked transfers in the API, because the client's retry mostly works"
+    - key: c
+      text: "Raise the connection pool's size, so that fewer transfers have to wait in line"
+    - key: d
+      text: "Lower deadlock_timeout, so that Postgres breaks each deadlock a lot more quickly"
+  answer: a
+  explanation: >-
+    Rolling back removes the cycle at once. Retrying hides the errors, but every deadlock still costs its
+    full second and p99 stays over target. The database is barely busy and connections aren't the
+    bottleneck. A lower timeout breaks ties sooner, but it also makes Postgres check far more often and fails just as many.
+
+fix:
+  options:
+    - key: a
+      text: "Lock the two accounts in a fixed order, lowest id first, whoever is paying"
+    - key: b
+      text: "Catch the deadlock error and run the whole transfer again from the start"
+    - key: c
+      text: "Lower deadlock_timeout to 100 ms, so that each deadlock costs a lot less"
+    - key: d
+      text: "Serialise all transfers through one queue, so only one can run at a time"
+  answer: a
+  explanation: >-
+    Deadlocks need a cycle, and a fixed lock order makes a cycle impossible: opposite transfers queue for
+    the same first lock. Retrying is a sensible safety net, but on its own it keeps the second-long waits.
+    One global queue also works but throws away all concurrency, for a problem one sort removes.

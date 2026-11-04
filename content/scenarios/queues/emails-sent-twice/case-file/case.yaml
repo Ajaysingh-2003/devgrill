@@ -1,0 +1,70 @@
+# The evidence next to this file is generated: devgrill-content record emails-sent-twice
+schema: devgrill/case-file@1
+
+captures:
+  - title: The worker's timeout
+    run: grep -n PAYMENT /workspace/worker/config/worker.env
+  - title: What the provider has for recent orders
+    run: >-
+      psql -Atc "SELECT id FROM orders ORDER BY id DESC OFFSET 20 LIMIT 150" | while read -r id;
+      do n=$(curl -s "http://payment-gateway:8080/charges?order_id=$id" | grep -o '"id"' | wc -l);
+      [ "$n" -gt 1 ] && echo "order $id: $n charges"; done | head -8; echo checked 150 recent orders
+
+clues:
+  - panel: deploys
+    contains: PAYMENT_TIMEOUT_S=0.5
+    note: A week ago the worker's payment timeout went from ten seconds down to half a second.
+  - panel: logs
+    contains: ReadTimeout
+    note: The worker gives up on a charge with a read timeout, then retries the same order.
+  - panel: code
+    contains: PAYMENT_TIMEOUT_S
+    note: The charge carries no idempotency key, so the provider can't tell a retry from a new charge.
+
+root_cause:
+  options:
+    - key: a
+      text: "The worker gives up on slow charges after 0.5 s and retries them, but the first still goes through, and no idempotency key links the two"
+    - key: b
+      text: "Two consumers can pick up the same order from the queue at the same moment, so each of them charges it and sends its own receipt email"
+    - key: c
+      text: "The provider has a bug this afternoon, so a single charge request sometimes gets processed twice and sends out two receipts for it"
+    - key: d
+      text: "Checkout enqueues an order twice when a shopper double-clicks the button, so the worker correctly charges each of the two messages"
+  answer: a
+  explanation: >-
+    A timeout tells you that you stopped waiting, not that the charge failed. One charge in ten takes a
+    second this afternoon, so the worker gives up at 0.5 s and retries, and the first still lands. With no
+    idempotency key, the provider sees two separate charges, which is why it says they're two real payments.
+
+mitigation:
+  options:
+    - key: a
+      text: "Roll the worker back to its ten-second timeout, so one-second charges finish"
+    - key: b
+      text: "Refund the doubled charges, and wait for the provider to get faster again"
+    - key: c
+      text: "Restart the worker, so any charges in flight right now are cleared away"
+    - key: d
+      text: "List the order's charges at the provider before each charge, and skip it if found"
+  answer: a
+  explanation: >-
+    A one-second charge then finishes before the worker gives up, so it isn't retried, and the doubles stop.
+    Refunding is necessary, but it doesn't stop new ones. Asking first doesn't work: a slow charge is still
+    in flight when the retry asks, so the list is empty and it charges anyway.
+
+fix:
+  options:
+    - key: a
+      text: "Send an idempotency key per order on each charge, so a retry returns the first charge"
+    - key: b
+      text: "Keep a longer timeout for good, so that the worker has no reason to retry a slow charge"
+    - key: c
+      text: "List the order's charges at the provider before charging, and skip those already charged"
+    - key: d
+      text: "Stop retrying charges that time out, and mark those orders as failed for support to chase"
+  answer: a
+  explanation: >-
+    Retries are unavoidable, so make them safe: the provider makes one charge per key however many times it's
+    asked. A longer timeout narrows the window, but an answer that never arrives still gets retried. The check
+    tests exactly that. Not retrying swaps double charges for orders nobody charged.

@@ -20,7 +20,9 @@ from pydantic import BaseModel
 
 from devgrill.ai.registry import Prompt
 
-Feature = Literal["persona", "nudge", "grade", "classify", "coach", "selfcheck", "embed"]
+Feature = Literal[
+    "persona", "nudge", "grade", "case_review", "classify", "coach", "selfcheck", "embed"
+]
 Unavailable = Literal["disabled", "budget", "limit", "error"]
 
 

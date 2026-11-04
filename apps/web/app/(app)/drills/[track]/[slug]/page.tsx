@@ -154,6 +154,20 @@ async function BriefingContent({ params }: { params: PageProps<"/drills/[track]/
 
       <aside className="flex flex-col gap-4 lg:sticky lg:top-20 lg:self-start">
         <ModePicker scenarioSlug={s.slug} solved={s.progress === "solved"} />
+        {s.playable === false ? null : (
+          <div className="rounded-md border border-border bg-surface p-4">
+            <h2 className="text-body font-semibold text-fg">Just want to read it?</h2>
+            <p className="mt-2 text-label text-fg-muted">
+              This incident is also a case file: its real logs, charts and code, and three questions.
+              It&apos;s free, and it gives the drill away.
+            </p>
+            <p className="mt-2 text-body">
+              <Link href={`/case-files/${s.slug}`} className="text-brand-text hover:underline">
+                Open the case file
+              </Link>
+            </p>
+          </div>
+        )}
         {s.warmup ? (
           <div className="rounded-md border border-border bg-surface p-4">
             <h2 className="text-body font-semibold text-fg">Not ready yet?</h2>

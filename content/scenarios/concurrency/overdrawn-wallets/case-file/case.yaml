@@ -1,0 +1,69 @@
+# The evidence next to this file is generated: devgrill-content record overdrawn-wallets
+schema: devgrill/case-file@1
+
+captures:
+  - title: Wallets below zero
+    run: >-
+      psql -c "SELECT id, owner, balance_cents FROM accounts WHERE kind = 'customer' AND balance_cents < 0
+      ORDER BY balance_cents LIMIT 6"
+  - title: One overdrawn wallet's latest payments
+    run: >-
+      psql -c "SELECT t.id, t.amount_cents, t.created_at FROM transfers t WHERE t.from_account =
+      (SELECT id FROM accounts WHERE kind = 'customer' AND balance_cents < 0 ORDER BY balance_cents LIMIT 1)
+      ORDER BY t.id DESC LIMIT 6"
+
+clues:
+  - panel: deploys
+    contains: FOR UPDATE
+    note: The "no row locks" deploy took FOR UPDATE out of the balance read.
+  - panel: commands
+    contains: balance_cents
+    note: The overdrawn wallets made payments within moments of each other.
+
+root_cause:
+  options:
+    - key: a
+      text: "A deploy took the row lock off the balance read, so two payments at once both pass the check and both debit the wallet"
+    - key: b
+      text: "A refund job runs alongside payments and subtracts instead of adding, which leaves some customers' wallets below zero"
+    - key: c
+      text: "The balance check compares amounts in the wrong currency unit, so payments slightly above the balance are let through"
+    - key: d
+      text: "The transaction's isolation level was lowered, so a debit can commit without its matching entry, and balances drift apart"
+  answer: a
+  explanation: >-
+    Finance's own clue is the timing: every overdrawn wallet made two payments within a second. The check
+    reads the balance and the debit comes later in the transaction. Without FOR UPDATE, both read the full
+    balance and pass. The debit being atomic doesn't help, since the decision was already made on a stale number.
+
+mitigation:
+  options:
+    - key: a
+      text: "Roll back the 'no row locks' deploy, so the second payment waits for the first"
+    - key: b
+      text: "Add a CHECK constraint on the balance, so Postgres refuses to let it go negative"
+    - key: c
+      text: "Refuse payments from customers for now, so that no wallet can go below zero"
+    - key: d
+      text: "Restart the API, so that transactions still running at the moment are cleared"
+  answer: a
+  explanation: >-
+    The deploy is the change, and rolling it back brings the lock and correct answers. A CHECK constraint
+    is tempting and does stop overdrafts, but the losing payment now fails with a database error rather
+    than "insufficient funds", and that's what real traffic sees. Refusing everyone is an outage by choice.
+
+fix:
+  options:
+    - key: a
+      text: "Lock both accounts in id order before the check, or make the debit conditional on the balance"
+    - key: b
+      text: "Add a CHECK constraint on the balance, and let racing payments fail with a database error"
+    - key: c
+      text: "Retry a payment whenever it overdraws a wallet, by waiting a moment and reading the balance"
+    - key: d
+      text: "Answer 'insufficient funds' whenever two payments arrive from one wallet within a second"
+  answer: a
+  explanation: >-
+    The check and the debit have to be one decision. FOR UPDATE makes the second payment wait and then see
+    what's really left; UPDATE ... WHERE balance_cents >= amount puts the check inside the write. Both give
+    a clean refusal. The constraint guards the data, but it isn't how a refused payment should reach a customer.

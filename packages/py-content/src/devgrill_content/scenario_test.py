@@ -66,6 +66,8 @@ class Report:
     ok: bool = False
     stage: str = "boot"
     boot_s: float | None = None
+    #: When the load started (unix seconds): samples and recordings count from here.
+    load_started_at: float | None = None
     slo_breached_after_s: float | None = None
     symptoms: dict[str, float | None] = field(default_factory=dict)
     #: Set when the unfixed scenario held its SLO for `for_s` (it would mitigate itself).
@@ -151,6 +153,7 @@ async def _break(
     for step in (s for s in steps if s.at_seconds <= 0):
         await driver.apply_fault(handle, bundle, step.use, dict(step.params))
     await driver.start_load(handle, bundle)
+    report.load_started_at = time.time()
     t0 = time.monotonic()
     later = [s for s in steps if s.at_seconds > 0]
     pending = {bundle.faults[s.use].ref: bundle.faults[s.use].spec.symptom for s in steps}

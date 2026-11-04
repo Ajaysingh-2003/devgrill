@@ -23,6 +23,7 @@ from devgrill_api.ratelimit import rate_limit
 from devgrill_api.routers import (
     admin,
     attempts,
+    case_files,
     catalog,
     debrief,
     internal,
@@ -106,7 +107,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     v1 = APIRouter(
         prefix="/v1", dependencies=[Depends(rate_limit("default"))], responses=PROBLEM_RESPONSES
     )
-    for module in (catalog, me, quickfire, admin, attempts, workspace, debrief):
+    for module in (catalog, me, quickfire, admin, attempts, workspace, debrief, case_files):
         v1.include_router(module.router)
     app.include_router(v1)
     app.include_router(internal.router)

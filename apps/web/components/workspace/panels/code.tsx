@@ -42,7 +42,8 @@ function ServiceCode({
   services: string[];
   onPick: (service: string) => void;
 }) {
-  const { actions } = useSource();
+  const { actions, kind } = useSource();
+  const recording = kind === "recording";
   const files = usePoll(() => actions.files(service), null);
   const [buffer, setBuffer] = useState<Buffer | null>(null);
   const [opening, setOpening] = useState<string | null>(null);
@@ -101,25 +102,29 @@ function ServiceCode({
             onPick={(s) => void pick(s)}
             disabled={save.busy || deploy.busy}
           />
-          <button
-            type="button"
-            onClick={() => void save.run()}
-            disabled={!dirty || save.busy}
-            className="inline-flex h-7 items-center gap-1.5 rounded-sm border border-border-input px-2.5 text-label font-medium text-fg hover:bg-raised disabled:opacity-50"
-          >
-            <Save className="size-3.5" aria-hidden="true" />
-            Save
-          </button>
-          <button
-            type="button"
-            onClick={() => void deploy.run()}
-            disabled={deploy.busy}
-            aria-keyshortcuts="Control+Enter Meta+Enter"
-            className="inline-flex h-7 items-center gap-1.5 rounded-sm bg-brand px-2.5 text-label font-semibold text-on-brand hover:bg-brand-hover disabled:opacity-60"
-          >
-            <Rocket className="size-3.5" aria-hidden="true" />
-            {deploy.busy ? "Deploying…" : `Deploy ${service}`}
-          </button>
+          {recording ? null : (
+            <>
+              <button
+                type="button"
+                onClick={() => void save.run()}
+                disabled={!dirty || save.busy}
+                className="inline-flex h-7 items-center gap-1.5 rounded-sm border border-border-input px-2.5 text-label font-medium text-fg hover:bg-raised disabled:opacity-50"
+              >
+                <Save className="size-3.5" aria-hidden="true" />
+                Save
+              </button>
+              <button
+                type="button"
+                onClick={() => void deploy.run()}
+                disabled={deploy.busy}
+                aria-keyshortcuts="Control+Enter Meta+Enter"
+                className="inline-flex h-7 items-center gap-1.5 rounded-sm bg-brand px-2.5 text-label font-semibold text-on-brand hover:bg-brand-hover disabled:opacity-60"
+              >
+                <Rocket className="size-3.5" aria-hidden="true" />
+                {deploy.busy ? "Deploying…" : `Deploy ${service}`}
+              </button>
+            </>
+          )}
         </div>
       }
       bodyClassName="flex flex-col"
@@ -160,11 +165,13 @@ function ServiceCode({
               onChange={(value) => setBuffer((b) => (b ? { ...b, current: value } : b))}
               onSave={() => void save.run()}
               onDeploy={() => void deploy.run()}
+              readOnly={recording}
             />
           ) : (
             <EmptyState icon={FileCode2} title={opening ? `Opening ${opening}…` : "Open a file"} compact>
-              The source of {service}, as a git repo. Your edits deploy with the Deploy button or Ctrl+Enter;
-              the terminal has the same repo at /workspace/{service}.
+              {recording
+                ? `The source of ${service}, as it was during the incident.`
+                : `The source of ${service}, as a git repo. Your edits deploy with the Deploy button or Ctrl+Enter; the terminal has the same repo at /workspace/${service}.`}
             </EmptyState>
           )}
         </div>

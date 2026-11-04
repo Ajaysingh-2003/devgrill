@@ -21,7 +21,7 @@ test("a new account picks its experience, answers a card per track and gets star
     await expect(page.getByText(`Card ${i} of ${TRACKS}`)).toBeVisible();
     await page.getByRole("main").getByRole("group").getByRole("button").first().click();
     await expect(page.getByText(/^(Right|Not this time)\./)).toBeVisible();
-    await page.getByRole("button", { name: i === TRACKS ? "Finish" : "Next card" }).click();
+    await page.getByRole("button", { name: i === TRACKS ? "Finish" : "Next card", exact: true }).click();
   }
   await expect(page.getByRole("heading", { name: "You’re set" })).toBeVisible();
   await expect(page.getByText(`of ${TRACKS} right`)).toBeVisible();

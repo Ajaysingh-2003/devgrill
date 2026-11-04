@@ -1,0 +1,67 @@
+# The evidence next to this file is generated: devgrill-content record one-celebrity-one-key
+schema: devgrill/case-file@1
+
+captures:
+  - title: Valkey's slow log
+    run: redis-cli -h redis-db slowlog get 4
+  - title: How long the likes lists are
+    run: >-
+      redis-cli -h redis-db llen likes:list:4242;
+      redis-cli -h redis-db info stats | grep instantaneous_ops_per_sec;
+      redis-cli -h redis-db info commandstats | grep -E 'lpos|sismember|lpush'
+
+clues:
+  - panel: commands
+    contains: likes:list:4242
+    note: The slow log is full of LPOS on the film star's product, on a list hundreds of thousands long.
+  - panel: deploys
+    contains: lpos
+    note: Two days ago likes became a list, and "liked by you?" became a scan of it.
+
+root_cause:
+  options:
+    - key: a
+      text: "'Liked by you?' scans a likes list with LPOS, and one viral product's list reached 600,000 entries on Valkey's single thread"
+    - key: b
+      text: "A viral product's page is read so often that one cached key takes more requests than one Valkey node can possibly answer"
+    - key: c
+      text: "The film star's fans are all liking at once, so the writes to the likes list are queueing up ahead of every other command"
+    - key: d
+      text: "The film star's link brought more shoppers than the API can serve, so its workers are saturated and time out on every route"
+  answer: a
+  explanation: >-
+    It isn't how many commands there are, it's what each one costs. LPOS walks the list until it finds
+    the shopper, which for most of them means the whole 600,000 entries, and Valkey does nothing else
+    meanwhile. So every command on every page waits behind it. That's why products nobody has heard of time out too.
+
+mitigation:
+  options:
+    - key: a
+      text: "Roll back the likes deploy, and copy the likes in the lists into the old sets"
+    - key: b
+      text: "Restart Valkey, so that the commands queued behind the slow ones are cleared"
+    - key: c
+      text: "Move Valkey to a bigger instance, so it has more CPU to get through the scans"
+    - key: d
+      text: "Shard Valkey across several nodes, so that likes no longer share one thread"
+  answer: a
+  explanation: >-
+    The scans stop as soon as the code stops making them. The copy matters: since the deploy, likes only
+    went to the lists, so a plain rollback silently loses 600,000 fans. Valkey runs on one thread, so a
+    bigger instance doesn't help, and all of one product's likes would still land on one shard.
+
+fix:
+  options:
+    - key: a
+      text: "Keep the list for the feed, and answer the button from a set of likers (SISMEMBER, SCARD)"
+    - key: b
+      text: "Only scan the newest thousand likes (LPOS with MAXLEN), so each check has a fixed cost"
+    - key: c
+      text: "Skip the 'liked by you?' check on viral products, and show their hearts as empty for all"
+    - key: d
+      text: "Cache each shopper's LPOS answer in the API for a minute, so that it runs less often"
+  answer: a
+  explanation: >-
+    A list is the right shape for "newest first" and the wrong one for "is this person in it?". A set
+    answers that in one step however many likes there are. Scanning the newest thousand is cheap, but
+    anyone who liked it earlier sees an empty heart. Caching still runs the scan for every new shopper.

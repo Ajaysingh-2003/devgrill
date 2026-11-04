@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field
 
 from devgrill.ai.port import AiUnavailable, CallMeta, Llm
 from devgrill.ai.registry import prompt
-from devgrill.ai.safety import DATA_POLICY, claims_action, fence, leaks
+from devgrill.ai.safety import DATA_POLICY, claims_action, fence, leaks, redact
 
 
 class NudgeOutput(BaseModel):
@@ -119,3 +119,33 @@ async def coach_note(
         meta,
     )
     return clean_note(out, trail)
+
+
+# --------------------------------------------------------------------------- case review
+
+
+class CaseReviewOutput(BaseModel):
+    note: str = Field(max_length=900)
+
+
+async def case_review(
+    llm: Llm, *, title: str, root_cause: str, fix: str, write_up: str, meta: CallMeta
+) -> str:
+    """A case file's optional write-up, read against what really happened (ADR 018). It comes
+    after the answers are out, so there is nothing left to spoil."""
+    out = await llm.parse(
+        prompt("case_review"),
+        {
+            "title": title,
+            "root_cause": root_cause,
+            "fix": fix,
+            "write_up": fence("write_up", redact(write_up)),
+            "data_policy": DATA_POLICY,
+        },
+        CaseReviewOutput,
+        meta,
+    )
+    text = out.note.strip()
+    if not text or claims_action(text):
+        raise AiUnavailable("error", "the review wasn't usable")
+    return text

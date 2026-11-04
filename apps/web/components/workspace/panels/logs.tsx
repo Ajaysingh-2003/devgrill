@@ -6,7 +6,7 @@ import { EmptyState } from "@devgrill/ui/components/devgrill/empty-state";
 import { PanelFrame } from "@devgrill/ui/components/devgrill/panel-frame";
 import { useHotkey } from "@devgrill/ui/hooks/use-hotkey";
 import { cn } from "@devgrill/ui/lib/utils";
-import { useLogs } from "../context";
+import { useLogs, useSource } from "../context";
 import type { LogEntry, LogLevel } from "../model";
 
 const ROW = 22; // px; fixed height is what makes the list cheap to render
@@ -41,6 +41,7 @@ const time = (iso: string) => {
 
 export function LogsPanel() {
   const live = useLogs();
+  const recording = useSource().kind === "recording";
   const [frozen, setFrozen] = useState<LogEntry[] | null>(null);
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<number | null>(null);
@@ -60,7 +61,9 @@ export function LogsPanel() {
     event.preventDefault();
     queryRef.current?.focus();
   });
-  useHotkey(".", () => setFrozen((f) => (f ? null : live.lines)));
+  useHotkey(".", () => {
+    if (!recording) setFrozen((f) => (f ? null : live.lines));
+  });
 
   useEffect(() => {
     const el = scroller.current;
@@ -94,19 +97,21 @@ export function LogsPanel() {
           : `${lines.length} lines${live.dropped ? `, ${live.dropped} dropped while catching up` : ""}`
       }
       actions={
-        <button
-          type="button"
-          aria-pressed={frozen !== null}
-          onClick={() => setFrozen((f) => (f ? null : live.lines))}
-          className="inline-flex h-7 items-center gap-1.5 rounded-sm border border-border-input px-2 text-label font-medium text-fg hover:bg-raised"
-        >
-          {frozen ? (
-            <Play className="size-3.5" aria-hidden="true" />
-          ) : (
-            <Pause className="size-3.5" aria-hidden="true" />
-          )}
-          {frozen ? "Resume" : "Freeze"}
-        </button>
+        recording ? null : (
+          <button
+            type="button"
+            aria-pressed={frozen !== null}
+            onClick={() => setFrozen((f) => (f ? null : live.lines))}
+            className="inline-flex h-7 items-center gap-1.5 rounded-sm border border-border-input px-2 text-label font-medium text-fg hover:bg-raised"
+          >
+            {frozen ? (
+              <Play className="size-3.5" aria-hidden="true" />
+            ) : (
+              <Pause className="size-3.5" aria-hidden="true" />
+            )}
+            {frozen ? "Resume" : "Freeze"}
+          </button>
+        )
       }
       bodyClassName="flex flex-col"
     >

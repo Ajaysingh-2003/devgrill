@@ -42,7 +42,8 @@ function ServiceDeploys({
   services: string[];
   onPick: (service: string) => void;
 }) {
-  const { actions } = useSource();
+  const { actions, kind } = useSource();
+  const recording = kind === "recording";
   const { events } = useIncident();
   // Refresh whenever a deploy or rollback lands (from here, the editor or the CLI).
   const changes = events.filter((e) => e.type === "deploy" || e.type === "rollback").length;
@@ -105,7 +106,7 @@ function ServiceDeploys({
                       status="healthy"
                       label={history.data!.live_dirty ? "Live, with uncommitted changes" : "Live"}
                     />
-                  ) : confirm === c.sha ? (
+                  ) : recording ? null : confirm === c.sha ? (
                     <span className="flex items-center gap-2">
                       <button
                         type="button"
@@ -239,8 +240,9 @@ function DiffView({ diff, label }: { diff: string; label: string }) {
 }
 
 function Services() {
-  const { actions } = useSource();
-  const status = usePoll(actions.status, 10_000);
+  const { actions, kind } = useSource();
+  const recording = kind === "recording";
+  const status = usePoll(actions.status, recording ? null : 10_000);
   const [done, setDone] = useState<string | null>(null);
   const restart = useAction(async (service: string) => {
     setDone(await actions.restart(service));
@@ -264,15 +266,17 @@ function Services() {
                 {s.restarts ? `${s.restarts} restarts` : ""}
                 {s.oom_killed ? " (out of memory)" : ""}
               </span>
-              <button
-                type="button"
-                onClick={() => void restart.run(s.name)}
-                disabled={restart.busy}
-                className="ml-auto inline-flex h-7 items-center gap-1.5 rounded-sm px-2 text-label font-medium text-fg-muted hover:bg-raised hover:text-fg disabled:opacity-60"
-              >
-                <RefreshCw className="size-3.5" aria-hidden="true" />
-                Restart <span className="sr-only">{s.name}</span>
-              </button>
+              {recording ? null : (
+                <button
+                  type="button"
+                  onClick={() => void restart.run(s.name)}
+                  disabled={restart.busy}
+                  className="ml-auto inline-flex h-7 items-center gap-1.5 rounded-sm px-2 text-label font-medium text-fg-muted hover:bg-raised hover:text-fg disabled:opacity-60"
+                >
+                  <RefreshCw className="size-3.5" aria-hidden="true" />
+                  Restart <span className="sr-only">{s.name}</span>
+                </button>
+              )}
             </li>
           ))}
         </ul>

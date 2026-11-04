@@ -2,7 +2,7 @@
 
 import type { Client, ClientMeta, Options as Options2, RequestResult, ServerSentEventsResult, TDataShape } from './client';
 import { client } from './client.gen';
-import type { AbandonAttemptData, AbandonAttemptErrors, AbandonAttemptResponses, AdminAiCostsData, AdminAiCostsErrors, AdminAiCostsResponses, AdminAnalyticsData, AdminAnalyticsErrors, AdminAnalyticsResponses, AdminApproachCandidatesData, AdminApproachCandidatesErrors, AdminApproachCandidatesResponses, AdminAuditData, AdminAuditErrors, AdminAuditResponses, AdminMeData, AdminMeErrors, AdminMeResponses, AdminReviewCandidateData, AdminReviewCandidateErrors, AdminReviewCandidateResponses, AdminScenarioActionData, AdminScenarioActionErrors, AdminScenarioActionResponses, AdminScenarioReportData, AdminScenarioReportErrors, AdminScenarioReportResponses, AdminScenariosData, AdminScenariosErrors, AdminScenariosResponses, AdminSetRolesData, AdminSetRolesErrors, AdminSetRolesResponses, AdminUsersData, AdminUsersErrors, AdminUsersResponses, AnswerCardData, AnswerCardErrors, AnswerCardResponses, AttemptEventsData, AttemptEventsErrors, AttemptEventsResponses, CacheInsightsData, CacheInsightsErrors, CacheInsightsResponses, CalibrationDeckData, CalibrationDeckErrors, CalibrationDeckResponses, CanPlayData, CanPlayErrors, CanPlayResponses, ClaimGuestData, ClaimGuestErrors, ClaimGuestResponses, CreateGuestTokenData, CreateGuestTokenErrors, CreateGuestTokenResponses, CreateWsTicketData, CreateWsTicketErrors, CreateWsTicketResponses, DailyChallengeData, DailyChallengeErrors, DailyChallengeResponses, DbInsightsData, DbInsightsErrors, DbInsightsResponses, DbQueryData, DbQueryErrors, DbQueryResponses, DeclareMitigatedData, DeclareMitigatedErrors, DeclareMitigatedResponses, DeployChangesData, DeployChangesErrors, DeployChangesResponses, DeployData, DeployErrors, DeployResponses, ExtendAttemptData, ExtendAttemptErrors, ExtendAttemptResponses, FinishOnboardingData, FinishOnboardingErrors, FinishOnboardingResponses, GetApproachesData, GetApproachesErrors, GetApproachesResponses, GetAttemptData, GetAttemptErrors, GetAttemptResponses, GetDebriefData, GetDebriefErrors, GetDebriefResponses, GetMeData, GetMeErrors, GetMeResponses, GetPostmortemData, GetPostmortemErrors, GetPostmortemResponses, GetScenarioData, GetScenarioErrors, GetScenarioResponses, GetTrackData, GetTrackErrors, GetTrackResponses, GetWorkspaceData, GetWorkspaceErrors, GetWorkspaceResponses, HealthzData, HealthzResponses, ListDeploysData, ListDeploysErrors, ListDeploysResponses, ListFilesData, ListFilesErrors, ListFilesResponses, ListHintsData, ListHintsErrors, ListHintsResponses, ListScenariosData, ListScenariosErrors, ListScenariosResponses, ListTracksData, ListTracksErrors, ListTracksResponses, MyAttemptsData, MyAttemptsErrors, MyAttemptsResponses, MyLeaveData, MyLeaveErrors, MyLeaveResponses, MyProgressData, MyProgressErrors, MyProgressResponses, MyRatingsData, MyRatingsErrors, MyRatingsResponses, MyStreakData, MyStreakErrors, MyStreakResponses, MyUsageData, MyUsageErrors, MyUsageResponses, NudgeData, NudgeErrors, NudgeResponses, PatchMeData, PatchMeErrors, PatchMeResponses, PauseEmailsData, PauseEmailsErrors, PauseEmailsResponses, PostMessageData, PostMessageErrors, PostMessageResponses, PublicProfileData, PublicProfileErrors, PublicProfileResponses, QuickfireDeckData, QuickfireDeckErrors, QuickfireDeckResponses, ReadFileData, ReadFileErrors, ReadFileResponses, ReadyzData, ReadyzErrors, ReadyzResponses, ResetAttemptData, ResetAttemptErrors, ResetAttemptResponses, RestartServiceData, RestartServiceErrors, RestartServiceResponses, ReviewPostmortemData, ReviewPostmortemErrors, ReviewPostmortemResponses, RollbackData, RollbackErrors, RollbackResponses, SandboxStatusData, SandboxStatusErrors, SandboxStatusResponses, SavePostmortemData, SavePostmortemErrors, SavePostmortemResponses, SetLeaveData, SetLeaveErrors, SetLeaveResponses, ShareCardData, ShareCardErrors, ShareCardResponses, StartAttemptData, StartAttemptErrors, StartAttemptResponses, SubmitPostmortemData, SubmitPostmortemErrors, SubmitPostmortemResponses, TakeHintData, TakeHintErrors, TakeHintResponses, TouchAttemptData, TouchAttemptErrors, TouchAttemptResponses, VerifyAttemptData, VerifyAttemptErrors, VerifyAttemptResponses, WeeklyChallengeData, WeeklyChallengeErrors, WeeklyChallengeResponses, WriteFileData, WriteFileErrors, WriteFileResponses } from './types.gen';
+import type { AbandonAttemptData, AbandonAttemptErrors, AbandonAttemptResponses, AdminAiCostsData, AdminAiCostsErrors, AdminAiCostsResponses, AdminAnalyticsData, AdminAnalyticsErrors, AdminAnalyticsResponses, AdminApproachCandidatesData, AdminApproachCandidatesErrors, AdminApproachCandidatesResponses, AdminAuditData, AdminAuditErrors, AdminAuditResponses, AdminMeData, AdminMeErrors, AdminMeResponses, AdminReviewCandidateData, AdminReviewCandidateErrors, AdminReviewCandidateResponses, AdminScenarioActionData, AdminScenarioActionErrors, AdminScenarioActionResponses, AdminScenarioReportData, AdminScenarioReportErrors, AdminScenarioReportResponses, AdminScenariosData, AdminScenariosErrors, AdminScenariosResponses, AdminSetRolesData, AdminSetRolesErrors, AdminSetRolesResponses, AdminUsersData, AdminUsersErrors, AdminUsersResponses, AnswerCardData, AnswerCardErrors, AnswerCardResponses, AnswerCaseFileData, AnswerCaseFileErrors, AnswerCaseFileResponses, AttemptEventsData, AttemptEventsErrors, AttemptEventsResponses, CacheInsightsData, CacheInsightsErrors, CacheInsightsResponses, CalibrationDeckData, CalibrationDeckErrors, CalibrationDeckResponses, CanPlayData, CanPlayErrors, CanPlayResponses, ClaimGuestData, ClaimGuestErrors, ClaimGuestResponses, CreateGuestTokenData, CreateGuestTokenErrors, CreateGuestTokenResponses, CreateWsTicketData, CreateWsTicketErrors, CreateWsTicketResponses, DailyChallengeData, DailyChallengeErrors, DailyChallengeResponses, DbInsightsData, DbInsightsErrors, DbInsightsResponses, DbQueryData, DbQueryErrors, DbQueryResponses, DeclareMitigatedData, DeclareMitigatedErrors, DeclareMitigatedResponses, DeployChangesData, DeployChangesErrors, DeployChangesResponses, DeployData, DeployErrors, DeployResponses, ExtendAttemptData, ExtendAttemptErrors, ExtendAttemptResponses, FinishOnboardingData, FinishOnboardingErrors, FinishOnboardingResponses, GetApproachesData, GetApproachesErrors, GetApproachesResponses, GetAttemptData, GetAttemptErrors, GetAttemptResponses, GetCaseEvidenceData, GetCaseEvidenceErrors, GetCaseEvidenceResponses, GetCaseFileData, GetCaseFileErrors, GetCaseFileResponses, GetDebriefData, GetDebriefErrors, GetDebriefResponses, GetMeData, GetMeErrors, GetMeResponses, GetPostmortemData, GetPostmortemErrors, GetPostmortemResponses, GetScenarioData, GetScenarioErrors, GetScenarioResponses, GetTrackData, GetTrackErrors, GetTrackResponses, GetWorkspaceData, GetWorkspaceErrors, GetWorkspaceResponses, HealthzData, HealthzResponses, ListCaseFilesData, ListCaseFilesErrors, ListCaseFilesResponses, ListDeploysData, ListDeploysErrors, ListDeploysResponses, ListFilesData, ListFilesErrors, ListFilesResponses, ListHintsData, ListHintsErrors, ListHintsResponses, ListScenariosData, ListScenariosErrors, ListScenariosResponses, ListTracksData, ListTracksErrors, ListTracksResponses, MyAttemptsData, MyAttemptsErrors, MyAttemptsResponses, MyLeaveData, MyLeaveErrors, MyLeaveResponses, MyProgressData, MyProgressErrors, MyProgressResponses, MyRatingsData, MyRatingsErrors, MyRatingsResponses, MyStreakData, MyStreakErrors, MyStreakResponses, MyUsageData, MyUsageErrors, MyUsageResponses, NudgeData, NudgeErrors, NudgeResponses, PatchMeData, PatchMeErrors, PatchMeResponses, PauseEmailsData, PauseEmailsErrors, PauseEmailsResponses, PostMessageData, PostMessageErrors, PostMessageResponses, PublicProfileData, PublicProfileErrors, PublicProfileResponses, QuickfireDeckData, QuickfireDeckErrors, QuickfireDeckResponses, ReadFileData, ReadFileErrors, ReadFileResponses, ReadyzData, ReadyzErrors, ReadyzResponses, ResetAttemptData, ResetAttemptErrors, ResetAttemptResponses, RestartServiceData, RestartServiceErrors, RestartServiceResponses, ReviewCaseFileData, ReviewCaseFileErrors, ReviewCaseFileResponses, ReviewPostmortemData, ReviewPostmortemErrors, ReviewPostmortemResponses, RollbackData, RollbackErrors, RollbackResponses, SandboxStatusData, SandboxStatusErrors, SandboxStatusResponses, SavePostmortemData, SavePostmortemErrors, SavePostmortemResponses, SetLeaveData, SetLeaveErrors, SetLeaveResponses, ShareCardData, ShareCardErrors, ShareCardResponses, StartAttemptData, StartAttemptErrors, StartAttemptResponses, SubmitPostmortemData, SubmitPostmortemErrors, SubmitPostmortemResponses, TakeHintData, TakeHintErrors, TakeHintResponses, TouchAttemptData, TouchAttemptErrors, TouchAttemptResponses, VerifyAttemptData, VerifyAttemptErrors, VerifyAttemptResponses, WeeklyChallengeData, WeeklyChallengeErrors, WeeklyChallengeResponses, WriteFileData, WriteFileErrors, WriteFileResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -406,6 +406,58 @@ export const getWorkspace = <ThrowOnError extends boolean = false>(options: Opti
  */
 export const createWsTicket = <ThrowOnError extends boolean = false>(options: Options<CreateWsTicketData, ThrowOnError>): RequestResult<CreateWsTicketResponses, CreateWsTicketErrors, ThrowOnError> => (options.client ?? client).post<CreateWsTicketResponses, CreateWsTicketErrors, ThrowOnError>({
     url: '/v1/attempts/{attempt_id}/ws-ticket',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * List Case Files
+ *
+ * Every case file, free for everyone, with the caller's score on those they've answered.
+ */
+export const listCaseFiles = <ThrowOnError extends boolean = false>(options?: Options<ListCaseFilesData, ThrowOnError>): RequestResult<ListCaseFilesResponses, ListCaseFilesErrors, ThrowOnError> => (options?.client ?? client).get<ListCaseFilesResponses, ListCaseFilesErrors, ThrowOnError>({ url: '/v1/case-files', ...options });
+
+/**
+ * Get Case File
+ *
+ * Everything but the recording. A signed-in player who has answered gets their result.
+ */
+export const getCaseFile = <ThrowOnError extends boolean = false>(options: Options<GetCaseFileData, ThrowOnError>): RequestResult<GetCaseFileResponses, GetCaseFileErrors, ThrowOnError> => (options.client ?? client).get<GetCaseFileResponses, GetCaseFileErrors, ThrowOnError>({ url: '/v1/case-files/{slug}', ...options });
+
+/**
+ * Answer Case File
+ *
+ * Score the three answers and explain them. A signed-in player's first answers are kept
+ * (and returned from then on), and answering counts as the day's activity.
+ */
+export const answerCaseFile = <ThrowOnError extends boolean = false>(options: Options<AnswerCaseFileData, ThrowOnError>): RequestResult<AnswerCaseFileResponses, AnswerCaseFileErrors, ThrowOnError> => (options.client ?? client).post<AnswerCaseFileResponses, AnswerCaseFileErrors, ThrowOnError>({
+    url: '/v1/case-files/{slug}/answers',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Get Case Evidence
+ *
+ * The recording: the same panels as a live incident, as one document. It's a few hundred
+ * KB and never changes for a given recording, so it's sent as stored, not re-serialised.
+ */
+export const getCaseEvidence = <ThrowOnError extends boolean = false>(options: Options<GetCaseEvidenceData, ThrowOnError>): RequestResult<GetCaseEvidenceResponses, GetCaseEvidenceErrors, ThrowOnError> => (options.client ?? client).get<GetCaseEvidenceResponses, GetCaseEvidenceErrors, ThrowOnError>({ url: '/v1/case-files/{slug}/evidence', ...options });
+
+/**
+ * Review Case File
+ *
+ * An AI read of the optional write-up, once per case file, within the plan's allowance
+ * for write-up reviews (it counts with postmortem reviews).
+ */
+export const reviewCaseFile = <ThrowOnError extends boolean = false>(options: Options<ReviewCaseFileData, ThrowOnError>): RequestResult<ReviewCaseFileResponses, ReviewCaseFileErrors, ThrowOnError> => (options.client ?? client).post<ReviewCaseFileResponses, ReviewCaseFileErrors, ThrowOnError>({
+    url: '/v1/case-files/{slug}/review',
     ...options,
     headers: {
         'Content-Type': 'application/json',

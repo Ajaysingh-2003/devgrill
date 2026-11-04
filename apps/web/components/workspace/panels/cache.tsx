@@ -10,15 +10,22 @@ import { formatBytes, formatPct } from "../model";
 const POLL_MS = 5000;
 
 export function CachePanel() {
-  const { actions } = useSource();
-  const poll = usePoll(actions.cache, POLL_MS);
+  const { actions, kind } = useSource();
+  const recording = kind === "recording";
+  const poll = usePoll(actions.cache, recording ? null : POLL_MS);
   const data = poll.data;
   return (
     <PanelFrame
       id="tool-panel"
       tab="tool-cache"
       title="Cache"
-      meta={poll.error ? `Last refresh failed: ${poll.error}` : "Redis-compatible cache, refreshed every 5 s"}
+      meta={
+        poll.error
+          ? `Last refresh failed: ${poll.error}`
+          : recording
+            ? "Redis-compatible cache, near the end of the recording"
+            : "Redis-compatible cache, refreshed every 5 s"
+      }
     >
       {!data ? (
         <EmptyState

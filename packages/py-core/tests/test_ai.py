@@ -25,6 +25,7 @@ def test_every_prompt_loads_and_renders_with_its_placeholders() -> None:
         "selfcheck",
         "nudge",
         "grade",
+        "case_review",
         "classify",
         "coach",
     }

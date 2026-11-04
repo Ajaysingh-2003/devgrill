@@ -1,0 +1,67 @@
+# The evidence next to this file is generated: devgrill-content record search-pins-the-cpu
+schema: devgrill/case-file@1
+
+captures:
+  - title: How long searches take
+    run: >-
+      for q in 'waterproof jacket' 'waterproof hiking jackets mens!'; do
+      printf '%-36s' "$q"; curl -s -o /dev/null -w '%{http_code} %{time_total}s\n' --max-time 15 -G --data-urlencode "q=$q" http://api:8000/products; done
+
+clues:
+  - panel: deploys
+    contains: strip punctuation
+    note: This morning's deploy checks every search query against a regex before cleaning it.
+  - panel: code
+    contains: "[A-Za-z0-9]+"
+    note: The pattern nests one repetition inside another, so a failed match tries every way to split the letters.
+  - panel: commands
+    contains: hiking jackets mens!
+    note: The same words take far longer once they end in punctuation.
+
+root_cause:
+  options:
+    - key: a
+      text: "A deploy checks each query with a nested-quantifier regex, which backtracks exponentially on queries ending in punctuation and freezes the worker"
+    - key: b
+      text: "A search query with punctuation makes Postgres fall back to a full scan of products, and the API's workers block while waiting for that result"
+    - key: c
+      text: "Search results are being serialised to JSON in a loop that copies the whole list each time, so long results use up all of the API's CPU"
+    - key: d
+      text: "The API's workers are spinning on a lock around the search cache, so each search waits for the previous one with its CPU fully busy"
+  answer: a
+  explanation: >-
+    Postgres is quiet and the API's CPU is pinned, so the work is in Python. The slow requests are searches
+    ending in punctuation. ^([A-Za-z0-9]+\s?)*$ can split letters between repetitions in exponentially many
+    ways, and it tries all of them before it fails. re holds the GIL throughout, so every request on that worker waits.
+
+mitigation:
+  options:
+    - key: a
+      text: "Roll back the search deploy, so queries go to Postgres as they used to"
+    - key: b
+      text: "Double the API's CPUs, which should buy time while somebody investigates"
+    - key: c
+      text: "Cache search results, so that repeat searches can skip the slow check"
+    - key: d
+      text: "Restart the API's workers, so that the ones frozen right now are cleared"
+  answer: a
+  explanation: >-
+    The freezes started with that deploy, and rolling back removes the regex at once. More CPUs don't help
+    because the work doubles with each extra letter. A cache handles repeats, but a query nobody has sent
+    before still freezes a worker. A restart only clears the ones frozen right now.
+
+fix:
+  options:
+    - key: a
+      text: "Use a pattern that can't backtrack, like ^[A-Za-z0-9]+( [A-Za-z0-9]+)*$, or drop the check"
+    - key: b
+      text: "Cache search results in Valkey, so that the slow check only ever runs once for each query"
+    - key: c
+      text: "Turn search off until it can be rebuilt, so that no query is able to freeze any worker"
+    - key: d
+      text: "Run the check in a thread, so that the API's other requests carry on while it's working"
+  answer: a
+  explanation: >-
+    With the space required, each letter can belong to only one word, so a failed match costs one pass.
+    The check isn't even needed, since re.sub is linear and harmless on clean text. A thread doesn't help:
+    re holds the GIL for the whole match. Anyone can still send a new query past a cache.

@@ -1,0 +1,68 @@
+# The evidence next to this file is generated: devgrill-content record evicted-at-the-worst-time
+schema: devgrill/case-file@1
+
+captures:
+  - title: Valkey's memory
+    run: redis-cli -h redis-db info memory | grep -E 'used_memory_human|maxmemory_human|maxmemory_policy'
+  - title: Keys, and how many of them can expire
+    run: redis-cli -h redis-db info keyspace; redis-cli -h redis-db info stats | grep evicted_keys
+  - title: A few search keys and their TTL (-1 means never)
+    run: >-
+      redis-cli -h redis-db --scan --pattern 'search:*' | head -4 | while read -r k;
+      do printf '%s  ttl=' "$k"; redis-cli -h redis-db ttl "$k"; done
+
+clues:
+  - panel: commands
+    contains: volatile-lru
+    note: With volatile-lru, only keys with a TTL can be evicted, and Valkey is at its limit.
+  - panel: deploys
+    contains: cache results for repeat queries
+    note: Thursday's deploy started caching search results, with no TTL.
+
+root_cause:
+  options:
+    - key: a
+      text: "Cached searches have no TTL, so under volatile-lru they can't be evicted: they filled Valkey, and sessions went instead"
+    - key: b
+      text: "Sessions are given too short a TTL, so shoppers who take a while over checkout get signed out when their session expires"
+    - key: c
+      text: "Monday's traffic is too much for one Valkey, so session reads time out and the API treats those shoppers as signed out"
+    - key: d
+      text: "Valkey restarted over the weekend and came back with nothing on disk, so every session it was holding was lost"
+  answer: a
+  explanation: >-
+    Valkey is at maxmemory with volatile-lru, so only keys with a TTL can go. Nearly every key is a
+    search result with no TTL. They can never be evicted, so sessions, which do have one, go first. Once
+    none are left, writes fail with OOM. Nobody deployed over the weekend: Thursday's deploy just took days to fill it.
+
+mitigation:
+  options:
+    - key: a
+      text: "Delete the search:* keys with SCAN and UNLINK, which leaves room and keeps the sessions still there"
+    - key: b
+      text: "Run FLUSHALL on Valkey, so that it has all of its memory back and can start clean straight away"
+    - key: c
+      text: "Raise Valkey's maxmemory to a gigabyte, so there is room again for the sessions and the searches"
+    - key: d
+      text: "Restart the API's workers, so their connections to Valkey are fresh and sign-ins can succeed again"
+  answer: a
+  explanation: >-
+    Deleting only the search keys gives sign-ins room at once and costs nothing but a colder search
+    cache. FLUSHALL also works, but signs out everyone who still has a session. More memory just delays
+    the same thing at a higher bill. The keys contain spaces, so split the scan on newlines, not words.
+
+fix:
+  options:
+    - key: a
+      text: "Give cached searches a TTL, and delete the ones already stored without one"
+    - key: b
+      text: "Give new cached searches a TTL, and let the existing keys age out by themselves"
+    - key: c
+      text: "Switch Valkey to allkeys-lru, so that old searches get evicted before sessions"
+    - key: d
+      text: "Delete the search keys from a nightly job, and leave the code writing them as it is"
+  answer: a
+  explanation: >-
+    It takes both halves. The TTL stops the pile growing back, and the old keys have to go because they
+    have no TTL and never will, so a TTL on new ones alone leaves Valkey full. allkeys-lru keeps sessions
+    alive for now, but Valkey runs full for good, and a cleanup job leaves the leak in place.

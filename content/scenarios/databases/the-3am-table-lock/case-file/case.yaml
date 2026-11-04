@@ -1,0 +1,70 @@
+# The evidence next to this file is generated: devgrill-content record the-3am-table-lock
+schema: devgrill/case-file@1
+
+captures:
+  - title: Who is blocking whom
+    run: >-
+      psql -c "SELECT pid, application_name, state, pg_blocking_pids(pid) AS blocked_by, now() - xact_start AS for,
+      left(query, 58) AS query FROM pg_stat_activity
+      WHERE datname = current_database() AND (cardinality(pg_blocking_pids(pid)) > 0 OR application_name = 'migrator')
+      ORDER BY xact_start LIMIT 8"
+  - title: Locks on orders
+    run: >-
+      psql -c "SELECT l.pid, l.mode, l.granted FROM pg_locks l JOIN pg_class c ON c.oid = l.relation
+      WHERE c.relname = 'orders' ORDER BY l.granted DESC, l.pid LIMIT 8"
+
+clues:
+  - panel: commands
+    contains: migrator
+    note: One session, application_name 'migrator', holds an ACCESS EXCLUSIVE lock on orders and everything waits on it.
+  - panel: commands
+    contains: AccessExclusiveLock
+    note: ALTER TABLE takes the strongest lock there is, and the migrator never committed.
+
+root_cause:
+  options:
+    - key: a
+      text: "The 2:58 migration holds an ACCESS EXCLUSIVE lock on orders and never committed, so checkouts queue on it and drain the connection pools"
+    - key: b
+      text: "A checkout deadlock has left orders stuck, and each new checkout joins the cycle until the API has no free connections left at all"
+    - key: c
+      text: "The nightly deploy reset the API's pool settings, so it now opens far too few connections to carry checkout and product pages together"
+    - key: d
+      text: "The nightly vacuum on orders is running at the same moment as the morning's traffic, and Postgres has no capacity left over for either"
+  answer: a
+  explanation: >-
+    Postgres is idle and yet nothing moves, so this is waiting, not work. pg_blocking_pids points every
+    checkout at one session, the migrator, which ran ALTER TABLE and stopped before committing. Each waiting
+    INSERT holds a pooled connection, so once they're all waiting, even product pages can't get one.
+
+mitigation:
+  options:
+    - key: a
+      text: "End the migrator's session with pg_terminate_backend, so that its lock is released"
+    - key: b
+      text: "Roll back the nightly deploy, so that the API goes back to its previous version"
+    - key: c
+      text: "Restart Postgres, which is what usually clears whatever it is that has got stuck"
+    - key: d
+      text: "Set DB_LOCK_TIMEOUT_MS and deploy the API, so that checkouts stop waiting on the lock"
+  answer: a
+  explanation: >-
+    The lock lives in the database, held by an open transaction, so end that one session: the migration
+    rolls back and checkout recovers at once. A rollback restarts the API and the queue simply rebuilds. A
+    lock timeout frees the pool, but every checkout then fails fast. A restart works, at the cost of everything else in flight.
+
+fix:
+  options:
+    - key: a
+      text: "End the session, then bound lock waits (DB_LOCK_TIMEOUT_MS) so no lock can drain the pool"
+    - key: b
+      text: "End the session, and leave lock waits unbounded, since this migration won't be run again"
+    - key: c
+      text: "End the session, and raise the pool's size so checkouts have spare connections to wait on"
+    - key: d
+      text: "End the session, and answer 503 for checkouts whenever a migration is due to be running"
+  answer: a
+  explanation: >-
+    The migration is one bug; the bigger one is that a single stuck lock took down the whole site. With a
+    lock timeout, a checkout gives up after a second and frees its connection, so product pages keep working
+    the next time it happens. A bigger pool only takes longer to drain.

@@ -1,0 +1,65 @@
+# The evidence next to this file is generated: devgrill-content record stale-prices
+schema: devgrill/case-file@1
+
+captures:
+  - title: The list the price update pushes to
+    run: redis-cli -h redis-db llen cache:invalidations; redis-cli -h redis-db lrange cache:invalidations 0 4
+  - title: The bestsellers' entries, and how long they stay
+    run: >-
+      for id in 1042 1043 2210; do printf 'product:%s ttl=' "$id"; redis-cli -h redis-db ttl "product:$id"; done
+
+clues:
+  - panel: deploys
+    contains: cache:invalidations
+    note: The "perf" deploy replaced the cache delete with a push onto a list.
+  - panel: commands
+    contains: "ttl="
+    note: The bestsellers' entries have minutes left to live. Nothing deleted them when the price changed.
+
+root_cause:
+  options:
+    - key: a
+      text: "A deploy replaced the cache delete on a price change with a push onto a list that nothing reads, so old prices stay until the TTL"
+    - key: b
+      text: "Checkout reads prices from a replica that lags behind the primary, so it charges a different price from the one on the page"
+    - key: c
+      text: "Merchandising's repricing job writes to Postgres out of order, so a product's price can jump back to an older value for a while"
+    - key: d
+      text: "Redis has run out of memory for product entries, so its writes are being dropped and the page keeps whichever copy it had before"
+  answer: a
+  explanation: >-
+    Postgres has the new price at once and checkout charges it, while the page shows the cached one.
+    Before the "invalidate asynchronously" deploy the update deleted that entry. Now it pushes the id onto
+    cache:invalidations, and nothing reads that list because the job meant to do it was never built.
+
+mitigation:
+  options:
+    - key: a
+      text: "Roll back the deploy, so a price change deletes the product's cache entry again"
+    - key: b
+      text: "Set the cache TTL to 0 and flush it, so that no page can show an old price"
+    - key: c
+      text: "Flush the cached products now, so that each page picks up its current price"
+    - key: d
+      text: "Set the cache TTL to 5 seconds and flush it, so that a stale price soon goes"
+  answer: a
+  explanation: >-
+    Rolling back restores the delete, and the prices are right from the next write. With TTL 0, every
+    bestseller's read recomputes 30,000 reviews, which swaps a billing problem for a slow site. A flush is
+    wrong again at the next reprice. A 5-second TTL only narrows the window, and buyers still hit it.
+
+fix:
+  options:
+    - key: a
+      text: "Invalidate on write again: delete the product's entry in the same price update"
+    - key: b
+      text: "Keep a short TTL on product entries for good, so a stale price lives seconds"
+    - key: c
+      text: "Turn the product cache off for good, so that every page reads from Postgres"
+    - key: d
+      text: "Record every order as a price match, so that the mismatch alert goes quiet"
+  answer: a
+  explanation: >-
+    Deleting on write means the next read refills the entry from Postgres with the new price, and there's
+    no window for a buyer to fall into. The check replays repricing and checks for that: a short TTL still
+    fails it, no cache fails the database check, and hiding the mismatches leaves customers overcharged.
