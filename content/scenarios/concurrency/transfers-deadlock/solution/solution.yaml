@@ -1,0 +1,9 @@
+schema: devgrill/solution@1
+summary: >-
+  The refactor locks a transfer's payer, then its payee. Two transfers between the same pair in
+  opposite directions each take one lock and wait for the other: a deadlock, which Postgres
+  breaks after a second by failing one of them. Lock both accounts in id order, whoever pays.
+steps:
+  - patch: id-order.diff
+    service: api
+    message: "transfers: lock both accounts in id order, whoever pays"

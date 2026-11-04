@@ -1,0 +1,14 @@
+schema: devgrill/approach@1
+key: rollback
+name: Roll back the refactor
+outcome: full
+idea: Deploy the commit before "lock the payer, then the payee". Both locks are taken in one query, in id order.
+steps:
+  - rollback_to: "payments: show the merchant name on receipts"
+    service: api
+pros:
+  - One step back to code that never deadlocked
+cons:
+  - Whatever the refactor made clearer is undone
+match:
+  rollback: true

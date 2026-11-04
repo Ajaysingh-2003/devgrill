@@ -1,0 +1,178 @@
+# Spec v1 (ADR 012). A refactor "for clarity" locks a transfer's payer, then its payee, instead
+# of both accounts in one query in id order. Marketplace sellers pay each other back and forth
+# all day: two transfers between the same pair in opposite directions each take one lock and
+# wait for the other. Postgres breaks every deadlock after deadlock_timeout (1 s) by failing one
+# transaction, so a few percent of transfers fail and the slowest take over a second.
+schema: devgrill/scenario@1
+slug: transfers-deadlock
+title: Transfers that deadlock
+track: concurrency
+topic: deadlocks
+difficulty: sev2
+est_minutes: 25
+status: published
+summary: Payments fail with "try again" and the slowest take a second
+tags:
+  - postgres
+  - locking
+  - deadlocks
+base_app: ledger
+briefing:
+  story: Since this morning's release, some transfers between marketplace sellers fail with "try again",
+    and the ones that work are slow. Nothing is down and the database is barely busy.
+  system:
+    - kind: lb
+      name: load-gen
+      note: sellers settling up, customers paying
+      role: path
+    - kind: api
+      name: ledger-api
+      note: Python, 4 workers
+      role: path
+    - kind: db
+      name: postgres
+      note: accounts, entries
+      role: path
+    - kind: worker
+      name: settlement-worker
+      note: pays merchants, audits the books
+      role: side
+  goals:
+    - title: Transfers go through
+      detail: Under 1% failures, and p99 under 500 ms.
+    - title: No deadlocks
+      detail: Not fewer deadlocks handled better; none.
+
+page:
+  severity: SEV2
+  title: "ledger-api: 3% of transfers failing, p99 over 1 s"
+
+charts: [error_rate, p99_latency_ms, deadlocks, db_connections]
+
+faults:
+  - use: ledger/payer-first
+    at: T-180m
+
+load:
+  script: ledger.js
+  vus: 10
+  params:
+    # Six marketplace sellers who pay each other all day.
+    HOT_ACCOUNTS: "9001,9002,9003,9004,9005,9006"
+
+deploy_history:
+  - message: "accounts: show the last 20 entries on the statement"
+    minutes_before: 4320
+    service: api
+  - message: "payments: show the merchant name on receipts"
+    minutes_before: 1440
+    service: api
+  - message: "transfers: lock the payer, then the payee (clearer)"
+    minutes_before: 180
+    from_fault: ledger/payer-first
+
+beats:
+  - persona: priya
+    at: T+20s
+    say: "Sellers say their transfers to each other fail with 'try again'. Retrying works, mostly. The dashboards say the database is barely busy. What's going on?"
+  - persona: arjun
+    at: T+3m
+    say: "The API log says 'deadlock detected'. Can we just retry those automatically? The client retries anyway."
+  - persona: arjun
+    when: "state:mitigated"
+    say: "Errors are gone and latency's back. Are we sure nothing else locks two accounts the other way round?"
+  - persona: priya
+    when: "state:resolved"
+    say: "Verified: the sellers' traffic runs with no deadlocks and no slow transfers. Thanks. Please write it up for the release review."
+
+constraints:
+  no_scale_up: [postgres-db]
+
+slo:
+  p99_latency_ms: 500
+  error_rate: 0.01
+  for_s: 30
+
+probes:
+  - key: steady-traffic
+    kind: load
+    title: Sellers keep settling up
+    how: Replays sellers paying each other and customers paying for 45 seconds; p99 under 500 ms, under 1% errors, no deadlocks.
+    target:
+      p99_ms: { lt: 500 }
+      error_rate: { lt: 0.01 }
+      deadlocks: { lt: 0.02 }
+  - key: correctness
+    kind: hidden_test
+    title: Still correct
+    how: Balances, transfers, refusals, card payments and settlements all work, and the books add up.
+    script: base/correctness.py
+  - key: budget
+    kind: budget
+    title: Within budget
+    how: No bigger database.
+    weight: 0.5
+
+hints:
+  tier1: "The database isn't busy, yet transfers wait a second and some fail. What is a transfer waiting for? Look at the API's error log."
+  tier2: "'deadlock detected': two transactions each hold a row lock the other wants. Which rows does a transfer lock, and in what order? Compare a transfer from A to B with one from B to A, and look at the last deploy."
+  tier3: "The refactor locks the payer, then the payee. A->B locks A then B; B->A locks B then A: each holds one and waits for the other, until Postgres fails one after deadlock_timeout. Lock both accounts in id order (sorted, or one SELECT ... ORDER BY id FOR UPDATE), whoever pays."
+
+rubric:
+  - key: impact
+    max: 2
+    description: States what customers saw and since when.
+    anchors:
+      "0": "No impact stated."
+      "1": "Transfers failed, without how many or since when."
+      "2": "Since the refactor, a few percent of transfers between sellers (and some payments) failed with 'try again', and many took a second, while the database stayed idle."
+  - key: root-cause
+    max: 4
+    description: Explains the deadlock.
+    anchors:
+      "0": "Blames load, Postgres or the network."
+      "2": "Names deadlocks, without the lock order."
+      "4": "The refactor took the payer's row lock, then the payee's. Opposite transfers between the same accounts took the locks in opposite orders, each held one and waited for the other; Postgres detected the cycle after deadlock_timeout (1 s) and failed one transaction. Before, both rows were locked in one query in id order."
+  - key: rejected-fixes
+    max: 2
+    description: Explains why retrying deadlocks isn't the fix.
+    anchors:
+      "0": "Recommends retrying deadlocks as the fix."
+      "1": "Rejects it without saying why."
+      "2": "A retry hides the error but not the deadlock: each one still waits a full second before Postgres breaks it, so latency stays bad. A consistent lock order removes the cycle, so there is nothing to retry."
+  - key: prevention
+    max: 2
+    description: Proposes guards against lock-order deadlocks.
+    anchors:
+      "0": "No action items."
+      "1": "One vague action."
+      "2": "One rule (and helper) for locking several rows: always in id order; a concurrent opposite-transfers test; alert on pg_stat_database deadlocks; log_lock_waits on."
+
+ttl_minutes: 35
+par_minutes: 10
+
+replay:
+  - when: deploy.viewed
+    match: "api"
+    mark: clue
+    note: The refactor is where the payer-first lock order came from.
+  - when: api.restarted
+    mark: lost
+    note: A restart runs the same lock order.
+  - when: api.rolledback
+    mark: clue
+    note: Rolling back locks both rows in one query, in id order.
+
+ai:
+  spoilers:
+    - "lock order"
+    - "id order"
+    - "payer,? then the payee"
+    - "opposite (order|direction)"
+    - "deadlock_timeout"
+  root_cause: >-
+    A refactor locked a transfer's payer, then its payee, instead of both rows in one query in id
+    order. Sellers transfer to each other in both directions, so two transfers between the same
+    pair took the locks in opposite orders, each held one and waited for the other. Postgres
+    broke each deadlock after deadlock_timeout (1 s) by failing one transaction. Locking both
+    accounts in id order, whoever pays, removes the cycle; retrying keeps the second-long waits.

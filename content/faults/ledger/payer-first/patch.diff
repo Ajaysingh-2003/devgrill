@@ -1,0 +1,25 @@
+--- app/db.py
++++ app/db.py
+@@ -62,14 +62,14 @@
+     conn: Connection[dict[str, Any]], from_id: int, to_id: int, amount: int, kind: str
+ ) -> dict[str, Any]:
+     """Moves `amount` from one account to another inside the caller's transaction."""
+-    # Lock both accounts, always in id order: two transfers in opposite directions take the
+-    # locks in the same order, so neither can hold one row while waiting for the other, and
+-    # the balance read here can't change before the debit below.
+-    rows = conn.execute(
+-        "SELECT id, kind, balance_cents FROM accounts WHERE id = ANY(%s) ORDER BY id FOR UPDATE",
+-        ([from_id, to_id],),
+-    ).fetchall()
+-    accounts = {row["id"]: row for row in rows}
++    # Lock the payer, then the payee: the balance read here can't change before the debit.
++    rows = [
++        conn.execute(
++            "SELECT id, kind, balance_cents FROM accounts WHERE id = %s FOR UPDATE", (account_id,)
++        ).fetchone()
++        for account_id in (from_id, to_id)
++    ]
++    accounts = {row["id"]: row for row in rows if row is not None}
+     if from_id not in accounts or to_id not in accounts:
+         raise LookupError("account")
+     payer = accounts[from_id]

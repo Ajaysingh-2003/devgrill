@@ -1,0 +1,19 @@
+schema: devgrill/approach@1
+key: retry-deadlocks
+name: Retry a transfer that deadlocked
+outcome: fails
+idea: >-
+  Catch DeadlockDetected and run the transfer again. Most retries succeed, but every deadlock
+  still costs the full deadlock_timeout (a second) before Postgres breaks it, and payments
+  still deadlock with top-ups.
+steps:
+  - patch: retry-deadlocks.diff
+    service: api
+    message: "transfers: retry when Postgres reports a deadlock"
+pros:
+  - Fewer failed transfers
+cons:
+  - "The deadlocks still happen: each one is a second-long wait"
+fails_probes: [steady-traffic]
+match:
+  diff: "DeadlockDetected"

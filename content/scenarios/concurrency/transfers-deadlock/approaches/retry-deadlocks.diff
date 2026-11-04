@@ -1,0 +1,29 @@
+--- app/db.py
++++ app/db.py
+@@ -10,6 +10,7 @@
+ 
+ from prometheus_client import Counter
+ from psycopg import Connection
++from psycopg.errors import DeadlockDetected
+ from psycopg.rows import dict_row
+ from psycopg_pool import ConnectionPool, PoolTimeout
+ 
+@@ -106,8 +107,16 @@
+ 
+ 
+ def transfer(from_id: int, to_id: int, amount: int) -> dict[str, Any]:
+-    with connection() as conn, conn.transaction():
+-        return _move(conn, from_id, to_id, amount, "transfer")
++    # Postgres breaks a deadlock by failing one side: try that side again.
++    for attempt in range(3):
++        try:
++            with connection() as conn, conn.transaction():
++                return _move(conn, from_id, to_id, amount, "transfer")
++        except DeadlockDetected:
++            if attempt == 2:
++                raise
++            log.warning("deadlock, retrying", extra=fields(attempt=attempt + 1))
++    raise AssertionError("unreachable")
+ 
+ 
+ def pay(customer_id: int, merchant_id: int, amount: int) -> dict[str, Any]:

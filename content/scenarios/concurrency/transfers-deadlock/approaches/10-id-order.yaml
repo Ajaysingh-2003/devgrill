@@ -1,0 +1,17 @@
+schema: devgrill/approach@1
+key: id-order
+name: Lock in id order, whoever pays
+outcome: full
+idea: >-
+  Take the two row locks in a fixed order (lowest id first), not payer first. Opposite transfers
+  between the same accounts then queue for the same first lock instead of each holding one.
+steps:
+  - patch: id-order.diff
+    service: api
+    message: "transfers: lock both accounts in id order, whoever pays"
+pros:
+  - No deadlocks between transfers at all, not just fewer
+cons:
+  - Every code path that locks more than one account has to follow the same order
+match:
+  diff: 'sorted\(|ORDER BY id'

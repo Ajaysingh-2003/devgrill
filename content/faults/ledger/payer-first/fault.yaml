@@ -1,0 +1,15 @@
+schema: devgrill/fault@1
+name: ledger/payer-first
+kind: code_patch
+summary: A refactor locks a transfer's payer, then its payee, instead of both in id order; two transfers between the same accounts in opposite directions each hold one lock and wait for the other.
+base_apps: [ledger]
+params: {}
+apply:
+  patch: patch.diff
+  service: api
+deploy_message: "transfers: lock the payer, then the payee (clearer)"
+symptom:
+  metric: deadlocks
+  op: gt
+  value: 0.05
+  within_s: 90
