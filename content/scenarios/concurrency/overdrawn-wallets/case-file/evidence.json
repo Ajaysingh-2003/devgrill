@@ -1,0 +1,4236 @@
+{
+ "breached_after_s": 5.5,
+ "cache": null,
+ "changes": {
+  "2ea7b47f1a37a52c997e40fc92889e13a9ecad7d": {
+   "at": 1793795180,
+   "author": "deploy-bot",
+   "diff": "diff --git a/app/db.py b/app/db.py\nindex a109483..ccd0130 100644\n--- a/app/db.py\n+++ b/app/db.py\n@@ -62,11 +62,10 @@ def _move(\n     conn: Connection[dict[str, Any]], from_id: int, to_id: int, amount: int, kind: str\n ) -> dict[str, Any]:\n     \"\"\"Moves `amount` from one account to another inside the caller's transaction.\"\"\"\n-    # Lock both accounts, always in id order: two transfers in opposite directions take the\n-    # locks in the same order, so neither can hold one row while waiting for the other, and\n-    # the balance read here can't change before the debit below.\n+    # No row locks: the debit below is a single atomic UPDATE, so the balance can't be\n+    # corrupted, and transfers no longer queue behind each other at peak.\n     rows = conn.execute(\n-        \"SELECT id, kind, balance_cents FROM accounts WHERE id = ANY(%s) ORDER BY id FOR UPDATE\",\n+        \"SELECT id, kind, balance_cents FROM accounts WHERE id = ANY(%s)\",\n         ([from_id, to_id],),\n     ).fetchall()\n     accounts = {row[\"id\"]: row for row in rows}\n",
+   "files": [
+    "app/db.py"
+   ],
+   "message": "perf: no row locks on transfers (lock waits at peak)",
+   "service": "api",
+   "sha": "2ea7b47f1a37a52c997e40fc92889e13a9ecad7d",
+   "short": "2ea7b47"
+  },
+  "5e7e7b51176e4d6555092b5f79b2affbb13c06a0": {
+   "at": 1793550379,
+   "author": "deploy-bot",
+   "diff": "diff --git a/CHANGELOG.md b/CHANGELOG.md\nnew file mode 100644\nindex 0000000..8b83762\n--- /dev/null\n+++ b/CHANGELOG.md\n@@ -0,0 +1 @@\n+- accounts: show the last 20 entries on the statement\n",
+   "files": [
+    "CHANGELOG.md"
+   ],
+   "message": "accounts: show the last 20 entries on the statement",
+   "service": "api",
+   "sha": "5e7e7b51176e4d6555092b5f79b2affbb13c06a0",
+   "short": "5e7e7b5"
+  },
+  "659c7487ea0eef06f2b5c57f4783376b74b479f6": {
+   "at": 1790958380,
+   "author": "priya",
+   "diff": "diff --git a/Dockerfile b/Dockerfile\nnew file mode 100644\nindex 0000000..7b3933c\n--- /dev/null\n+++ b/Dockerfile\n@@ -0,0 +1,8 @@\n+FROM python:3.14-slim\n+ENV PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1\n+RUN pip install --quiet \"psycopg[binary]==3.3.6\" \"prometheus-client==0.26.0\"\n+WORKDIR /srv/worker\n+COPY worker.py ./\n+COPY config ./config\n+EXPOSE 9100\n+CMD [\"python\", \"worker.py\"]\ndiff --git a/config/worker.env b/config/worker.env\nnew file mode 100644\nindex 0000000..5548993\n--- /dev/null\n+++ b/config/worker.env\n@@ -0,0 +1,9 @@\n+# ledger worker runtime config. Ships with every deploy (`devgrill deploy worker`).\n+\n+# Settlement consumers (threads), and how many settlements each pays out per transaction.\n+CONSUMERS=1\n+BATCH=20\n+# Seconds a consumer waits when there is nothing to settle.\n+POLL_S=0.2\n+# Seconds between audits of the books.\n+AUDIT_EVERY_S=5\ndiff --git a/worker.py b/worker.py\nnew file mode 100644\nindex 0000000..422acb9\n--- /dev/null\n+++ b/worker.py\n@@ -0,0 +1,211 @@\n+\"\"\"Ledger worker: pays merchants out for card payments, and audits the books.\n+\n+Settlement: each card payment leaves a pending settlement. Consumers take them in batches\n+(FOR UPDATE SKIP LOCKED, so two consumers never take the same one) and pay each one from the\n+house's clearing balance to the merchant: a transfer, two entries and both balances, in the\n+batch's transaction.\n+\n+Audit: every AUDIT_EVERY_S seconds the worker checks the books in one snapshot: customer\n+accounts below zero, accounts whose balance isn't the sum of their entries, and whether all\n+balances still add up to zero. Logs JSON like the API; metrics on :9100. Tunables live in\n+config/worker.env, deployed with the code.\n+\"\"\"\n+\n+from __future__ import annotations\n+\n+import json\n+import logging\n+import os\n+import signal\n+import sys\n+import threading\n+import time\n+from pathlib import Path\n+from typing import Any\n+\n+import psycopg\n+from prometheus_client import Counter, Gauge, start_http_server\n+\n+\n+def _load_env_file(path: Path) -> None:\n+    \"\"\"config/worker.env: KEY=value lines; the process environment wins.\"\"\"\n+    if not path.is_file():\n+        return\n+    for raw in path.read_text(encoding=\"utf-8\").splitlines():\n+        line = raw.strip()\n+        if line and not line.startswith(\"#\") and \"=\" in line:\n+            name, value = line.split(\"=\", 1)\n+            os.environ.setdefault(name.strip(), value.strip())\n+\n+\n+_load_env_file(Path(__file__).resolve().parent / \"config\" / \"worker.env\")\n+\n+DATABASE_URL = os.environ.get(\"DATABASE_URL\", \"postgresql://ledger:ledger@postgres-db:5432/ledger\")\n+HOUSE_ACCOUNT = 0\n+#: Settlement consumers (threads), and settlements each takes per transaction.\n+CONSUMERS = int(os.environ.get(\"CONSUMERS\", \"1\"))\n+BATCH = int(os.environ.get(\"BATCH\", \"20\"))\n+POLL_S = float(os.environ.get(\"POLL_S\", \"0.2\"))\n+AUDIT_EVERY_S = float(os.environ.get(\"AUDIT_EVERY_S\", \"5\"))\n+\n+SETTLED = Counter(\"settlements_processed_total\", \"Settlements paid out\", [\"result\"])\n+PENDING = Gauge(\"settlements_pending\", \"Settlements waiting to be paid out\")\n+OLDEST = Gauge(\"settlements_oldest_seconds\", \"Age of the oldest pending settlement\")\n+NEGATIVE = Gauge(\"ledger_negative_balances\", \"Customer accounts below zero\")\n+ACCOUNTS_OFF = Gauge(\"ledger_accounts_off\", \"Accounts whose balance isn't the sum of entries\")\n+BOOKS_OFF = Gauge(\"ledger_books_off_cents\", \"How far all balances are from adding up to zero\")\n+\n+\n+class JsonFormatter(logging.Formatter):\n+    def format(self, record: logging.LogRecord) -> str:\n+        entry: dict[str, Any] = {\n+            \"ts\": time.strftime(\"%Y-%m-%dT%H:%M:%S\", time.gmtime(record.created))\n+            + f\".{int(record.msecs):03d}Z\",\n+            \"level\": record.levelname.lower(),\n+            \"service\": \"worker\",\n+            \"msg\": record.getMessage(),\n+        }\n+        entry.update({k[2:]: v for k, v in record.__dict__.items() if k.startswith(\"x_\")})\n+        if record.exc_info:\n+            entry[\"exc\"] = self.formatException(record.exc_info)\n+        return json.dumps(entry, separators=(\",\", \":\"))\n+\n+\n+handler = logging.StreamHandler(sys.stdout)\n+handler.setFormatter(JsonFormatter())\n+logging.basicConfig(level=logging.INFO, handlers=[handler])\n+log = logging.getLogger(\"worker\")\n+\n+running = True\n+\n+\n+def stop(*_: Any) -> None:\n+    global running\n+    running = False\n+\n+\n+def pay_out(conn: psycopg.Connection[Any], settlement: tuple[int, int, int]) -> None:\n+    \"\"\"Moves one settlement's amount from the house's clearing balance to the merchant (the\n+    house's balance is debited once per batch, by settle_batch).\"\"\"\n+    settlement_id, merchant_id, amount = settlement\n+    row = conn.execute(\n+        \"INSERT INTO transfers (from_account, to_account, amount_cents, kind)\"\n+        \" VALUES (%s, %s, %s, 'settlement') RETURNING id\",\n+        (HOUSE_ACCOUNT, merchant_id, amount),\n+    ).fetchone()\n+    assert row is not None\n+    transfer_id = row[0]\n+    conn.execute(\n+        \"INSERT INTO entries (transfer_id, account_id, amount_cents)\"\n+        \" VALUES (%s, %s, %s), (%s, %s, %s)\",\n+        (transfer_id, merchant_id, amount, transfer_id, HOUSE_ACCOUNT, -amount),\n+    )\n+    conn.execute(\n+        \"UPDATE accounts SET balance_cents = balance_cents + %s, updated_at = now() WHERE id = %s\",\n+        (amount, merchant_id),\n+    )\n+    conn.execute(\n+        \"UPDATE settlements SET status = 'settled', transfer_id = %s, settled_at = now()\"\n+        \" WHERE id = %s\",\n+        (transfer_id, settlement_id),\n+    )\n+\n+\n+def settle_batch(conn: psycopg.Connection[Any]) -> int:\n+    \"\"\"Pays out up to BATCH pending settlements in one transaction; returns how many.\"\"\"\n+    with conn.transaction():\n+        batch = conn.execute(\n+            \"SELECT id, merchant_id, amount_cents FROM settlements WHERE status = 'pending'\"\n+            \" ORDER BY id LIMIT %s FOR UPDATE SKIP LOCKED\",\n+            (BATCH,),\n+        ).fetchall()\n+        # Credit merchants in id order, as transfers lock accounts: a batch and a transfer\n+        # between two merchants never take the same two locks in opposite orders.\n+        batch.sort(key=lambda settlement: settlement[1])\n+        for settlement in batch:\n+            pay_out(conn, settlement)\n+        if batch:\n+            # Every payment locks the house's row too: debit it once, last, so the batch\n+            # holds that lock for a moment instead of for the whole batch.\n+            conn.execute(\n+                \"UPDATE accounts SET balance_cents = balance_cents - %s, updated_at = now()\"\n+                \" WHERE id = %s\",\n+                (sum(settlement[2] for settlement in batch), HOUSE_ACCOUNT),\n+            )\n+    SETTLED.labels(\"paid\").inc(len(batch))\n+    return len(batch)\n+\n+\n+def consume() -> None:\n+    while running:\n+        try:\n+            with psycopg.connect(DATABASE_URL, autocommit=True) as conn:\n+                while running:\n+                    if settle_batch(conn) < BATCH:\n+                        time.sleep(POLL_S)\n+        except psycopg.Error as exc:\n+            log.error(\"settlement failed, retrying\", extra={\"x_error\": str(exc).strip()[:300]})\n+            SETTLED.labels(\"failed\").inc()\n+            time.sleep(1)\n+\n+\n+AUDIT_SQL = \"\"\"\n+SELECT\n+  (SELECT count(*) FROM accounts WHERE kind <> 'house' AND balance_cents < 0),\n+  (SELECT count(*) FROM accounts a\n+     LEFT JOIN (SELECT account_id, sum(amount_cents) AS total FROM entries GROUP BY account_id) e\n+       ON e.account_id = a.id\n+    WHERE a.balance_cents <> coalesce(e.total, 0)),\n+  (SELECT coalesce(sum(balance_cents), 0) FROM accounts),\n+  (SELECT count(*) FROM settlements WHERE status = 'pending'),\n+  (SELECT coalesce(extract(epoch FROM now() - min(created_at)), 0) FROM settlements\n+    WHERE status = 'pending')\n+\"\"\"\n+\n+\n+def audit() -> None:\n+    while running:\n+        try:\n+            with psycopg.connect(DATABASE_URL, autocommit=True) as conn:\n+                while running:\n+                    row = conn.execute(AUDIT_SQL).fetchone()\n+                    assert row is not None\n+                    negative, off, books, pending, oldest = row\n+                    NEGATIVE.set(negative)\n+                    ACCOUNTS_OFF.set(off)\n+                    BOOKS_OFF.set(abs(books))\n+                    PENDING.set(pending)\n+                    OLDEST.set(float(oldest))\n+                    if negative or off or books:\n+                        log.error(\n+                            \"books don't balance\",\n+                            extra={\n+                                \"x_negative_accounts\": negative,\n+                                \"x_accounts_off\": off,\n+                                \"x_books_off_cents\": books,\n+                            },\n+                        )\n+                    time.sleep(AUDIT_EVERY_S)\n+        except psycopg.Error as exc:\n+            log.error(\"audit failed, retrying\", extra={\"x_error\": str(exc).strip()[:300]})\n+            time.sleep(2)\n+\n+\n+def main() -> None:\n+    signal.signal(signal.SIGTERM, stop)\n+    signal.signal(signal.SIGINT, stop)\n+    start_http_server(9100)\n+    log.info(\"started\", extra={\"x_consumers\": CONSUMERS, \"x_batch\": BATCH})\n+    threads = [threading.Thread(target=consume, daemon=True) for _ in range(CONSUMERS)]\n+    threads.append(threading.Thread(target=audit, daemon=True))\n+    for thread in threads:\n+        thread.start()\n+    while running:\n+        time.sleep(0.5)\n+    # A deploy stops the worker: each consumer finishes its batch before the process exits.\n+    for thread in threads:\n+        thread.join(timeout=4)\n+\n+\n+if __name__ == \"__main__\":\n+    main()\n",
+   "files": [
+    "Dockerfile",
+    "config/worker.env",
+    "worker.py"
+   ],
+   "message": "Ledger worker: initial import",
+   "service": "worker",
+   "sha": "659c7487ea0eef06f2b5c57f4783376b74b479f6",
+   "short": "659c748"
+  },
+  "6c027e52eab925d8e4ff93e55e5afbef74a56711": {
+   "at": 1793723179,
+   "author": "deploy-bot",
+   "diff": "diff --git a/CHANGELOG.md b/CHANGELOG.md\nindex 8b83762..154bf5c 100644\n--- a/CHANGELOG.md\n+++ b/CHANGELOG.md\n@@ -1 +1,2 @@\n - accounts: show the last 20 entries on the statement\n+- payments: show the merchant name on receipts\n",
+   "files": [
+    "CHANGELOG.md"
+   ],
+   "message": "payments: show the merchant name on receipts",
+   "service": "api",
+   "sha": "6c027e52eab925d8e4ff93e55e5afbef74a56711",
+   "short": "6c027e5"
+  },
+  "912716cec0505686f55dfceeec47d80d6a9134a4": {
+   "at": 1790958379,
+   "author": "priya",
+   "diff": "diff --git a/Dockerfile b/Dockerfile\nnew file mode 100644\nindex 0000000..11923a9\n--- /dev/null\n+++ b/Dockerfile\n@@ -0,0 +1,19 @@\n+# Ledger API image. The same source is a git repo in the tools container (/workspace/api);\n+# `devgrill deploy` copies app/ and config/ from there into /srv/app and restarts this service.\n+FROM python:3.14-slim\n+\n+ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1 \\\n+    PROMETHEUS_MULTIPROC_DIR=/tmp/prometheus\n+RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*\n+\n+WORKDIR /srv/app\n+COPY pyproject.toml ./\n+RUN pip install --quiet \\\n+    \"fastapi==0.143.3\" \"uvicorn==0.54.0\" \"psycopg[binary,pool]==3.3.6\" \\\n+    \"prometheus-client==0.26.0\"\n+COPY app ./app\n+COPY config ./config\n+\n+EXPOSE 8000\n+# Metric files from a previous run would double-count after a restart: start clean.\n+CMD [\"sh\", \"-c\", \"rm -rf \\\"$PROMETHEUS_MULTIPROC_DIR\\\" && mkdir -p \\\"$PROMETHEUS_MULTIPROC_DIR\\\" && exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4 --no-access-log\"]\ndiff --git a/app/__init__.py b/app/__init__.py\nnew file mode 100644\nindex 0000000..e69de29\ndiff --git a/app/db.py b/app/db.py\nnew file mode 100644\nindex 0000000..a109483\n--- /dev/null\n+++ b/app/db.py\n@@ -0,0 +1,136 @@\n+\"\"\"Postgres access through a connection pool (psycopg 3). Every movement of money is one\n+transaction: a transfer row, two entries that sum to zero, and both balances.\"\"\"\n+\n+from __future__ import annotations\n+\n+import logging\n+from collections.abc import Iterator\n+from contextlib import contextmanager\n+from typing import Any\n+\n+from prometheus_client import Counter\n+from psycopg import Connection\n+from psycopg.rows import dict_row\n+from psycopg_pool import ConnectionPool, PoolTimeout\n+\n+from app import settings\n+from app.logging_setup import fields\n+\n+log = logging.getLogger(\"db\")\n+\n+#: Debits that left a customer's wallet below zero. Never meant to happen.\n+OVERDRAFTS = Counter(\"ledger_overdrafts_total\", \"Debits that took a wallet below zero\")\n+\n+\n+class DatabaseBusy(Exception):\n+    \"\"\"No connection became free within the pool timeout.\"\"\"\n+\n+\n+class InsufficientFunds(Exception):\n+    \"\"\"The payer's balance doesn't cover the amount.\"\"\"\n+\n+\n+pool = ConnectionPool(\n+    settings.DATABASE_URL,\n+    min_size=settings.DB_POOL_MIN,\n+    max_size=settings.DB_POOL_MAX,\n+    timeout=settings.DB_POOL_TIMEOUT_S,\n+    kwargs={\"row_factory\": dict_row},\n+    open=False,\n+)\n+\n+\n+@contextmanager\n+def connection() -> Iterator[Connection[dict[str, Any]]]:\n+    try:\n+        with pool.connection() as conn:\n+            yield conn\n+    except PoolTimeout as exc:\n+        log.error(\"pool exhausted\", extra=fields(pool_max=settings.DB_POOL_MAX))\n+        raise DatabaseBusy() from exc\n+\n+\n+def account(account_id: int) -> dict[str, Any] | None:\n+    with connection() as conn:\n+        return conn.execute(\n+            \"SELECT id, owner, kind, balance_cents, updated_at FROM accounts WHERE id = %s\",\n+            (account_id,),\n+        ).fetchone()\n+\n+\n+def _move(\n+    conn: Connection[dict[str, Any]], from_id: int, to_id: int, amount: int, kind: str\n+) -> dict[str, Any]:\n+    \"\"\"Moves `amount` from one account to another inside the caller's transaction.\"\"\"\n+    # Lock both accounts, always in id order: two transfers in opposite directions take the\n+    # locks in the same order, so neither can hold one row while waiting for the other, and\n+    # the balance read here can't change before the debit below.\n+    rows = conn.execute(\n+        \"SELECT id, kind, balance_cents FROM accounts WHERE id = ANY(%s) ORDER BY id FOR UPDATE\",\n+        ([from_id, to_id],),\n+    ).fetchall()\n+    accounts = {row[\"id\"]: row for row in rows}\n+    if from_id not in accounts or to_id not in accounts:\n+        raise LookupError(\"account\")\n+    payer = accounts[from_id]\n+    if payer[\"kind\"] != \"house\" and payer[\"balance_cents\"] < amount:\n+        raise InsufficientFunds()\n+    transfer = conn.execute(\n+        \"INSERT INTO transfers (from_account, to_account, amount_cents, kind)\"\n+        \" VALUES (%s, %s, %s, %s) RETURNING id, from_account, to_account, amount_cents, kind,\"\n+        \" created_at\",\n+        (from_id, to_id, amount, kind),\n+    ).fetchone()\n+    assert transfer is not None\n+    conn.execute(\n+        \"INSERT INTO entries (transfer_id, account_id, amount_cents)\"\n+        \" VALUES (%s, %s, %s), (%s, %s, %s)\",\n+        (transfer[\"id\"], to_id, amount, transfer[\"id\"], from_id, -amount),\n+    )\n+    debited = conn.execute(\n+        \"UPDATE accounts SET balance_cents = balance_cents - %s, updated_at = now() WHERE id = %s\"\n+        \" RETURNING kind, balance_cents\",\n+        (amount, from_id),\n+    ).fetchone()\n+    if debited and debited[\"kind\"] != \"house\" and debited[\"balance_cents\"] < 0:\n+        OVERDRAFTS.inc()\n+        log.error(\n+            \"wallet overdrawn\",\n+            extra=fields(account_id=from_id, balance_cents=debited[\"balance_cents\"]),\n+        )\n+    conn.execute(\n+        \"UPDATE accounts SET balance_cents = balance_cents + %s, updated_at = now() WHERE id = %s\",\n+        (amount, to_id),\n+    )\n+    return transfer\n+\n+\n+def transfer(from_id: int, to_id: int, amount: int) -> dict[str, Any]:\n+    with connection() as conn, conn.transaction():\n+        return _move(conn, from_id, to_id, amount, \"transfer\")\n+\n+\n+def pay(customer_id: int, merchant_id: int, amount: int) -> dict[str, Any]:\n+    \"\"\"A card payment: the customer is debited now (into the house's clearing balance), and the\n+    merchant is paid out later by the worker's settlement run.\"\"\"\n+    with connection() as conn, conn.transaction():\n+        merchant = conn.execute(\n+            \"SELECT id FROM accounts WHERE id = %s AND kind = 'merchant'\", (merchant_id,)\n+        ).fetchone()\n+        if merchant is None:\n+            raise LookupError(\"merchant\")\n+        payment = _move(conn, customer_id, settings.HOUSE_ACCOUNT, amount, \"payment\")\n+        conn.execute(\n+            \"INSERT INTO settlements (merchant_id, amount_cents) VALUES (%s, %s)\",\n+            (merchant_id, amount),\n+        )\n+        return payment\n+\n+\n+def healthy() -> bool:\n+    try:\n+        with connection() as conn:\n+            conn.execute(\"SELECT 1\")\n+        return True\n+    except Exception:\n+        return False\ndiff --git a/app/logging_setup.py b/app/logging_setup.py\nnew file mode 100644\nindex 0000000..1130280\n--- /dev/null\n+++ b/app/logging_setup.py\n@@ -0,0 +1,45 @@\n+\"\"\"JSON logs on stdout, one object per line, so the Logs panel can filter by field.\"\"\"\n+\n+from __future__ import annotations\n+\n+import json\n+import logging\n+import sys\n+import time\n+from typing import Any\n+\n+from app import settings\n+\n+\n+class JsonFormatter(logging.Formatter):\n+    def format(self, record: logging.LogRecord) -> str:\n+        entry: dict[str, Any] = {\n+            \"ts\": time.strftime(\"%Y-%m-%dT%H:%M:%S\", time.gmtime(record.created))\n+            + f\".{int(record.msecs):03d}Z\",\n+            \"level\": record.levelname.lower(),\n+            \"service\": settings.SERVICE_NAME,\n+            \"logger\": record.name,\n+            \"msg\": record.getMessage(),\n+        }\n+        for key, value in record.__dict__.items():\n+            if key.startswith(\"x_\"):\n+                entry[key[2:]] = value\n+        if record.exc_info:\n+            entry[\"exc\"] = self.formatException(record.exc_info)\n+        return json.dumps(entry, separators=(\",\", \":\"))\n+\n+\n+def configure() -> None:\n+    handler = logging.StreamHandler(sys.stdout)\n+    handler.setFormatter(JsonFormatter())\n+    root = logging.getLogger()\n+    root.handlers[:] = [handler]\n+    root.setLevel(logging.INFO)\n+    # uvicorn's access log duplicates our request log; keep its errors only.\n+    logging.getLogger(\"uvicorn.access\").disabled = True\n+    logging.getLogger(\"uvicorn.error\").setLevel(logging.WARNING)\n+\n+\n+def fields(**values: Any) -> dict[str, Any]:\n+    \"\"\"`log.info(\"cache miss\", extra=fields(product_id=42))` -> a `product_id` JSON field.\"\"\"\n+    return {f\"x_{key}\": value for key, value in values.items()}\ndiff --git a/app/main.py b/app/main.py\nnew file mode 100644\nindex 0000000..7486636\n--- /dev/null\n+++ b/app/main.py\n@@ -0,0 +1,174 @@\n+\"\"\"Ledger payments API: wallets, transfers and card payments. Small on purpose: every line is\n+something an on-call engineer may have to read at 2 a.m., and the money has to add up.\"\"\"\n+\n+from __future__ import annotations\n+\n+import logging\n+import time\n+from collections.abc import AsyncIterator\n+from contextlib import asynccontextmanager\n+from typing import Any\n+\n+from fastapi import FastAPI, HTTPException, Request, Response\n+from fastapi.responses import JSONResponse\n+from prometheus_client import (\n+    CONTENT_TYPE_LATEST,\n+    CollectorRegistry,\n+    Counter,\n+    Gauge,\n+    Histogram,\n+    generate_latest,\n+    multiprocess,\n+)\n+from psycopg import errors as pg_errors\n+from pydantic import BaseModel, Field\n+\n+from app import db, logging_setup, settings\n+from app.logging_setup import fields\n+\n+logging_setup.configure()\n+log = logging.getLogger(\"api\")\n+\n+REQUESTS = Counter(\"http_requests_total\", \"HTTP requests\", [\"method\", \"route\", \"status\"])\n+LATENCY = Histogram(\n+    \"http_request_duration_seconds\",\n+    \"Request latency\",\n+    [\"route\"],\n+    buckets=(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10),\n+)\n+#: Money movements by outcome: ok, insufficient (refused), or failed.\n+MOVEMENTS = Counter(\"ledger_movements_total\", \"Transfers and payments\", [\"kind\", \"result\"])\n+# Four uvicorn processes share these through PROMETHEUS_MULTIPROC_DIR.\n+DB_POOL_IN_USE = Gauge(\n+    \"db_pool_in_use\", \"Connections checked out of the pool\", multiprocess_mode=\"livesum\"\n+)\n+BUILD = Gauge(\"build_info\", \"Build\", [\"sha\"], multiprocess_mode=\"max\")\n+\n+\n+@asynccontextmanager\n+async def lifespan(app: FastAPI) -> AsyncIterator[None]:\n+    BUILD.labels(sha=settings.GIT_SHA).set(1)\n+    db.pool.open()\n+    log.info(\"started\", extra=fields(sha=settings.GIT_SHA))\n+    try:\n+        yield\n+    finally:\n+        db.pool.close()\n+\n+\n+app = FastAPI(title=\"Ledger\", lifespan=lifespan)\n+\n+\n+def _route_name(request: Request) -> str:\n+    route = request.scope.get(\"route\")\n+    return getattr(route, \"path\", \"unmatched\")\n+\n+\n+@app.middleware(\"http\")\n+async def observe(request: Request, call_next: Any) -> Response:\n+    started = time.perf_counter()\n+    try:\n+        response: Response = await call_next(request)\n+    except Exception:\n+        name = _route_name(request)\n+        REQUESTS.labels(request.method, name, \"500\").inc()\n+        LATENCY.labels(name).observe(time.perf_counter() - started)\n+        log.exception(\"request failed\", extra=fields(route=name))\n+        raise\n+    name = _route_name(request)\n+    elapsed = time.perf_counter() - started\n+    stats = db.pool.get_stats()\n+    DB_POOL_IN_USE.set(stats.get(\"pool_size\", 0) - stats.get(\"pool_available\", 0))\n+    REQUESTS.labels(request.method, name, str(response.status_code)).inc()\n+    LATENCY.labels(name).observe(elapsed)\n+    if response.status_code >= 500 or elapsed > 1.0:\n+        log.warning(\n+            \"slow or failed request\",\n+            extra=fields(route=name, status=response.status_code, ms=round(elapsed * 1000)),\n+        )\n+    return response\n+\n+\n+@app.exception_handler(db.DatabaseBusy)\n+async def _busy(request: Request, exc: db.DatabaseBusy) -> JSONResponse:\n+    return JSONResponse({\"error\": \"database busy, try again\"}, status_code=503)\n+\n+\n+@app.exception_handler(pg_errors.DeadlockDetected)\n+async def _deadlock(request: Request, exc: pg_errors.DeadlockDetected) -> JSONResponse:\n+    log.error(\"deadlock detected\", extra=fields(route=_route_name(request), error=str(exc).strip()))\n+    return JSONResponse({\"error\": \"the transfer failed, try again\"}, status_code=503)\n+\n+\n+@app.exception_handler(pg_errors.QueryCanceled)\n+async def _cancelled(request: Request, exc: pg_errors.QueryCanceled) -> JSONResponse:\n+    log.error(\"query cancelled\", extra=fields(route=_route_name(request), error=str(exc).strip()))\n+    return JSONResponse({\"error\": \"the database took too long\"}, status_code=503)\n+\n+\n+@app.get(\"/healthz\")\n+def healthz() -> dict[str, Any]:\n+    return {\"status\": \"ok\", \"sha\": settings.GIT_SHA}\n+\n+\n+@app.get(\"/readyz\")\n+def readyz() -> JSONResponse:\n+    ok = db.healthy()\n+    return JSONResponse({\"database\": ok}, status_code=200 if ok else 503)\n+\n+\n+@app.get(\"/metrics\")\n+def metrics() -> Response:\n+    registry = CollectorRegistry()\n+    multiprocess.MultiProcessCollector(registry)\n+    return Response(generate_latest(registry), media_type=CONTENT_TYPE_LATEST)\n+\n+\n+@app.get(\"/accounts/{account_id}\")\n+def get_account(account_id: int) -> dict[str, Any]:\n+    account = db.account(account_id)\n+    if account is None:\n+        raise HTTPException(404, \"no such account\")\n+    return account\n+\n+\n+class TransferIn(BaseModel):\n+    from_account: int = Field(ge=0)\n+    to_account: int = Field(ge=0)\n+    amount_cents: int = Field(gt=0, le=10_000_000)\n+\n+\n+@app.post(\"/transfers\", status_code=201)\n+def create_transfer(body: TransferIn) -> dict[str, Any]:\n+    if body.from_account == body.to_account:\n+        raise HTTPException(422, \"an account can't pay itself\")\n+    return _record(\n+        \"transfer\", lambda: db.transfer(body.from_account, body.to_account, body.amount_cents)\n+    )\n+\n+\n+class PaymentIn(BaseModel):\n+    account_id: int = Field(ge=1)\n+    merchant_id: int = Field(ge=1)\n+    amount_cents: int = Field(gt=0, le=10_000_000)\n+\n+\n+@app.post(\"/payments\", status_code=201)\n+def create_payment(body: PaymentIn) -> dict[str, Any]:\n+    return _record(\"payment\", lambda: db.pay(body.account_id, body.merchant_id, body.amount_cents))\n+\n+\n+def _record(kind: str, move: Any) -> dict[str, Any]:\n+    try:\n+        result: dict[str, Any] = move()\n+    except LookupError:\n+        MOVEMENTS.labels(kind, \"refused\").inc()\n+        raise HTTPException(404, \"no such account\") from None\n+    except db.InsufficientFunds:\n+        MOVEMENTS.labels(kind, \"insufficient\").inc()\n+        raise HTTPException(409, \"insufficient funds\") from None\n+    except Exception:\n+        MOVEMENTS.labels(kind, \"failed\").inc()\n+        raise\n+    MOVEMENTS.labels(kind, \"ok\").inc()\n+    return result\ndiff --git a/app/settings.py b/app/settings.py\nnew file mode 100644\nindex 0000000..c2649ba\n--- /dev/null\n+++ b/app/settings.py\n@@ -0,0 +1,41 @@\n+\"\"\"Configuration: connection strings from the environment, tunables from config/app.env.\n+\n+config/app.env is part of the repo and ships with every deploy, so a config change is a\n+commit you can find in `git log`, revert, and redeploy. The environment wins over the file.\n+\"\"\"\n+\n+from __future__ import annotations\n+\n+import os\n+from pathlib import Path\n+\n+\n+def _load_env_file(path: Path) -> None:\n+    if not path.is_file():\n+        return\n+    for raw in path.read_text(encoding=\"utf-8\").splitlines():\n+        line = raw.strip()\n+        if not line or line.startswith(\"#\") or \"=\" not in line:\n+            continue\n+        name, value = line.split(\"=\", 1)\n+        os.environ.setdefault(name.strip(), value.strip())\n+\n+\n+_load_env_file(Path(__file__).resolve().parent.parent / \"config\" / \"app.env\")\n+\n+\n+def _int(name: str, default: int) -> int:\n+    return int(os.environ.get(name, default))\n+\n+\n+DATABASE_URL = os.environ.get(\"DATABASE_URL\", \"postgresql://ledger:ledger@postgres-db:5432/ledger\")\n+DB_POOL_MIN = _int(\"DB_POOL_MIN\", 2)\n+DB_POOL_MAX = _int(\"DB_POOL_MAX\", 10)\n+DB_POOL_TIMEOUT_S = float(os.environ.get(\"DB_POOL_TIMEOUT_S\", \"5\"))\n+\n+#: The house account: it funds opening balances and clears card payments until the\n+#: merchant is paid out. It is the only account allowed below zero.\n+HOUSE_ACCOUNT = 0\n+\n+SERVICE_NAME = os.environ.get(\"SERVICE_NAME\", \"ledger-api\")\n+GIT_SHA = os.environ.get(\"GIT_SHA\", \"dev\")\ndiff --git a/config/app.env b/config/app.env\nnew file mode 100644\nindex 0000000..54baede\n--- /dev/null\n+++ b/config/app.env\n@@ -0,0 +1,8 @@\n+# ledger-api runtime config. Ships with\n(cut short in this recording)",
+   "files": [
+    "Dockerfile",
+    "app/__init__.py",
+    "app/db.py",
+    "app/logging_setup.py",
+    "app/main.py",
+    "app/settings.py",
+    "config/app.env",
+    "pyproject.toml"
+   ],
+   "message": "Ledger api: initial import",
+   "service": "api",
+   "sha": "912716cec0505686f55dfceeec47d80d6a9134a4",
+   "short": "912716c"
+  }
+ },
+ "commands": [
+  {
+   "command": "devgrill status",
+   "ok": true,
+   "output": "SERVICE               STATE       HEALTH      RESTARTS\napi                   running     healthy     0\npostgres-db           running     healthy     0\npostgres-exporter     running     -           0\ntools                 running     -           0\nworker                running     -           0",
+   "service": "tools",
+   "title": "Every service"
+  },
+  {
+   "command": "psql -c \"SELECT id, owner, balance_cents FROM accounts WHERE kind = 'customer' AND balance_cents < 0 ORDER BY balance_cents LIMIT 6\"",
+   "ok": true,
+   "output": "id  |    owner     | balance_cents \n-----+--------------+---------------\n 618 | customer-618 |        -71105\n 770 | customer-770 |        -69824\n 227 | customer-227 |        -65750\n 945 | customer-945 |        -65482\n 819 | customer-819 |        -63366\n 441 | customer-441 |        -62008\n(6 rows)",
+   "service": "tools",
+   "title": "Wallets below zero"
+  },
+  {
+   "command": "psql -c \"SELECT t.id, t.amount_cents, t.created_at FROM transfers t WHERE t.from_account = (SELECT id FROM accounts WHERE kind = 'customer' AND balance_cents < 0 ORDER BY balance_cents LIMIT 1) ORDER BY t.id DESC LIMIT 6\"",
+   "ok": true,
+   "output": "id  | amount_cents |          created_at           \n------+--------------+-------------------------------\n 8290 |       124436 | 2026-11-04 16:27:20.152656+00\n 8289 |       124436 | 2026-11-04 16:27:20.152011+00\n 7137 |         1248 | 2026-11-04 16:27:07.687689+00\n 5891 |         3018 | 2026-11-04 16:26:57.752461+00\n 4421 |          554 | 2026-11-04 16:26:47.583216+00\n 4104 |          602 | 2026-11-04 16:26:45.427411+00\n(6 rows)",
+   "service": "tools",
+   "title": "One overdrawn wallet's latest payments"
+  }
+ ],
+ "db": {
+  "active": [
+   {
+    "blocked_by": [],
+    "pid": 78,
+    "query": "UPDATE accounts SET balance_cents = balance_cents - $1, updated_at = now() WHERE id = $2 RETURNING kind, balance_cents",
+    "seconds": 0.0,
+    "state": "idle in transaction",
+    "user": "ledger",
+    "wait_event": "ClientRead",
+    "wait_event_type": "Client"
+   },
+   {
+    "blocked_by": [
+     78
+    ],
+    "pid": 83,
+    "query": "UPDATE accounts SET balance_cents = balance_cents + $1, updated_at = now() WHERE id = $2",
+    "seconds": 0.0,
+    "state": "active",
+    "user": "ledger",
+    "wait_event": "transactionid",
+    "wait_event_type": "Lock"
+   }
+  ],
+  "connections": [
+   {
+    "n": 18,
+    "state": "idle"
+   },
+   {
+    "n": 2,
+    "state": "active"
+   },
+   {
+    "n": 1,
+    "state": "idle in transaction"
+   }
+  ],
+  "max_connections": 100,
+  "top": [
+   {
+    "calls": 13194,
+    "mean_ms": 0.0,
+    "query": "BEGIN",
+    "rows": 0,
+    "total_ms": 17.2
+   },
+   {
+    "calls": 11921,
+    "mean_ms": 0.0,
+    "query": "COMMIT",
+    "rows": 0,
+    "total_ms": 16.9
+   },
+   {
+    "calls": 6979,
+    "mean_ms": 0.07,
+    "query": "SELECT id, kind, balance_cents FROM accounts WHERE id = ANY($1)",
+    "rows": 13958,
+    "total_ms": 462.0
+   },
+   {
+    "calls": 5835,
+    "mean_ms": 0.07,
+    "query": "SELECT id, owner, kind, balance_cents, updated_at FROM accounts WHERE id = $1",
+    "rows": 5835,
+    "total_ms": 422.9
+   },
+   {
+    "calls": 4911,
+    "mean_ms": 0.21,
+    "query": "INSERT INTO entries (transfer_id, account_id, amount_cents) VALUES ($1, $2, $3), ($4, $5, $6)",
+    "rows": 9822,
+    "total_ms": 1042.3
+   },
+   {
+    "calls": 4910,
+    "mean_ms": 0.6,
+    "query": "UPDATE accounts SET balance_cents = balance_cents + $1, updated_at = now() WHERE id = $2",
+    "rows": 4910,
+    "total_ms": 2946.6
+   },
+   {
+    "calls": 4263,
+    "mean_ms": 0.06,
+    "query": "SELECT id FROM accounts WHERE id = $1 AND kind = $2",
+    "rows": 4263,
+    "total_ms": 260.3
+   },
+   {
+    "calls": 4252,
+    "mean_ms": 0.21,
+    "query": "INSERT INTO entries (transfer_id, account_id, amount_cents) VALUES ($1, $2, $3), ($4, $5, $6)",
+    "rows": 8504,
+    "total_ms": 881.2
+   },
+   {
+    "calls": 4251,
+    "mean_ms": 0.68,
+    "query": "UPDATE accounts SET balance_cents = balance_cents + $1, updated_at = now() WHERE id = $2",
+    "rows": 4251,
+    "total_ms": 2871.4
+   },
+   {
+    "calls": 3455,
+    "mean_ms": 0.15,
+    "query": "UPDATE settlements SET status = $3, transfer_id = $1, settled_at = now() WHERE id = $2",
+    "rows": 3455,
+    "total_ms": 522.7
+   }
+  ]
+ },
+ "db_rates": {
+  "BEGIN": 188.2,
+  "COMMIT": 168.5,
+  "INSERT INTO entries (transfer_id, account_id, amount_cents) VALUES ($1, $2, $3), ($4, $5, $6)": 60.1,
+  "SELECT id FROM accounts WHERE id = $1 AND kind = $2": 60.0,
+  "SELECT id, kind, balance_cents FROM accounts WHERE id = ANY($1)": 99.9,
+  "SELECT id, owner, kind, balance_cents, updated_at FROM accounts WHERE id = $1": 83.7,
+  "UPDATE accounts SET balance_cents = balance_cents + $1, updated_at = now() WHERE id = $2": 60.1,
+  "UPDATE settlements SET status = $3, transfer_id = $1, settled_at = now() WHERE id = $2": 47.7
+ },
+ "deploys": {
+  "api": {
+   "commits": [
+    {
+     "at": 1793795180,
+     "author": "deploy-bot",
+     "message": "perf: no row locks on transfers (lock waits at peak)",
+     "sha": "2ea7b47f1a37a52c997e40fc92889e13a9ecad7d",
+     "short": "2ea7b47"
+    },
+    {
+     "at": 1793723179,
+     "author": "deploy-bot",
+     "message": "payments: show the merchant name on receipts",
+     "sha": "6c027e52eab925d8e4ff93e55e5afbef74a56711",
+     "short": "6c027e5"
+    },
+    {
+     "at": 1793550379,
+     "author": "deploy-bot",
+     "message": "accounts: show the last 20 entries on the statement",
+     "sha": "5e7e7b51176e4d6555092b5f79b2affbb13c06a0",
+     "short": "5e7e7b5"
+    },
+    {
+     "at": 1790958379,
+     "author": "priya",
+     "message": "Ledger api: initial import",
+     "sha": "912716cec0505686f55dfceeec47d80d6a9134a4",
+     "short": "912716c"
+    }
+   ],
+   "live": "2ea7b47f1a37a52c997e40fc92889e13a9ecad7d",
+   "live_dirty": false,
+   "service": "api"
+  },
+  "worker": {
+   "commits": [
+    {
+     "at": 1790958380,
+     "author": "priya",
+     "message": "Ledger worker: initial import",
+     "sha": "659c7487ea0eef06f2b5c57f4783376b74b479f6",
+     "short": "659c748"
+    }
+   ],
+   "live": "659c7487ea0eef06f2b5c57f4783376b74b479f6",
+   "live_dirty": false,
+   "service": "worker"
+  }
+ },
+ "duration_s": 71.8,
+ "files": {
+  "api": {
+   "CHANGELOG.md": "- accounts: show the last 20 entries on the statement\n- payments: show the merchant name on receipts\n",
+   "Dockerfile": "# Ledger API image. The same source is a git repo in the tools container (/workspace/api);\n# `devgrill deploy` copies app/ and config/ from there into /srv/app and restarts this service.\nFROM python:3.14-slim\n\nENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1 \\\n    PROMETHEUS_MULTIPROC_DIR=/tmp/prometheus\nRUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*\n\nWORKDIR /srv/app\nCOPY pyproject.toml ./\nRUN pip install --quiet \\\n    \"fastapi==0.143.3\" \"uvicorn==0.54.0\" \"psycopg[binary,pool]==3.3.6\" \\\n    \"prometheus-client==0.26.0\"\nCOPY app ./app\nCOPY config ./config\n\nEXPOSE 8000\n# Metric files from a previous run would double-count after a restart: start clean.\nCMD [\"sh\", \"-c\", \"rm -rf \\\"$PROMETHEUS_MULTIPROC_DIR\\\" && mkdir -p \\\"$PROMETHEUS_MULTIPROC_DIR\\\" && exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4 --no-access-log\"]\n",
+   "app/__init__.py": "",
+   "app/db.py": "\"\"\"Postgres access through a connection pool (psycopg 3). Every movement of money is one\ntransaction: a transfer row, two entries that sum to zero, and both balances.\"\"\"\n\nfrom __future__ import annotations\n\nimport logging\nfrom collections.abc import Iterator\nfrom contextlib import contextmanager\nfrom typing import Any\n\nfrom prometheus_client import Counter\nfrom psycopg import Connection\nfrom psycopg.rows import dict_row\nfrom psycopg_pool import ConnectionPool, PoolTimeout\n\nfrom app import settings\nfrom app.logging_setup import fields\n\nlog = logging.getLogger(\"db\")\n\n#: Debits that left a customer's wallet below zero. Never meant to happen.\nOVERDRAFTS = Counter(\"ledger_overdrafts_total\", \"Debits that took a wallet below zero\")\n\n\nclass DatabaseBusy(Exception):\n    \"\"\"No connection became free within the pool timeout.\"\"\"\n\n\nclass InsufficientFunds(Exception):\n    \"\"\"The payer's balance doesn't cover the amount.\"\"\"\n\n\npool = ConnectionPool(\n    settings.DATABASE_URL,\n    min_size=settings.DB_POOL_MIN,\n    max_size=settings.DB_POOL_MAX,\n    timeout=settings.DB_POOL_TIMEOUT_S,\n    kwargs={\"row_factory\": dict_row},\n    open=False,\n)\n\n\n@contextmanager\ndef connection() -> Iterator[Connection[dict[str, Any]]]:\n    try:\n        with pool.connection() as conn:\n            yield conn\n    except PoolTimeout as exc:\n        log.error(\"pool exhausted\", extra=fields(pool_max=settings.DB_POOL_MAX))\n        raise DatabaseBusy() from exc\n\n\ndef account(account_id: int) -> dict[str, Any] | None:\n    with connection() as conn:\n        return conn.execute(\n            \"SELECT id, owner, kind, balance_cents, updated_at FROM accounts WHERE id = %s\",\n            (account_id,),\n        ).fetchone()\n\n\ndef _move(\n    conn: Connection[dict[str, Any]], from_id: int, to_id: int, amount: int, kind: str\n) -> dict[str, Any]:\n    \"\"\"Moves `amount` from one account to another inside the caller's transaction.\"\"\"\n    # No row locks: the debit below is a single atomic UPDATE, so the balance can't be\n    # corrupted, and transfers no longer queue behind each other at peak.\n    rows = conn.execute(\n        \"SELECT id, kind, balance_cents FROM accounts WHERE id = ANY(%s)\",\n        ([from_id, to_id],),\n    ).fetchall()\n    accounts = {row[\"id\"]: row for row in rows}\n    if from_id not in accounts or to_id not in accounts:\n        raise LookupError(\"account\")\n    payer = accounts[from_id]\n    if payer[\"kind\"] != \"house\" and payer[\"balance_cents\"] < amount:\n        raise InsufficientFunds()\n    transfer = conn.execute(\n        \"INSERT INTO transfers (from_account, to_account, amount_cents, kind)\"\n        \" VALUES (%s, %s, %s, %s) RETURNING id, from_account, to_account, amount_cents, kind,\"\n        \" created_at\",\n        (from_id, to_id, amount, kind),\n    ).fetchone()\n    assert transfer is not None\n    conn.execute(\n        \"INSERT INTO entries (transfer_id, account_id, amount_cents)\"\n        \" VALUES (%s, %s, %s), (%s, %s, %s)\",\n        (transfer[\"id\"], to_id, amount, transfer[\"id\"], from_id, -amount),\n    )\n    debited = conn.execute(\n        \"UPDATE accounts SET balance_cents = balance_cents - %s, updated_at = now() WHERE id = %s\"\n        \" RETURNING kind, balance_cents\",\n        (amount, from_id),\n    ).fetchone()\n    if debited and debited[\"kind\"] != \"house\" and debited[\"balance_cents\"] < 0:\n        OVERDRAFTS.inc()\n        log.error(\n            \"wallet overdrawn\",\n            extra=fields(account_id=from_id, balance_cents=debited[\"balance_cents\"]),\n        )\n    conn.execute(\n        \"UPDATE accounts SET balance_cents = balance_cents + %s, updated_at = now() WHERE id = %s\",\n        (amount, to_id),\n    )\n    return transfer\n\n\ndef transfer(from_id: int, to_id: int, amount: int) -> dict[str, Any]:\n    with connection() as conn, conn.transaction():\n        return _move(conn, from_id, to_id, amount, \"transfer\")\n\n\ndef pay(customer_id: int, merchant_id: int, amount: int) -> dict[str, Any]:\n    \"\"\"A card payment: the customer is debited now (into the house's clearing balance), and the\n    merchant is paid out later by the worker's settlement run.\"\"\"\n    with connection() as conn, conn.transaction():\n        merchant = conn.execute(\n            \"SELECT id FROM accounts WHERE id = %s AND kind = 'merchant'\", (merchant_id,)\n        ).fetchone()\n        if merchant is None:\n            raise LookupError(\"merchant\")\n        payment = _move(conn, customer_id, settings.HOUSE_ACCOUNT, amount, \"payment\")\n        conn.execute(\n            \"INSERT INTO settlements (merchant_id, amount_cents) VALUES (%s, %s)\",\n            (merchant_id, amount),\n        )\n        return payment\n\n\ndef healthy() -> bool:\n    try:\n        with connection() as conn:\n            conn.execute(\"SELECT 1\")\n        return True\n    except Exception:\n        return False\n",
+   "app/logging_setup.py": "\"\"\"JSON logs on stdout, one object per line, so the Logs panel can filter by field.\"\"\"\n\nfrom __future__ import annotations\n\nimport json\nimport logging\nimport sys\nimport time\nfrom typing import Any\n\nfrom app import settings\n\n\nclass JsonFormatter(logging.Formatter):\n    def format(self, record: logging.LogRecord) -> str:\n        entry: dict[str, Any] = {\n            \"ts\": time.strftime(\"%Y-%m-%dT%H:%M:%S\", time.gmtime(record.created))\n            + f\".{int(record.msecs):03d}Z\",\n            \"level\": record.levelname.lower(),\n            \"service\": settings.SERVICE_NAME,\n            \"logger\": record.name,\n            \"msg\": record.getMessage(),\n        }\n        for key, value in record.__dict__.items():\n            if key.startswith(\"x_\"):\n                entry[key[2:]] = value\n        if record.exc_info:\n            entry[\"exc\"] = self.formatException(record.exc_info)\n        return json.dumps(entry, separators=(\",\", \":\"))\n\n\ndef configure() -> None:\n    handler = logging.StreamHandler(sys.stdout)\n    handler.setFormatter(JsonFormatter())\n    root = logging.getLogger()\n    root.handlers[:] = [handler]\n    root.setLevel(logging.INFO)\n    # uvicorn's access log duplicates our request log; keep its errors only.\n    logging.getLogger(\"uvicorn.access\").disabled = True\n    logging.getLogger(\"uvicorn.error\").setLevel(logging.WARNING)\n\n\ndef fields(**values: Any) -> dict[str, Any]:\n    \"\"\"`log.info(\"cache miss\", extra=fields(product_id=42))` -> a `product_id` JSON field.\"\"\"\n    return {f\"x_{key}\": value for key, value in values.items()}\n",
+   "app/main.py": "\"\"\"Ledger payments API: wallets, transfers and card payments. Small on purpose: every line is\nsomething an on-call engineer may have to read at 2 a.m., and the money has to add up.\"\"\"\n\nfrom __future__ import annotations\n\nimport logging\nimport time\nfrom collections.abc import AsyncIterator\nfrom contextlib import asynccontextmanager\nfrom typing import Any\n\nfrom fastapi import FastAPI, HTTPException, Request, Response\nfrom fastapi.responses import JSONResponse\nfrom prometheus_client import (\n    CONTENT_TYPE_LATEST,\n    CollectorRegistry,\n    Counter,\n    Gauge,\n    Histogram,\n    generate_latest,\n    multiprocess,\n)\nfrom psycopg import errors as pg_errors\nfrom pydantic import BaseModel, Field\n\nfrom app import db, logging_setup, settings\nfrom app.logging_setup import fields\n\nlogging_setup.configure()\nlog = logging.getLogger(\"api\")\n\nREQUESTS = Counter(\"http_requests_total\", \"HTTP requests\", [\"method\", \"route\", \"status\"])\nLATENCY = Histogram(\n    \"http_request_duration_seconds\",\n    \"Request latency\",\n    [\"route\"],\n    buckets=(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10),\n)\n#: Money movements by outcome: ok, insufficient (refused), or failed.\nMOVEMENTS = Counter(\"ledger_movements_total\", \"Transfers and payments\", [\"kind\", \"result\"])\n# Four uvicorn processes share these through PROMETHEUS_MULTIPROC_DIR.\nDB_POOL_IN_USE = Gauge(\n    \"db_pool_in_use\", \"Connections checked out of the pool\", multiprocess_mode=\"livesum\"\n)\nBUILD = Gauge(\"build_info\", \"Build\", [\"sha\"], multiprocess_mode=\"max\")\n\n\n@asynccontextmanager\nasync def lifespan(app: FastAPI) -> AsyncIterator[None]:\n    BUILD.labels(sha=settings.GIT_SHA).set(1)\n    db.pool.open()\n    log.info(\"started\", extra=fields(sha=settings.GIT_SHA))\n    try:\n        yield\n    finally:\n        db.pool.close()\n\n\napp = FastAPI(title=\"Ledger\", lifespan=lifespan)\n\n\ndef _route_name(request: Request) -> str:\n    route = request.scope.get(\"route\")\n    return getattr(route, \"path\", \"unmatched\")\n\n\n@app.middleware(\"http\")\nasync def observe(request: Request, call_next: Any) -> Response:\n    started = time.perf_counter()\n    try:\n        response: Response = await call_next(request)\n    except Exception:\n        name = _route_name(request)\n        REQUESTS.labels(request.method, name, \"500\").inc()\n        LATENCY.labels(name).observe(time.perf_counter() - started)\n        log.exception(\"request failed\", extra=fields(route=name))\n        raise\n    name = _route_name(request)\n    elapsed = time.perf_counter() - started\n    stats = db.pool.get_stats()\n    DB_POOL_IN_USE.set(stats.get(\"pool_size\", 0) - stats.get(\"pool_available\", 0))\n    REQUESTS.labels(request.method, name, str(response.status_code)).inc()\n    LATENCY.labels(name).observe(elapsed)\n    if response.status_code >= 500 or elapsed > 1.0:\n        log.warning(\n            \"slow or failed request\",\n            extra=fields(route=name, status=response.status_code, ms=round(elapsed * 1000)),\n        )\n    return response\n\n\n@app.exception_handler(db.DatabaseBusy)\nasync def _busy(request: Request, exc: db.DatabaseBusy) -> JSONResponse:\n    return JSONResponse({\"error\": \"database busy, try again\"}, status_code=503)\n\n\n@app.exception_handler(pg_errors.DeadlockDetected)\nasync def _deadlock(request: Request, exc: pg_errors.DeadlockDetected) -> JSONResponse:\n    log.error(\"deadlock detected\", extra=fields(route=_route_name(request), error=str(exc).strip()))\n    return JSONResponse({\"error\": \"the transfer failed, try again\"}, status_code=503)\n\n\n@app.exception_handler(pg_errors.QueryCanceled)\nasync def _cancelled(request: Request, exc: pg_errors.QueryCanceled) -> JSONResponse:\n    log.error(\"query cancelled\", extra=fields(route=_route_name(request), error=str(exc).strip()))\n    return JSONResponse({\"error\": \"the database took too long\"}, status_code=503)\n\n\n@app.get(\"/healthz\")\ndef healthz() -> dict[str, Any]:\n    return {\"status\": \"ok\", \"sha\": settings.GIT_SHA}\n\n\n@app.get(\"/readyz\")\ndef readyz() -> JSONResponse:\n    ok = db.healthy()\n    return JSONResponse({\"database\": ok}, status_code=200 if ok else 503)\n\n\n@app.get(\"/metrics\")\ndef metrics() -> Response:\n    registry = CollectorRegistry()\n    multiprocess.MultiProcessCollector(registry)\n    return Response(generate_latest(registry), media_type=CONTENT_TYPE_LATEST)\n\n\n@app.get(\"/accounts/{account_id}\")\ndef get_account(account_id: int) -> dict[str, Any]:\n    account = db.account(account_id)\n    if account is None:\n        raise HTTPException(404, \"no such account\")\n    return account\n\n\nclass TransferIn(BaseModel):\n    from_account: int = Field(ge=0)\n    to_account: int = Field(ge=0)\n    amount_cents: int = Field(gt=0, le=10_000_000)\n\n\n@app.post(\"/transfers\", status_code=201)\ndef create_transfer(body: TransferIn) -> dict[str, Any]:\n    if body.from_account == body.to_account:\n        raise HTTPException(422, \"an account can't pay itself\")\n    return _record(\n        \"transfer\", lambda: db.transfer(body.from_account, body.to_account, body.amount_cents)\n    )\n\n\nclass PaymentIn(BaseModel):\n    account_id: int = Field(ge=1)\n    merchant_id: int = Field(ge=1)\n    amount_cents: int = Field(gt=0, le=10_000_000)\n\n\n@app.post(\"/payments\", status_code=201)\ndef create_payment(body: PaymentIn) -> dict[str, Any]:\n    return _record(\"payment\", lambda: db.pay(body.account_id, body.merchant_id, body.amount_cents))\n\n\ndef _record(kind: str, move: Any) -> dict[str, Any]:\n    try:\n        result: dict[str, Any] = move()\n    except LookupError:\n        MOVEMENTS.labels(kind, \"refused\").inc()\n        raise HTTPException(404, \"no such account\") from None\n    except db.InsufficientFunds:\n        MOVEMENTS.labels(kind, \"insufficient\").inc()\n        raise HTTPException(409, \"insufficient funds\") from None\n    except Exception:\n        MOVEMENTS.labels(kind, \"failed\").inc()\n        raise\n    MOVEMENTS.labels(kind, \"ok\").inc()\n    return result\n",
+   "app/settings.py": "\"\"\"Configuration: connection strings from the environment, tunables from config/app.env.\n\nconfig/app.env is part of the repo and ships with every deploy, so a config change is a\ncommit you can find in `git log`, revert, and redeploy. The environment wins over the file.\n\"\"\"\n\nfrom __future__ import annotations\n\nimport os\nfrom pathlib import Path\n\n\ndef _load_env_file(path: Path) -> None:\n    if not path.is_file():\n        return\n    for raw in path.read_text(encoding=\"utf-8\").splitlines():\n        line = raw.strip()\n        if not line or line.startswith(\"#\") or \"=\" not in line:\n            continue\n        name, value = line.split(\"=\", 1)\n        os.environ.setdefault(name.strip(), value.strip())\n\n\n_load_env_file(Path(__file__).resolve().parent.parent / \"config\" / \"app.env\")\n\n\ndef _int(name: str, default: int) -> int:\n    return int(os.environ.get(name, default))\n\n\nDATABASE_URL = os.environ.get(\"DATABASE_URL\", \"postgresql://ledger:ledger@postgres-db:5432/ledger\")\nDB_POOL_MIN = _int(\"DB_POOL_MIN\", 2)\nDB_POOL_MAX = _int(\"DB_POOL_MAX\", 10)\nDB_POOL_TIMEOUT_S = float(os.environ.get(\"DB_POOL_TIMEOUT_S\", \"5\"))\n\n#: The house account: it funds opening balances and clears card payments until the\n#: merchant is paid out. It is the only account allowed below zero.\nHOUSE_ACCOUNT = 0\n\nSERVICE_NAME = os.environ.get(\"SERVICE_NAME\", \"ledger-api\")\nGIT_SHA = os.environ.get(\"GIT_SHA\", \"dev\")\n",
+   "config/app.env": "# ledger-api runtime config. Ships with every deploy (`devgrill deploy`).\n\nDATABASE_URL=postgresql://ledger:ledger@postgres-db:5432/ledger\n# Postgres connections per API process (4 processes share the database's 100 slots).\nDB_POOL_MIN=2\nDB_POOL_MAX=10\n# Seconds a request waits for a free connection before failing with 503.\nDB_POOL_TIMEOUT_S=5\n",
+   "pyproject.toml": "[project]\nname = \"ledger-api\"\nversion = \"1.0.0\"\ndescription = \"Ledger payments API\"\nrequires-python = \">=3.14\"\ndependencies = [\n    \"fastapi==0.143.3\",\n    \"uvicorn==0.54.0\",\n    \"psycopg[binary,pool]==3.3.6\",\n    \"prometheus-client==0.26.0\",\n]\n"
+  },
+  "worker": {
+   "Dockerfile": "FROM python:3.14-slim\nENV PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1\nRUN pip install --quiet \"psycopg[binary]==3.3.6\" \"prometheus-client==0.26.0\"\nWORKDIR /srv/worker\nCOPY worker.py ./\nCOPY config ./config\nEXPOSE 9100\nCMD [\"python\", \"worker.py\"]\n",
+   "config/worker.env": "# ledger worker runtime config. Ships with every deploy (`devgrill deploy worker`).\n\n# Settlement consumers (threads), and how many settlements each pays out per transaction.\nCONSUMERS=1\nBATCH=20\n# Seconds a consumer waits when there is nothing to settle.\nPOLL_S=0.2\n# Seconds between audits of the books.\nAUDIT_EVERY_S=5\n",
+   "worker.py": "\"\"\"Ledger worker: pays merchants out for card payments, and audits the books.\n\nSettlement: each card payment leaves a pending settlement. Consumers take them in batches\n(FOR UPDATE SKIP LOCKED, so two consumers never take the same one) and pay each one from the\nhouse's clearing balance to the merchant: a transfer, two entries and both balances, in the\nbatch's transaction.\n\nAudit: every AUDIT_EVERY_S seconds the worker checks the books in one snapshot: customer\naccounts below zero, accounts whose balance isn't the sum of their entries, and whether all\nbalances still add up to zero. Logs JSON like the API; metrics on :9100. Tunables live in\nconfig/worker.env, deployed with the code.\n\"\"\"\n\nfrom __future__ import annotations\n\nimport json\nimport logging\nimport os\nimport signal\nimport sys\nimport threading\nimport time\nfrom pathlib import Path\nfrom typing import Any\n\nimport psycopg\nfrom prometheus_client import Counter, Gauge, start_http_server\n\n\ndef _load_env_file(path: Path) -> None:\n    \"\"\"config/worker.env: KEY=value lines; the process environment wins.\"\"\"\n    if not path.is_file():\n        return\n    for raw in path.read_text(encoding=\"utf-8\").splitlines():\n        line = raw.strip()\n        if line and not line.startswith(\"#\") and \"=\" in line:\n            name, value = line.split(\"=\", 1)\n            os.environ.setdefault(name.strip(), value.strip())\n\n\n_load_env_file(Path(__file__).resolve().parent / \"config\" / \"worker.env\")\n\nDATABASE_URL = os.environ.get(\"DATABASE_URL\", \"postgresql://ledger:ledger@postgres-db:5432/ledger\")\nHOUSE_ACCOUNT = 0\n#: Settlement consumers (threads), and settlements each takes per transaction.\nCONSUMERS = int(os.environ.get(\"CONSUMERS\", \"1\"))\nBATCH = int(os.environ.get(\"BATCH\", \"20\"))\nPOLL_S = float(os.environ.get(\"POLL_S\", \"0.2\"))\nAUDIT_EVERY_S = float(os.environ.get(\"AUDIT_EVERY_S\", \"5\"))\n\nSETTLED = Counter(\"settlements_processed_total\", \"Settlements paid out\", [\"result\"])\nPENDING = Gauge(\"settlements_pending\", \"Settlements waiting to be paid out\")\nOLDEST = Gauge(\"settlements_oldest_seconds\", \"Age of the oldest pending settlement\")\nNEGATIVE = Gauge(\"ledger_negative_balances\", \"Customer accounts below zero\")\nACCOUNTS_OFF = Gauge(\"ledger_accounts_off\", \"Accounts whose balance isn't the sum of entries\")\nBOOKS_OFF = Gauge(\"ledger_books_off_cents\", \"How far all balances are from adding up to zero\")\n\n\nclass JsonFormatter(logging.Formatter):\n    def format(self, record: logging.LogRecord) -> str:\n        entry: dict[str, Any] = {\n            \"ts\": time.strftime(\"%Y-%m-%dT%H:%M:%S\", time.gmtime(record.created))\n            + f\".{int(record.msecs):03d}Z\",\n            \"level\": record.levelname.lower(),\n            \"service\": \"worker\",\n            \"msg\": record.getMessage(),\n        }\n        entry.update({k[2:]: v for k, v in record.__dict__.items() if k.startswith(\"x_\")})\n        if record.exc_info:\n            entry[\"exc\"] = self.formatException(record.exc_info)\n        return json.dumps(entry, separators=(\",\", \":\"))\n\n\nhandler = logging.StreamHandler(sys.stdout)\nhandler.setFormatter(JsonFormatter())\nlogging.basicConfig(level=logging.INFO, handlers=[handler])\nlog = logging.getLogger(\"worker\")\n\nrunning = True\n\n\ndef stop(*_: Any) -> None:\n    global running\n    running = False\n\n\ndef pay_out(conn: psycopg.Connection[Any], settlement: tuple[int, int, int]) -> None:\n    \"\"\"Moves one settlement's amount from the house's clearing balance to the merchant (the\n    house's balance is debited once per batch, by settle_batch).\"\"\"\n    settlement_id, merchant_id, amount = settlement\n    row = conn.execute(\n        \"INSERT INTO transfers (from_account, to_account, amount_cents, kind)\"\n        \" VALUES (%s, %s, %s, 'settlement') RETURNING id\",\n        (HOUSE_ACCOUNT, merchant_id, amount),\n    ).fetchone()\n    assert row is not None\n    transfer_id = row[0]\n    conn.execute(\n        \"INSERT INTO entries (transfer_id, account_id, amount_cents)\"\n        \" VALUES (%s, %s, %s), (%s, %s, %s)\",\n        (transfer_id, merchant_id, amount, transfer_id, HOUSE_ACCOUNT, -amount),\n    )\n    conn.execute(\n        \"UPDATE accounts SET balance_cents = balance_cents + %s, updated_at = now() WHERE id = %s\",\n        (amount, merchant_id),\n    )\n    conn.execute(\n        \"UPDATE settlements SET status = 'settled', transfer_id = %s, settled_at = now()\"\n        \" WHERE id = %s\",\n        (transfer_id, settlement_id),\n    )\n\n\ndef settle_batch(conn: psycopg.Connection[Any]) -> int:\n    \"\"\"Pays out up to BATCH pending settlements in one transaction; returns how many.\"\"\"\n    with conn.transaction():\n        batch = conn.execute(\n            \"SELECT id, merchant_id, amount_cents FROM settlements WHERE status = 'pending'\"\n            \" ORDER BY id LIMIT %s FOR UPDATE SKIP LOCKED\",\n            (BATCH,),\n        ).fetchall()\n        # Credit merchants in id order, as transfers lock accounts: a batch and a transfer\n        # between two merchants never take the same two locks in opposite orders.\n        batch.sort(key=lambda settlement: settlement[1])\n        for settlement in batch:\n            pay_out(conn, settlement)\n        if batch:\n            # Every payment locks the house's row too: debit it once, last, so the batch\n            # holds that lock for a moment instead of for the whole batch.\n            conn.execute(\n                \"UPDATE accounts SET balance_cents = balance_cents - %s, updated_at = now()\"\n                \" WHERE id = %s\",\n                (sum(settlement[2] for settlement in batch), HOUSE_ACCOUNT),\n            )\n    SETTLED.labels(\"paid\").inc(len(batch))\n    return len(batch)\n\n\ndef consume() -> None:\n    while running:\n        try:\n            with psycopg.connect(DATABASE_URL, autocommit=True) as conn:\n                while running:\n                    if settle_batch(conn) < BATCH:\n                        time.sleep(POLL_S)\n        except psycopg.Error as exc:\n            log.error(\"settlement failed, retrying\", extra={\"x_error\": str(exc).strip()[:300]})\n            SETTLED.labels(\"failed\").inc()\n            time.sleep(1)\n\n\nAUDIT_SQL = \"\"\"\nSELECT\n  (SELECT count(*) FROM accounts WHERE kind <> 'house' AND balance_cents < 0),\n  (SELECT count(*) FROM accounts a\n     LEFT JOIN (SELECT account_id, sum(amount_cents) AS total FROM entries GROUP BY account_id) e\n       ON e.account_id = a.id\n    WHERE a.balance_cents <> coalesce(e.total, 0)),\n  (SELECT coalesce(sum(balance_cents), 0) FROM accounts),\n  (SELECT count(*) FROM settlements WHERE status = 'pending'),\n  (SELECT coalesce(extract(epoch FROM now() - min(created_at)), 0) FROM settlements\n    WHERE status = 'pending')\n\"\"\"\n\n\ndef audit() -> None:\n    while running:\n        try:\n            with psycopg.connect(DATABASE_URL, autocommit=True) as conn:\n                while running:\n                    row = conn.execute(AUDIT_SQL).fetchone()\n                    assert row is not None\n                    negative, off, books, pending, oldest = row\n                    NEGATIVE.set(negative)\n                    ACCOUNTS_OFF.set(off)\n                    BOOKS_OFF.set(abs(books))\n                    PENDING.set(pending)\n                    OLDEST.set(float(oldest))\n                    if negative or off or books:\n                        log.error(\n                            \"books don't balance\",\n                            extra={\n                                \"x_negative_accounts\": negative,\n                                \"x_accounts_off\": off,\n                                \"x_books_off_cents\": books,\n                            },\n                        )\n                    time.sleep(AUDIT_EVERY_S)\n        except psycopg.Error as exc:\n            log.error(\"audit failed, retrying\", extra={\"x_error\": str(exc).strip()[:300]})\n            time.sleep(2)\n\n\ndef main() -> None:\n    signal.signal(signal.SIGTERM, stop)\n    signal.signal(signal.SIGINT, stop)\n    start_http_server(9100)\n    log.info(\"started\", extra={\"x_consumers\": CONSUMERS, \"x_batch\": BATCH})\n    threads = [threading.Thread(target=consume, daemon=True) for _ in range(CONSUMERS)]\n    threads.append(threading.Thread(target=audit, daemon=True))\n    for thread in threads:\n        thread.start()\n    while running:\n        time.sleep(0.5)\n    # A deploy stops the worker: each consumer finishes its batch before the process exits.\n    for thread in threads:\n        thread.join(timeout=4)\n\n\nif __name__ == \"__main__\":\n    main()\n"
+  }
+ },
+ "logs": [
+  {
+   "line": "",
+   "service": "postgres-db",
+   "t": -13.788
+  },
+  {
+   "line": "PostgreSQL Database directory appears to contain a database; Skipping initialization",
+   "service": "postgres-db",
+   "t": -13.788
+  },
+  {
+   "line": "",
+   "service": "postgres-db",
+   "t": -13.788
+  },
+  {
+   "line": "2026-11-04 16:26:12.659 UTC [1] LOG:  starting PostgreSQL 18.6 on x86_64-pc-linux-musl, compiled by gcc (Alpine 15.2.0) 15.2.0, 64-bit",
+   "service": "postgres-db",
+   "t": -13.76
+  },
+  {
+   "line": "2026-11-04 16:26:12.659 UTC [1] LOG:  listening on IPv4 address \"0.0.0.0\", port 5432",
+   "service": "postgres-db",
+   "t": -13.76
+  },
+  {
+   "line": "2026-11-04 16:26:12.659 UTC [1] LOG:  listening on IPv6 address \"::\", port 5432",
+   "service": "postgres-db",
+   "t": -13.76
+  },
+  {
+   "line": "2026-11-04 16:26:12.663 UTC [1] LOG:  listening on Unix socket \"/var/run/postgresql/.s.PGSQL.5432\"",
+   "service": "postgres-db",
+   "t": -13.756
+  },
+  {
+   "line": "2026-11-04 16:26:12.669 UTC [32] LOG:  database system was shut down at 2026-11-03 17:26:54 UTC",
+   "service": "postgres-db",
+   "t": -13.749
+  },
+  {
+   "line": "2026-11-04 16:26:12.694 UTC [1] LOG:  database system is ready to accept connections",
+   "service": "postgres-db",
+   "t": -13.725
+  },
+  {
+   "line": "time=2026-11-04T16:26:14.674Z level=WARN source=main.go:81 msg=\"Error loading config\" err=\"error opening config file \\\"postgres_exporter.yml\\\": open postgres_exporter.yml: no such file or directory\"",
+   "service": "postgres-exporter",
+   "t": -11.745
+  },
+  {
+   "line": "time=2026-11-04T16:26:14.674Z level=INFO source=main.go:91 msg=\"Excluded databases\" databases=[]",
+   "service": "postgres-exporter",
+   "t": -11.745
+  },
+  {
+   "line": "time=2026-11-04T16:26:14.683Z level=INFO source=tls_config.go:372 msg=\"Listening on\" address=[::]:9187",
+   "service": "postgres-exporter",
+   "t": -11.735
+  },
+  {
+   "line": "time=2026-11-04T16:26:14.684Z level=INFO source=tls_config.go:375 msg=\"TLS is disabled.\" http2=false address=[::]:9187",
+   "service": "postgres-exporter",
+   "t": -11.735
+  },
+  {
+   "line": "INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)",
+   "service": "api",
+   "t": -10.927
+  },
+  {
+   "line": "INFO:     Started parent process [1]",
+   "service": "api",
+   "t": -10.927
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:15.671Z\",\"level\":\"info\",\"service\":\"worker\",\"msg\":\"started\",\"consumers\":1,\"batch\":20}",
+   "service": "worker",
+   "t": -10.747
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:19.039Z\",\"level\":\"info\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"started\",\"sha\":\"dev\"}",
+   "service": "api",
+   "t": -7.38
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:19.124Z\",\"level\":\"info\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"started\",\"sha\":\"dev\"}",
+   "service": "api",
+   "t": -7.295
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:19.138Z\",\"level\":\"info\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"started\",\"sha\":\"dev\"}",
+   "service": "api",
+   "t": -7.28
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:19.221Z\",\"level\":\"info\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"started\",\"sha\":\"dev\"}",
+   "service": "api",
+   "t": -7.197
+  },
+  {
+   "line": "INFO:     Received SIGTERM, exiting.",
+   "service": "api",
+   "t": -5.289
+  },
+  {
+   "line": "INFO:     Terminated child process [10]",
+   "service": "api",
+   "t": -5.288
+  },
+  {
+   "line": "INFO:     Terminated child process [11]",
+   "service": "api",
+   "t": -5.288
+  },
+  {
+   "line": "INFO:     Terminated child process [12]",
+   "service": "api",
+   "t": -5.288
+  },
+  {
+   "line": "INFO:     Terminated child process [13]",
+   "service": "api",
+   "t": -5.288
+  },
+  {
+   "line": "INFO:     Waiting for child process [10]",
+   "service": "api",
+   "t": -5.288
+  },
+  {
+   "line": "INFO:     Waiting for child process [11]",
+   "service": "api",
+   "t": -5.178
+  },
+  {
+   "line": "INFO:     Waiting for child process [12]",
+   "service": "api",
+   "t": -5.164
+  },
+  {
+   "line": "INFO:     Waiting for child process [13]",
+   "service": "api",
+   "t": -5.164
+  },
+  {
+   "line": "INFO:     Stopping parent process [1]",
+   "service": "api",
+   "t": -5.163
+  },
+  {
+   "line": "INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)",
+   "service": "api",
+   "t": -4.265
+  },
+  {
+   "line": "INFO:     Started parent process [1]",
+   "service": "api",
+   "t": -4.265
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:25.902Z\",\"level\":\"info\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"started\",\"sha\":\"dev\"}",
+   "service": "api",
+   "t": -0.517
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:25.907Z\",\"level\":\"info\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"started\",\"sha\":\"dev\"}",
+   "service": "api",
+   "t": -0.511
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:25.920Z\",\"level\":\"info\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"started\",\"sha\":\"dev\"}",
+   "service": "api",
+   "t": -0.498
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:25.981Z\",\"level\":\"info\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"started\",\"sha\":\"dev\"}",
+   "service": "api",
+   "t": -0.437
+  },
+  {
+   "line": "time=2026-11-04T16:26:26.541Z level=INFO source=server.go:96 msg=\"Established new database connection\" fingerprint=postgres-db:5432",
+   "service": "postgres-exporter",
+   "t": 0.123
+  },
+  {
+   "line": "time=2026-11-04T16:26:26.555Z level=INFO source=postgres_exporter.go:537 msg=\"Semantic version changed\" server=postgres-db:5432 from=0.0.0 to=18.6.0",
+   "service": "postgres-exporter",
+   "t": 0.136
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:26.565Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":783,\"balance_cents\":-20229}",
+   "service": "api",
+   "t": 0.146
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:26.645Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":915,\"balance_cents\":-38353}",
+   "service": "api",
+   "t": 0.23
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:26.740Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":470,\"balance_cents\":-28772}",
+   "service": "api",
+   "t": 0.321
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:26.743Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":414,\"balance_cents\":-51386}",
+   "service": "api",
+   "t": 0.325
+  },
+  {
+   "line": "2026-11-04 16:26:26.746 UTC [79] ERROR:  permission denied for function pg_ls_waldir",
+   "service": "postgres-db",
+   "t": 0.327
+  },
+  {
+   "line": "2026-11-04 16:26:26.746 UTC [79] STATEMENT:  ",
+   "service": "postgres-db",
+   "t": 0.327
+  },
+  {
+   "line": "\t\t\tSELECT",
+   "service": "postgres-db",
+   "t": 0.327
+  },
+  {
+   "line": "\t\t\t\tCOUNT(*) AS segments,",
+   "service": "postgres-db",
+   "t": 0.327
+  },
+  {
+   "line": "\t\t\t\tSUM(size) AS size",
+   "service": "postgres-db",
+   "t": 0.327
+  },
+  {
+   "line": "\t\t\tFROM pg_ls_waldir()",
+   "service": "postgres-db",
+   "t": 0.327
+  },
+  {
+   "line": "\t\t\tWHERE name ~ '^[0-9A-F]{24}$'",
+   "service": "postgres-db",
+   "t": 0.327
+  },
+  {
+   "line": "time=2026-11-04T16:26:26.746Z level=ERROR source=collector.go:227 msg=\"collector failed\" name=wal duration_seconds=0.183303968 err=\"pq: permission denied for function pg_ls_waldir\"",
+   "service": "postgres-exporter",
+   "t": 0.327
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:26.853Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":114,\"balance_cents\":-21106}",
+   "service": "api",
+   "t": 0.434
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:26.857Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":792,\"balance_cents\":-48738}",
+   "service": "api",
+   "t": 0.439
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:26.871Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":146,\"balance_cents\":-42468}",
+   "service": "api",
+   "t": 0.453
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:26.939Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":118,\"balance_cents\":-33776}",
+   "service": "api",
+   "t": 0.52
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:26.946Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":556,\"balance_cents\":-21184}",
+   "service": "api",
+   "t": 0.528
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:26.966Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":581,\"balance_cents\":-20375}",
+   "service": "api",
+   "t": 0.548
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:26.978Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":881,\"balance_cents\":-50655}",
+   "service": "api",
+   "t": 0.559
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:26.997Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":322,\"balance_cents\":-39966}",
+   "service": "api",
+   "t": 0.579
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:27.000Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":12,\"balance_cents\":-58010}",
+   "service": "api",
+   "t": 0.581
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:27.057Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":324,\"balance_cents\":-46302}",
+   "service": "api",
+   "t": 0.639
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:27.111Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":369,\"balance_cents\":-28843}",
+   "service": "api",
+   "t": 0.692
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:27.118Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":964,\"balance_cents\":-33566}",
+   "service": "api",
+   "t": 0.7
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:27.135Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":616,\"balance_cents\":-51240}",
+   "service": "api",
+   "t": 0.717
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:27.143Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":187,\"balance_cents\":-52341}",
+   "service": "api",
+   "t": 0.724
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:27.187Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":848,\"balance_cents\":-26124}",
+   "service": "api",
+   "t": 0.768
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:27.213Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":384,\"balance_cents\":-37112}",
+   "service": "api",
+   "t": 0.794
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:27.246Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":138,\"balance_cents\":-57128}",
+   "service": "api",
+   "t": 0.827
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:27.270Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":779,\"balance_cents\":-47559}",
+   "service": "api",
+   "t": 0.852
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:27.292Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":177,\"balance_cents\":-20665}",
+   "service": "api",
+   "t": 0.874
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:27.462Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":830,\"balance_cents\":-49108}",
+   "service": "api",
+   "t": 1.043
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:27.516Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":866,\"balance_cents\":-43140}",
+   "service": "api",
+   "t": 1.097
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:27.593Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":156,\"balance_cents\":-34144}",
+   "service": "api",
+   "t": 1.174
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:27.613Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":834,\"balance_cents\":-21778}",
+   "service": "api",
+   "t": 1.194
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:27.710Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":739,\"balance_cents\":-40855}",
+   "service": "api",
+   "t": 1.292
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:27.730Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":312,\"balance_cents\":-48290}",
+   "service": "api",
+   "t": 1.312
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:27.769Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":622,\"balance_cents\":-30246}",
+   "service": "api",
+   "t": 1.35
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:27.792Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":420,\"balance_cents\":-30392}",
+   "service": "api",
+   "t": 1.373
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:27.809Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":637,\"balance_cents\":-37761}",
+   "service": "api",
+   "t": 1.39
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:27.833Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":402,\"balance_cents\":-53374}",
+   "service": "api",
+   "t": 1.414
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:27.886Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":855,\"balance_cents\":-48297}",
+   "service": "api",
+   "t": 1.468
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:27.904Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":930,\"balance_cents\":-45868}",
+   "service": "api",
+   "t": 1.485
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:27.964Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":406,\"balance_cents\":-26044}",
+   "service": "api",
+   "t": 1.545
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:28.000Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":533,\"balance_cents\":-28329}",
+   "service": "api",
+   "t": 1.581
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:28.077Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":164,\"balance_cents\":-59486}",
+   "service": "api",
+   "t": 1.658
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:28.086Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":613,\"balance_cents\":-41737}",
+   "service": "api",
+   "t": 1.668
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:28.103Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":218,\"balance_cents\":-30536}",
+   "service": "api",
+   "t": 1.684
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:28.140Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":956,\"balance_cents\":-48224}",
+   "service": "api",
+   "t": 1.722
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:28.170Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":44,\"balance_cents\":-39374}",
+   "service": "api",
+   "t": 1.751
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:28.251Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":900,\"balance_cents\":-30840}",
+   "service": "api",
+   "t": 1.833
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:28.310Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":153,\"balance_cents\":-24641}",
+   "service": "api",
+   "t": 1.891
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:28.324Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":350,\"balance_cents\":-48660}",
+   "service": "api",
+   "t": 1.905
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:28.325Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":216,\"balance_cents\":-24200}",
+   "service": "api",
+   "t": 1.907
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:28.356Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":812,\"balance_cents\":-32090}",
+   "service": "api",
+   "t": 1.937
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:28.359Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":841,\"balance_cents\":-43417}",
+   "service": "api",
+   "t": 1.94
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:28.397Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":302,\"balance_cents\":-56614}",
+   "service": "api",
+   "t": 1.978
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:28.450Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":868,\"balance_cents\":-49476}",
+   "service": "api",
+   "t": 2.031
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:28.498Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":289,\"balance_cents\":-55435}",
+   "service": "api",
+   "t": 2.079
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:28.589Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":225,\"balance_cents\":-52709}",
+   "service": "api",
+   "t": 2.17
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:28.607Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":96,\"balance_cents\":-44088}",
+   "service": "api",
+   "t": 2.189
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:28.618Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":272,\"balance_cents\":-41586}",
+   "service": "api",
+   "t": 2.199
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:28.709Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":221,\"balance_cents\":-40039}",
+   "service": "api",
+   "t": 2.29
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:28.721Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":436,\"balance_cents\":-41072}",
+   "service": "api",
+   "t": 2.302
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:28.731Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":588,\"balance_cents\":-42548}",
+   "service": "api",
+   "t": 2.312
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:28.845Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":508,\"balance_cents\":-29140}",
+   "service": "api",
+   "t": 2.427
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:28.855Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":211,\"balance_cents\":-48363}",
+   "service": "api",
+   "t": 2.436
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:28.903Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":262,\"balance_cents\":-48781}",
+   "service": "api",
+   "t": 2.484
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:28.959Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":596,\"balance_cents\":-27888}",
+   "service": "api",
+   "t": 2.541
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:29.022Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":672,\"balance_cents\":-28626}",
+   "service": "api",
+   "t": 2.603
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:29.077Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":102,\"balance_cents\":-20737}",
+   "service": "api",
+   "t": 2.658
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:29.134Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":899,\"balance_cents\":-27671}",
+   "service": "api",
+   "t": 2.715
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:29.144Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":304,\"balance_cents\":-22950}",
+   "service": "api",
+   "t": 2.725
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:29.245Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":160,\"balance_cents\":-46816}",
+   "service": "api",
+   "t": 2.826
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:29.320Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":501,\"balance_cents\":-46967}",
+   "service": "api",
+   "t": 2.901
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:29.432Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":276,\"balance_cents\":-54256}",
+   "service": "api",
+   "t": 3.013
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:29.463Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":399,\"balance_cents\":-43871}",
+   "service": "api",
+   "t": 3.045
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:29.540Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":407,\"balance_cents\":-29213}",
+   "service": "api",
+   "t": 3.121
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:29.584Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":663,\"balance_cents\":-40117}",
+   "service": "api",
+   "t": 3.165
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:29.631Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":129,\"balance_cents\":-28619}",
+   "service": "api",
+   "t": 3.212
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:29.644Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":71,\"balance_cents\":-43836}",
+   "service": "api",
+   "t": 3.225
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:29.648Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":277,\"balance_cents\":-56256}",
+   "service": "api",
+   "t": 3.23
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:29.662Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":91,\"balance_cents\":-28251}",
+   "service": "api",
+   "t": 3.244
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:29.747Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":180,\"balance_cents\":-30168}",
+   "service": "api",
+   "t": 3.328
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:29.753Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":403,\"balance_cents\":-56541}",
+   "service": "api",
+   "t": 3.335
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:29.845Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":903,\"balance_cents\":-40341}",
+   "service": "api",
+   "t": 3.426
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:29.861Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":396,\"balance_cents\":-34368}",
+   "service": "api",
+   "t": 3.443
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:29.872Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":583,\"balance_cents\":-26709}",
+   "service": "api",
+   "t": 3.453
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:29.877Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":894,\"balance_cents\":-51834}",
+   "service": "api",
+   "t": 3.458
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:29.907Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":874,\"balance_cents\":-26646}",
+   "service": "api",
+   "t": 3.489
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:29.920Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":217,\"balance_cents\":-27369}",
+   "service": "api",
+   "t": 3.501
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:30.040Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":483,\"balance_cents\":-29949}",
+   "service": "api",
+   "t": 3.621
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:30.047Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":244,\"balance_cents\":-32894}",
+   "service": "api",
+   "t": 3.628
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:30.052Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":529,\"balance_cents\":-55659}",
+   "service": "api",
+   "t": 3.634
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:30.091Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":209,\"balance_cents\":-42027}",
+   "service": "api",
+   "t": 3.672
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:30.146Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":836,\"balance_cents\":-28112}",
+   "service": "api",
+   "t": 3.728
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:30.156Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":199,\"balance_cents\":-50351}",
+   "service": "api",
+   "t": 3.737
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:30.165Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":292,\"balance_cents\":-24938}",
+   "service": "api",
+   "t": 3.746
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:30.194Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":400,\"balance_cents\":-47040}",
+   "service": "api",
+   "t": 3.775
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:30.215Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":713,\"balance_cents\":-38497}",
+   "service": "api",
+   "t": 3.796
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:30.221Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":687,\"balance_cents\":-35192}",
+   "service": "api",
+   "t": 3.802
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:30.257Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":910,\"balance_cents\":-21968}",
+   "service": "api",
+   "t": 3.838
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:30.321Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":729,\"balance_cents\":-49179}",
+   "service": "api",
+   "t": 3.902
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:30.335Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":13,\"balance_cents\":-29541}",
+   "service": "api",
+   "t": 3.916
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:30.379Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":949,\"balance_cents\":-26051}",
+   "service": "api",
+   "t": 3.96
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:30.412Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":60,\"balance_cents\":-50056}",
+   "service": "api",
+   "t": 3.993
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:30.439Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":165,\"balance_cents\":-23515}",
+   "service": "api",
+   "t": 4.02
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:30.495Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":561,\"balance_cents\":-37023}",
+   "service": "api",
+   "t": 4.076
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:30.503Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":724,\"balance_cents\":-32612}",
+   "service": "api",
+   "t": 4.084
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:30.505Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":390,\"balance_cents\":-55364}",
+   "service": "api",
+   "t": 4.087
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:30.526Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":547,\"balance_cents\":-32677}",
+   "service": "api",
+   "t": 4.107
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:30.559Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":220,\"balance_cents\":-37392}",
+   "service": "api",
+   "t": 4.14
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:30.567Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":645,\"balance_cents\":-23101}",
+   "service": "api",
+   "t": 4.149
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:30.583Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":305,\"balance_cents\":-26117}",
+   "service": "api",
+   "t": 4.164
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:30.618Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":499,\"balance_cents\":-40631}",
+   "service": "api",
+   "t": 4.199
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:30.647Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":196,\"balance_cents\":-44849}",
+   "service": "api",
+   "t": 4.229
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:30.662Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":155,\"balance_cents\":-30977}",
+   "service": "api",
+   "t": 4.243
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:30.678Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":701,\"balance_cents\":-40487}",
+   "service": "api",
+   "t": 4.259
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:30.692Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":808,\"balance_cents\":-59420}",
+   "service": "api",
+   "t": 4.273
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:30.733Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":124,\"balance_cents\":-52782}",
+   "service": "api",
+   "t": 4.314
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:30.777Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":552,\"balance_cents\":-48514}",
+   "service": "api",
+   "t": 4.358
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:30.798Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":112,\"balance_cents\":-53618}",
+   "service": "api",
+   "t": 4.379
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:30.813Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":219,\"balance_cents\":-33276}",
+   "service": "api",
+   "t": 4.394
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:30.828Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":682,\"balance_cents\":-20302}",
+   "service": "api",
+   "t": 4.409
+  },
+  {
+   "line": "--- Logging error ---",
+   "service": "worker",
+   "t": 4.47
+  },
+  {
+   "line": "Traceback (most recent call last):",
+   "service": "worker",
+   "t": 4.471
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/logging/__init__.py\", line 1151, in emit",
+   "service": "worker",
+   "t": 4.472
+  },
+  {
+   "line": "    msg = self.format(record)",
+   "service": "worker",
+   "t": 4.472
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/logging/__init__.py\", line 999, in format",
+   "service": "worker",
+   "t": 4.472
+  },
+  {
+   "line": "    return fmt.format(record)",
+   "service": "worker",
+   "t": 4.472
+  },
+  {
+   "line": "           ~~~~~~~~~~^^^^^^^^",
+   "service": "worker",
+   "t": 4.472
+  },
+  {
+   "line": "  File \"/srv/worker/worker.py\", line 71, in format",
+   "service": "worker",
+   "t": 4.472
+  },
+  {
+   "line": "    return json.dumps(entry, separators=(\",\", \":\"))",
+   "service": "worker",
+   "t": 4.472
+  },
+  {
+   "line": "           ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^",
+   "service": "worker",
+   "t": 4.472
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/json/__init__.py\", line 242, in dumps",
+   "service": "worker",
+   "t": 4.472
+  },
+  {
+   "line": "    **kw).encode(obj)",
+   "service": "worker",
+   "t": 4.472
+  },
+  {
+   "line": "          ~~~~~~^^^^^",
+   "service": "worker",
+   "t": 4.472
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/json/encoder.py\", line 202, in encode",
+   "service": "worker",
+   "t": 4.472
+  },
+  {
+   "line": "    chunks = self.iterencode(o, _one_shot=True)",
+   "service": "worker",
+   "t": 4.472
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/json/encoder.py\", line 263, in iterencode",
+   "service": "worker",
+   "t": 4.472
+  },
+  {
+   "line": "    return _iterencode(o, 0)",
+   "service": "worker",
+   "t": 4.472
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/json/encoder.py\", line 182, in default",
+   "service": "worker",
+   "t": 4.472
+  },
+  {
+   "line": "    raise TypeError(f'Object of type {o.__class__.__name__} '",
+   "service": "worker",
+   "t": 4.472
+  },
+  {
+   "line": "                    f'is not JSON serializable')",
+   "service": "worker",
+   "t": 4.472
+  },
+  {
+   "line": "TypeError: Object of type Decimal is not JSON serializable",
+   "service": "worker",
+   "t": 4.472
+  },
+  {
+   "line": "when serializing dict item 'books_off_cents'",
+   "service": "worker",
+   "t": 4.472
+  },
+  {
+   "line": "Call stack:",
+   "service": "worker",
+   "t": 4.472
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/threading.py\", line 1044, in _bootstrap",
+   "service": "worker",
+   "t": 4.472
+  },
+  {
+   "line": "    self._bootstrap_inner()",
+   "service": "worker",
+   "t": 4.472
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/threading.py\", line 1082, in _bootstrap_inner",
+   "service": "worker",
+   "t": 4.472
+  },
+  {
+   "line": "    self._context.run(self.run)",
+   "service": "worker",
+   "t": 4.472
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/threading.py\", line 1024, in run",
+   "service": "worker",
+   "t": 4.472
+  },
+  {
+   "line": "    self._target(*self._args, **self._kwargs)",
+   "service": "worker",
+   "t": 4.472
+  },
+  {
+   "line": "  File \"/srv/worker/worker.py\", line 180, in audit",
+   "service": "worker",
+   "t": 4.472
+  },
+  {
+   "line": "    log.error(",
+   "service": "worker",
+   "t": 4.472
+  },
+  {
+   "line": "Message: \"books don't balance\"",
+   "service": "worker",
+   "t": 4.472
+  },
+  {
+   "line": "Arguments: ()",
+   "service": "worker",
+   "t": 4.472
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:30.893Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":700,\"balance_cents\":-37318}",
+   "service": "api",
+   "t": 4.474
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:30.915Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":398,\"balance_cents\":-40704}",
+   "service": "api",
+   "t": 4.496
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:31.022Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":170,\"balance_cents\":-38492}",
+   "service": "api",
+   "t": 4.603
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:31.068Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":256,\"balance_cents\":-30904}",
+   "service": "api",
+   "t": 4.65
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:31.090Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":888,\"balance_cents\":-32828}",
+   "service": "api",
+   "t": 4.671
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:31.161Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":114,\"balance_cents\":-16957}",
+   "service": "api",
+   "t": 4.742
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:31.181Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":234,\"balance_cents\":-41218}",
+   "service": "api",
+   "t": 4.762
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:31.405Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":512,\"balance_cents\":-41810}",
+   "service": "api",
+   "t": 4.987
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:31.564Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":831,\"balance_cents\":-51136}",
+   "service": "api",
+   "t": 5.145
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:31.586Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":429,\"balance_cents\":-57682}",
+   "service": "api",
+   "t": 5.167
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:31.588Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":470,\"balance_cents\":-9170}",
+   "service": "api",
+   "t": 5.17
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:31.603Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":535,\"balance_cents\":-35797}",
+   "service": "api",
+   "t": 5.184
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:31.622Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":509,\"balance_cents\":-32307}",
+   "service": "api",
+   "t": 5.204
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:31.730Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":670,\"balance_cents\":-21686}",
+   "service": "api",
+   "t": 5.311
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:31.748Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":531,\"balance_cents\":-21995}",
+   "service": "api",
+   "t": 5.329
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:31.833Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":890,\"balance_cents\":-39164}",
+   "service": "api",
+   "t": 5.414
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:31.842Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":408,\"balance_cents\":-32380}",
+   "service": "api",
+   "t": 5.423
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:31.869Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":654,\"balance_cents\":-51610}",
+   "service": "api",
+   "t": 5.45
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:31.901Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":352,\"balance_cents\":-54994}",
+   "service": "api",
+   "t": 5.482
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:31.946Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":264,\"balance_cents\":-55611}",
+   "service": "api",
+   "t": 5.528
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:31.976Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":935,\"balance_cents\":-20100}",
+   "service": "api",
+   "t": 5.557
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:31.986Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":580,\"balance_cents\":-56161}",
+   "service": "api",
+   "t": 5.567
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:32.000Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":335,\"balance_cents\":-41145}",
+   "service": "api",
+   "t": 5.581
+  },
+  {
+   "line": "2026-11-04 16:26:32.045 UTC [92] ERROR:  permission denied for function pg_ls_waldir",
+   "service": "postgres-db",
+   "t": 5.626
+  },
+  {
+   "line": "2026-11-04 16:26:32.045 UTC [92] STATEMENT:  ",
+   "service": "postgres-db",
+   "t": 5.626
+  },
+  {
+   "line": "\t\t\tSELECT",
+   "service": "postgres-db",
+   "t": 5.626
+  },
+  {
+   "line": "\t\t\t\tCOUNT(*) AS segments,",
+   "service": "postgres-db",
+   "t": 5.626
+  },
+  {
+   "line": "\t\t\t\tSUM(size) AS size",
+   "service": "postgres-db",
+   "t": 5.626
+  },
+  {
+   "line": "\t\t\tFROM pg_ls_waldir()",
+   "service": "postgres-db",
+   "t": 5.626
+  },
+  {
+   "line": "\t\t\tWHERE name ~ '^[0-9A-F]{24}$'",
+   "service": "postgres-db",
+   "t": 5.626
+  },
+  {
+   "line": "time=2026-11-04T16:26:32.045Z level=ERROR source=collector.go:227 msg=\"collector failed\" name=wal duration_seconds=0.083721982 err=\"pq: permission denied for function pg_ls_waldir\"",
+   "service": "postgres-exporter",
+   "t": 5.626
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:32.046Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":186,\"balance_cents\":-49172}",
+   "service": "api",
+   "t": 5.628
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:32.059Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":714,\"balance_cents\":-41666}",
+   "service": "api",
+   "t": 5.64
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:32.061Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":543,\"balance_cents\":-20005}",
+   "service": "api",
+   "t": 5.643
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:32.094Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":602,\"balance_cents\":-46894}",
+   "service": "api",
+   "t": 5.675
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:26:32.100Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":250,\"balance_cents\":-51900}",
+   "service": "api",
+   "t": 5.681
+  },
+  {
+   "line": "2026-11-04 16:26:32.743 UTC [95] ERROR:  permission denied for function pg_ls_waldir",
+   "service": "postgres-db",
+   "t": 6.324
+  },
+  {
+   "line": "2026-11-04 16:26:32.743 UTC [95] STATEMENT:  ",
+   "service": "postgres-db",
+   "t": 6.324
+  },
+  {
+   "line": "\t\t\tSELECT",
+   "service": "postgres-db",
+   "t": 6.324
+  },
+  {
+   "line": "\t\t\t\tCOUNT(*) AS segments,",
+   "service": "postgres-db",
+   "t": 6.324
+  },
+  {
+   "line": "\t\t\t\tSUM(size) AS size",
+   "service": "postgres-db",
+   "t": 6.324
+  },
+  {
+   "line": "\t\t\tFROM pg_ls_waldir()",
+   "service": "postgres-db",
+   "t": 6.324
+  },
+  {
+   "line": "\t\t\tWHERE name ~ '^[0-9A-F]{24}$'",
+   "service": "postgres-db",
+   "t": 6.324
+  },
+  {
+   "line": "time=2026-11-04T16:26:32.743Z level=ERROR source=collector.go:227 msg=\"collector failed\" name=wal duration_seconds=0.012309851 err=\"pq: permission denied for function pg_ls_waldir\"",
+   "service": "postgres-exporter",
+   "t": 6.324
+  },
+  {
+   "line": "2026-11-04 16:26:37.900 UTC [103] ERROR:  permission denied for function pg_ls_waldir",
+   "service": "postgres-db",
+   "t": 11.481
+  },
+  {
+   "line": "2026-11-04 16:26:37.900 UTC [103] STATEMENT:  ",
+   "service": "postgres-db",
+   "t": 11.481
+  },
+  {
+   "line": "\t\t\tSELECT",
+   "service": "postgres-db",
+   "t": 11.481
+  },
+  {
+   "line": "\t\t\t\tCOUNT(*) AS segments,",
+   "service": "postgres-db",
+   "t": 11.481
+  },
+  {
+   "line": "\t\t\t\tSUM(size) AS size",
+   "service": "postgres-db",
+   "t": 11.481
+  },
+  {
+   "line": "\t\t\tFROM pg_ls_waldir()",
+   "service": "postgres-db",
+   "t": 11.481
+  },
+  {
+   "line": "\t\t\tWHERE name ~ '^[0-9A-F]{24}$'",
+   "service": "postgres-db",
+   "t": 11.481
+  },
+  {
+   "line": "time=2026-11-04T16:26:37.900Z level=ERROR source=collector.go:227 msg=\"collector failed\" name=wal duration_seconds=0.012753059 err=\"pq: permission denied for function pg_ls_waldir\"",
+   "service": "postgres-exporter",
+   "t": 11.481
+  },
+  {
+   "line": "2026-11-04 16:26:43.075 UTC [111] ERROR:  permission denied for function pg_ls_waldir",
+   "service": "postgres-db",
+   "t": 16.656
+  },
+  {
+   "line": "2026-11-04 16:26:43.075 UTC [111] STATEMENT:  ",
+   "service": "postgres-db",
+   "t": 16.656
+  },
+  {
+   "line": "\t\t\tSELECT",
+   "service": "postgres-db",
+   "t": 16.656
+  },
+  {
+   "line": "\t\t\t\tCOUNT(*) AS segments,",
+   "service": "postgres-db",
+   "t": 16.656
+  },
+  {
+   "line": "\t\t\t\tSUM(size) AS size",
+   "service": "postgres-db",
+   "t": 16.656
+  },
+  {
+   "line": "\t\t\tFROM pg_ls_waldir()",
+   "service": "postgres-db",
+   "t": 16.656
+  },
+  {
+   "line": "\t\t\tWHERE name ~ '^[0-9A-F]{24}$'",
+   "service": "postgres-db",
+   "t": 16.656
+  },
+  {
+   "line": "time=2026-11-04T16:26:43.075Z level=ERROR source=collector.go:227 msg=\"collector failed\" name=wal duration_seconds=0.039837352 err=\"pq: permission denied for function pg_ls_waldir\"",
+   "service": "postgres-exporter",
+   "t": 16.657
+  },
+  {
+   "line": "2026-11-04 16:26:48.209 UTC [119] ERROR:  permission denied for function pg_ls_waldir",
+   "service": "postgres-db",
+   "t": 21.79
+  },
+  {
+   "line": "2026-11-04 16:26:48.209 UTC [119] STATEMENT:  ",
+   "service": "postgres-db",
+   "t": 21.79
+  },
+  {
+   "line": "\t\t\tSELECT",
+   "service": "postgres-db",
+   "t": 21.79
+  },
+  {
+   "line": "\t\t\t\tCOUNT(*) AS segments,",
+   "service": "postgres-db",
+   "t": 21.79
+  },
+  {
+   "line": "\t\t\t\tSUM(size) AS size",
+   "service": "postgres-db",
+   "t": 21.79
+  },
+  {
+   "line": "\t\t\tFROM pg_ls_waldir()",
+   "service": "postgres-db",
+   "t": 21.79
+  },
+  {
+   "line": "\t\t\tWHERE name ~ '^[0-9A-F]{24}$'",
+   "service": "postgres-db",
+   "t": 21.79
+  },
+  {
+   "line": "time=2026-11-04T16:26:48.209Z level=ERROR source=collector.go:227 msg=\"collector failed\" name=wal duration_seconds=0.038316494 err=\"pq: permission denied for function pg_ls_waldir\"",
+   "service": "postgres-exporter",
+   "t": 21.79
+  },
+  {
+   "line": "2026-11-04 16:26:53.337 UTC [128] ERROR:  permission denied for function pg_ls_waldir",
+   "service": "postgres-db",
+   "t": 26.918
+  },
+  {
+   "line": "2026-11-04 16:26:53.337 UTC [128] STATEMENT:  ",
+   "service": "postgres-db",
+   "t": 26.918
+  },
+  {
+   "line": "\t\t\tSELECT",
+   "service": "postgres-db",
+   "t": 26.918
+  },
+  {
+   "line": "\t\t\t\tCOUNT(*) AS segments,",
+   "service": "postgres-db",
+   "t": 26.918
+  },
+  {
+   "line": "\t\t\t\tSUM(size) AS size",
+   "service": "postgres-db",
+   "t": 26.918
+  },
+  {
+   "line": "\t\t\tFROM pg_ls_waldir()",
+   "service": "postgres-db",
+   "t": 26.918
+  },
+  {
+   "line": "\t\t\tWHERE name ~ '^[0-9A-F]{24}$'",
+   "service": "postgres-db",
+   "t": 26.918
+  },
+  {
+   "line": "time=2026-11-04T16:26:53.337Z level=ERROR source=collector.go:227 msg=\"collector failed\" name=wal duration_seconds=0.009068148 err=\"pq: permission denied for function pg_ls_waldir\"",
+   "service": "postgres-exporter",
+   "t": 26.918
+  },
+  {
+   "line": "2026-11-04 16:26:58.496 UTC [136] ERROR:  permission denied for function pg_ls_waldir",
+   "service": "postgres-db",
+   "t": 32.078
+  },
+  {
+   "line": "2026-11-04 16:26:58.496 UTC [136] STATEMENT:  ",
+   "service": "postgres-db",
+   "t": 32.078
+  },
+  {
+   "line": "\t\t\tSELECT",
+   "service": "postgres-db",
+   "t": 32.078
+  },
+  {
+   "line": "\t\t\t\tCOUNT(*) AS segments,",
+   "service": "postgres-db",
+   "t": 32.078
+  },
+  {
+   "line": "\t\t\t\tSUM(size) AS size",
+   "service": "postgres-db",
+   "t": 32.078
+  },
+  {
+   "line": "\t\t\tFROM pg_ls_waldir()",
+   "service": "postgres-db",
+   "t": 32.078
+  },
+  {
+   "line": "\t\t\tWHERE name ~ '^[0-9A-F]{24}$'",
+   "service": "postgres-db",
+   "t": 32.078
+  },
+  {
+   "line": "time=2026-11-04T16:26:58.497Z level=ERROR source=collector.go:227 msg=\"collector failed\" name=wal duration_seconds=0.007811493 err=\"pq: permission denied for function pg_ls_waldir\"",
+   "service": "postgres-exporter",
+   "t": 32.078
+  },
+  {
+   "line": "Message: \"books don't balance\"",
+   "service": "worker",
+   "t": 34.506
+  },
+  {
+   "line": "Arguments: ()",
+   "service": "worker",
+   "t": 34.506
+  },
+  {
+   "line": "2026-11-04 16:27:03.677 UTC [144] ERROR:  permission denied for function pg_ls_waldir",
+   "service": "postgres-db",
+   "t": 37.258
+  },
+  {
+   "line": "2026-11-04 16:27:03.677 UTC [144] STATEMENT:  ",
+   "service": "postgres-db",
+   "t": 37.258
+  },
+  {
+   "line": "\t\t\tSELECT",
+   "service": "postgres-db",
+   "t": 37.258
+  },
+  {
+   "line": "\t\t\t\tCOUNT(*) AS segments,",
+   "service": "postgres-db",
+   "t": 37.258
+  },
+  {
+   "line": "\t\t\t\tSUM(size) AS size",
+   "service": "postgres-db",
+   "t": 37.258
+  },
+  {
+   "line": "\t\t\tFROM pg_ls_waldir()",
+   "service": "postgres-db",
+   "t": 37.258
+  },
+  {
+   "line": "\t\t\tWHERE name ~ '^[0-9A-F]{24}$'",
+   "service": "postgres-db",
+   "t": 37.258
+  },
+  {
+   "line": "time=2026-11-04T16:27:03.677Z level=ERROR source=collector.go:227 msg=\"collector failed\" name=wal duration_seconds=0.017084679 err=\"pq: permission denied for function pg_ls_waldir\"",
+   "service": "postgres-exporter",
+   "t": 37.259
+  },
+  {
+   "line": "--- Logging error ---",
+   "service": "worker",
+   "t": 39.511
+  },
+  {
+   "line": "Traceback (most recent call last):",
+   "service": "worker",
+   "t": 39.511
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/logging/__init__.py\", line 1151, in emit",
+   "service": "worker",
+   "t": 39.512
+  },
+  {
+   "line": "    msg = self.format(record)",
+   "service": "worker",
+   "t": 39.512
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/logging/__init__.py\", line 999, in format",
+   "service": "worker",
+   "t": 39.512
+  },
+  {
+   "line": "    return fmt.format(record)",
+   "service": "worker",
+   "t": 39.512
+  },
+  {
+   "line": "           ~~~~~~~~~~^^^^^^^^",
+   "service": "worker",
+   "t": 39.512
+  },
+  {
+   "line": "  File \"/srv/worker/worker.py\", line 71, in format",
+   "service": "worker",
+   "t": 39.512
+  },
+  {
+   "line": "    return json.dumps(entry, separators=(\",\", \":\"))",
+   "service": "worker",
+   "t": 39.512
+  },
+  {
+   "line": "           ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^",
+   "service": "worker",
+   "t": 39.512
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/json/__init__.py\", line 242, in dumps",
+   "service": "worker",
+   "t": 39.512
+  },
+  {
+   "line": "    **kw).encode(obj)",
+   "service": "worker",
+   "t": 39.512
+  },
+  {
+   "line": "          ~~~~~~^^^^^",
+   "service": "worker",
+   "t": 39.512
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/json/encoder.py\", line 202, in encode",
+   "service": "worker",
+   "t": 39.512
+  },
+  {
+   "line": "    chunks = self.iterencode(o, _one_shot=True)",
+   "service": "worker",
+   "t": 39.512
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/json/encoder.py\", line 263, in iterencode",
+   "service": "worker",
+   "t": 39.512
+  },
+  {
+   "line": "    return _iterencode(o, 0)",
+   "service": "worker",
+   "t": 39.512
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/json/encoder.py\", line 182, in default",
+   "service": "worker",
+   "t": 39.512
+  },
+  {
+   "line": "    raise TypeError(f'Object of type {o.__class__.__name__} '",
+   "service": "worker",
+   "t": 39.512
+  },
+  {
+   "line": "                    f'is not JSON serializable')",
+   "service": "worker",
+   "t": 39.512
+  },
+  {
+   "line": "TypeError: Object of type Decimal is not JSON serializable",
+   "service": "worker",
+   "t": 39.512
+  },
+  {
+   "line": "when serializing dict item 'books_off_cents'",
+   "service": "worker",
+   "t": 39.512
+  },
+  {
+   "line": "Call stack:",
+   "service": "worker",
+   "t": 39.512
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/threading.py\", line 1044, in _bootstrap",
+   "service": "worker",
+   "t": 39.512
+  },
+  {
+   "line": "    self._bootstrap_inner()",
+   "service": "worker",
+   "t": 39.513
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/threading.py\", line 1082, in _bootstrap_inner",
+   "service": "worker",
+   "t": 39.513
+  },
+  {
+   "line": "    self._context.run(self.run)",
+   "service": "worker",
+   "t": 39.513
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/threading.py\", line 1024, in run",
+   "service": "worker",
+   "t": 39.513
+  },
+  {
+   "line": "    self._target(*self._args, **self._kwargs)",
+   "service": "worker",
+   "t": 39.513
+  },
+  {
+   "line": "  File \"/srv/worker/worker.py\", line 180, in audit",
+   "service": "worker",
+   "t": 39.513
+  },
+  {
+   "line": "    log.error(",
+   "service": "worker",
+   "t": 39.513
+  },
+  {
+   "line": "Message: \"books don't balance\"",
+   "service": "worker",
+   "t": 39.513
+  },
+  {
+   "line": "Arguments: ()",
+   "service": "worker",
+   "t": 39.513
+  },
+  {
+   "line": "2026-11-04 16:27:08.861 UTC [152] ERROR:  permission denied for function pg_ls_waldir",
+   "service": "postgres-db",
+   "t": 42.442
+  },
+  {
+   "line": "2026-11-04 16:27:08.861 UTC [152] STATEMENT:  ",
+   "service": "postgres-db",
+   "t": 42.442
+  },
+  {
+   "line": "\t\t\tSELECT",
+   "service": "postgres-db",
+   "t": 42.442
+  },
+  {
+   "line": "\t\t\t\tCOUNT(*) AS segments,",
+   "service": "postgres-db",
+   "t": 42.442
+  },
+  {
+   "line": "\t\t\t\tSUM(size) AS size",
+   "service": "postgres-db",
+   "t": 42.442
+  },
+  {
+   "line": "\t\t\tFROM pg_ls_waldir()",
+   "service": "postgres-db",
+   "t": 42.442
+  },
+  {
+   "line": "\t\t\tWHERE name ~ '^[0-9A-F]{24}$'",
+   "service": "postgres-db",
+   "t": 42.442
+  },
+  {
+   "line": "time=2026-11-04T16:27:08.861Z level=ERROR source=collector.go:227 msg=\"collector failed\" name=wal duration_seconds=0.01772066 err=\"pq: permission denied for function pg_ls_waldir\"",
+   "service": "postgres-exporter",
+   "t": 42.443
+  },
+  {
+   "line": "--- Logging error ---",
+   "service": "worker",
+   "t": 44.52
+  },
+  {
+   "line": "Traceback (most recent call last):",
+   "service": "worker",
+   "t": 44.52
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/logging/__init__.py\", line 1151, in emit",
+   "service": "worker",
+   "t": 44.523
+  },
+  {
+   "line": "    msg = self.format(record)",
+   "service": "worker",
+   "t": 44.523
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/logging/__init__.py\", line 999, in format",
+   "service": "worker",
+   "t": 44.523
+  },
+  {
+   "line": "    return fmt.format(record)",
+   "service": "worker",
+   "t": 44.523
+  },
+  {
+   "line": "           ~~~~~~~~~~^^^^^^^^",
+   "service": "worker",
+   "t": 44.523
+  },
+  {
+   "line": "  File \"/srv/worker/worker.py\", line 71, in format",
+   "service": "worker",
+   "t": 44.523
+  },
+  {
+   "line": "    return json.dumps(entry, separators=(\",\", \":\"))",
+   "service": "worker",
+   "t": 44.523
+  },
+  {
+   "line": "           ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^",
+   "service": "worker",
+   "t": 44.523
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/json/__init__.py\", line 242, in dumps",
+   "service": "worker",
+   "t": 44.523
+  },
+  {
+   "line": "    **kw).encode(obj)",
+   "service": "worker",
+   "t": 44.523
+  },
+  {
+   "line": "          ~~~~~~^^^^^",
+   "service": "worker",
+   "t": 44.523
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/json/encoder.py\", line 202, in encode",
+   "service": "worker",
+   "t": 44.523
+  },
+  {
+   "line": "    chunks = self.iterencode(o, _one_shot=True)",
+   "service": "worker",
+   "t": 44.523
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/json/encoder.py\", line 263, in iterencode",
+   "service": "worker",
+   "t": 44.523
+  },
+  {
+   "line": "    return _iterencode(o, 0)",
+   "service": "worker",
+   "t": 44.523
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/json/encoder.py\", line 182, in default",
+   "service": "worker",
+   "t": 44.523
+  },
+  {
+   "line": "    raise TypeError(f'Object of type {o.__class__.__name__} '",
+   "service": "worker",
+   "t": 44.523
+  },
+  {
+   "line": "                    f'is not JSON serializable')",
+   "service": "worker",
+   "t": 44.523
+  },
+  {
+   "line": "TypeError: Object of type Decimal is not JSON serializable",
+   "service": "worker",
+   "t": 44.523
+  },
+  {
+   "line": "when serializing dict item 'books_off_cents'",
+   "service": "worker",
+   "t": 44.523
+  },
+  {
+   "line": "Call stack:",
+   "service": "worker",
+   "t": 44.523
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/threading.py\", line 1044, in _bootstrap",
+   "service": "worker",
+   "t": 44.523
+  },
+  {
+   "line": "    self._bootstrap_inner()",
+   "service": "worker",
+   "t": 44.523
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/threading.py\", line 1082, in _bootstrap_inner",
+   "service": "worker",
+   "t": 44.523
+  },
+  {
+   "line": "    self._context.run(self.run)",
+   "service": "worker",
+   "t": 44.523
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/threading.py\", line 1024, in run",
+   "service": "worker",
+   "t": 44.523
+  },
+  {
+   "line": "    self._target(*self._args, **self._kwargs)",
+   "service": "worker",
+   "t": 44.523
+  },
+  {
+   "line": "  File \"/srv/worker/worker.py\", line 180, in audit",
+   "service": "worker",
+   "t": 44.523
+  },
+  {
+   "line": "    log.error(",
+   "service": "worker",
+   "t": 44.523
+  },
+  {
+   "line": "Message: \"books don't balance\"",
+   "service": "worker",
+   "t": 44.523
+  },
+  {
+   "line": "Arguments: ()",
+   "service": "worker",
+   "t": 44.523
+  },
+  {
+   "line": "2026-11-04 16:27:14.144 UTC [164] ERROR:  permission denied for function pg_ls_waldir",
+   "service": "postgres-db",
+   "t": 47.726
+  },
+  {
+   "line": "2026-11-04 16:27:14.144 UTC [164] STATEMENT:  ",
+   "service": "postgres-db",
+   "t": 47.726
+  },
+  {
+   "line": "\t\t\tSELECT",
+   "service": "postgres-db",
+   "t": 47.726
+  },
+  {
+   "line": "\t\t\t\tCOUNT(*) AS segments,",
+   "service": "postgres-db",
+   "t": 47.726
+  },
+  {
+   "line": "\t\t\t\tSUM(size) AS size",
+   "service": "postgres-db",
+   "t": 47.726
+  },
+  {
+   "line": "\t\t\tFROM pg_ls_waldir()",
+   "service": "postgres-db",
+   "t": 47.726
+  },
+  {
+   "line": "\t\t\tWHERE name ~ '^[0-9A-F]{24}$'",
+   "service": "postgres-db",
+   "t": 47.726
+  },
+  {
+   "line": "time=2026-11-04T16:27:14.145Z level=ERROR source=collector.go:227 msg=\"collector failed\" name=wal duration_seconds=0.022729674 err=\"pq: permission denied for function pg_ls_waldir\"",
+   "service": "postgres-exporter",
+   "t": 47.726
+  },
+  {
+   "line": "--- Logging error ---",
+   "service": "worker",
+   "t": 49.534
+  },
+  {
+   "line": "Traceback (most recent call last):",
+   "service": "worker",
+   "t": 49.535
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/logging/__init__.py\", line 1151, in emit",
+   "service": "worker",
+   "t": 49.537
+  },
+  {
+   "line": "    msg = self.format(record)",
+   "service": "worker",
+   "t": 49.537
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/logging/__init__.py\", line 999, in format",
+   "service": "worker",
+   "t": 49.537
+  },
+  {
+   "line": "    return fmt.format(record)",
+   "service": "worker",
+   "t": 49.537
+  },
+  {
+   "line": "           ~~~~~~~~~~^^^^^^^^",
+   "service": "worker",
+   "t": 49.537
+  },
+  {
+   "line": "  File \"/srv/worker/worker.py\", line 71, in format",
+   "service": "worker",
+   "t": 49.537
+  },
+  {
+   "line": "    return json.dumps(entry, separators=(\",\", \":\"))",
+   "service": "worker",
+   "t": 49.537
+  },
+  {
+   "line": "           ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^",
+   "service": "worker",
+   "t": 49.537
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/json/__init__.py\", line 242, in dumps",
+   "service": "worker",
+   "t": 49.537
+  },
+  {
+   "line": "    **kw).encode(obj)",
+   "service": "worker",
+   "t": 49.537
+  },
+  {
+   "line": "          ~~~~~~^^^^^",
+   "service": "worker",
+   "t": 49.537
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/json/encoder.py\", line 202, in encode",
+   "service": "worker",
+   "t": 49.537
+  },
+  {
+   "line": "    chunks = self.iterencode(o, _one_shot=True)",
+   "service": "worker",
+   "t": 49.537
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/json/encoder.py\", line 263, in iterencode",
+   "service": "worker",
+   "t": 49.537
+  },
+  {
+   "line": "    return _iterencode(o, 0)",
+   "service": "worker",
+   "t": 49.537
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/json/encoder.py\", line 182, in default",
+   "service": "worker",
+   "t": 49.537
+  },
+  {
+   "line": "    raise TypeError(f'Object of type {o.__class__.__name__} '",
+   "service": "worker",
+   "t": 49.537
+  },
+  {
+   "line": "                    f'is not JSON serializable')",
+   "service": "worker",
+   "t": 49.537
+  },
+  {
+   "line": "TypeError: Object of type Decimal is not JSON serializable",
+   "service": "worker",
+   "t": 49.537
+  },
+  {
+   "line": "when serializing dict item 'books_off_cents'",
+   "service": "worker",
+   "t": 49.537
+  },
+  {
+   "line": "Call stack:",
+   "service": "worker",
+   "t": 49.537
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/threading.py\", line 1044, in _bootstrap",
+   "service": "worker",
+   "t": 49.537
+  },
+  {
+   "line": "    self._bootstrap_inner()",
+   "service": "worker",
+   "t": 49.537
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/threading.py\", line 1082, in _bootstrap_inner",
+   "service": "worker",
+   "t": 49.537
+  },
+  {
+   "line": "    self._context.run(self.run)",
+   "service": "worker",
+   "t": 49.537
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/threading.py\", line 1024, in run",
+   "service": "worker",
+   "t": 49.537
+  },
+  {
+   "line": "    self._target(*self._args, **self._kwargs)",
+   "service": "worker",
+   "t": 49.537
+  },
+  {
+   "line": "  File \"/srv/worker/worker.py\", line 180, in audit",
+   "service": "worker",
+   "t": 49.537
+  },
+  {
+   "line": "    log.error(",
+   "service": "worker",
+   "t": 49.537
+  },
+  {
+   "line": "Message: \"books don't balance\"",
+   "service": "worker",
+   "t": 49.537
+  },
+  {
+   "line": "Arguments: ()",
+   "service": "worker",
+   "t": 49.537
+  },
+  {
+   "line": "2026-11-04 16:27:19.549 UTC [172] ERROR:  permission denied for function pg_ls_waldir",
+   "service": "postgres-db",
+   "t": 53.13
+  },
+  {
+   "line": "2026-11-04 16:27:19.549 UTC [172] STATEMENT:  ",
+   "service": "postgres-db",
+   "t": 53.13
+  },
+  {
+   "line": "\t\t\tSELECT",
+   "service": "postgres-db",
+   "t": 53.13
+  },
+  {
+   "line": "\t\t\t\tCOUNT(*) AS segments,",
+   "service": "postgres-db",
+   "t": 53.13
+  },
+  {
+   "line": "\t\t\t\tSUM(size) AS size",
+   "service": "postgres-db",
+   "t": 53.13
+  },
+  {
+   "line": "\t\t\tFROM pg_ls_waldir()",
+   "service": "postgres-db",
+   "t": 53.13
+  },
+  {
+   "line": "\t\t\tWHERE name ~ '^[0-9A-F]{24}$'",
+   "service": "postgres-db",
+   "t": 53.13
+  },
+  {
+   "line": "time=2026-11-04T16:27:19.549Z level=ERROR source=collector.go:227 msg=\"collector failed\" name=wal duration_seconds=0.061394033 err=\"pq: permission denied for function pg_ls_waldir\"",
+   "service": "postgres-exporter",
+   "t": 53.13
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:20.532Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":660,\"balance_cents\":-30605}",
+   "service": "api",
+   "t": 54.113
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:20.557Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":951,\"balance_cents\":-31969}",
+   "service": "api",
+   "t": 54.138
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:20.561Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":980,\"balance_cents\":-48305}",
+   "service": "api",
+   "t": 54.143
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:20.577Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":338,\"balance_cents\":-54307}",
+   "service": "api",
+   "t": 54.159
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:20.652Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":31,\"balance_cents\":-5191}",
+   "service": "api",
+   "t": 54.233
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:20.694Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":988,\"balance_cents\":-24193}",
+   "service": "api",
+   "t": 54.275
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:20.697Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":258,\"balance_cents\":-2348}",
+   "service": "api",
+   "t": 54.279
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:20.742Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":28,\"balance_cents\":-26021}",
+   "service": "api",
+   "t": 54.323
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:20.904Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":867,\"balance_cents\":-1901}",
+   "service": "api",
+   "t": 54.485
+  },
+  {
+   "line": "--- Logging error ---",
+   "service": "worker",
+   "t": 54.541
+  },
+  {
+   "line": "Traceback (most recent call last):",
+   "service": "worker",
+   "t": 54.542
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/logging/__init__.py\", line 1151, in emit",
+   "service": "worker",
+   "t": 54.543
+  },
+  {
+   "line": "    msg = self.format(record)",
+   "service": "worker",
+   "t": 54.543
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/logging/__init__.py\", line 999, in format",
+   "service": "worker",
+   "t": 54.543
+  },
+  {
+   "line": "    return fmt.format(record)",
+   "service": "worker",
+   "t": 54.543
+  },
+  {
+   "line": "           ~~~~~~~~~~^^^^^^^^",
+   "service": "worker",
+   "t": 54.543
+  },
+  {
+   "line": "  File \"/srv/worker/worker.py\", line 71, in format",
+   "service": "worker",
+   "t": 54.543
+  },
+  {
+   "line": "    return json.dumps(entry, separators=(\",\", \":\"))",
+   "service": "worker",
+   "t": 54.543
+  },
+  {
+   "line": "           ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^",
+   "service": "worker",
+   "t": 54.543
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/json/__init__.py\", line 242, in dumps",
+   "service": "worker",
+   "t": 54.543
+  },
+  {
+   "line": "    **kw).encode(obj)",
+   "service": "worker",
+   "t": 54.543
+  },
+  {
+   "line": "          ~~~~~~^^^^^",
+   "service": "worker",
+   "t": 54.543
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/json/encoder.py\", line 202, in encode",
+   "service": "worker",
+   "t": 54.543
+  },
+  {
+   "line": "    chunks = self.iterencode(o, _one_shot=True)",
+   "service": "worker",
+   "t": 54.543
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/json/encoder.py\", line 263, in iterencode",
+   "service": "worker",
+   "t": 54.543
+  },
+  {
+   "line": "    return _iterencode(o, 0)",
+   "service": "worker",
+   "t": 54.543
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/json/encoder.py\", line 182, in default",
+   "service": "worker",
+   "t": 54.543
+  },
+  {
+   "line": "    raise TypeError(f'Object of type {o.__class__.__name__} '",
+   "service": "worker",
+   "t": 54.543
+  },
+  {
+   "line": "                    f'is not JSON serializable')",
+   "service": "worker",
+   "t": 54.543
+  },
+  {
+   "line": "TypeError: Object of type Decimal is not JSON serializable",
+   "service": "worker",
+   "t": 54.543
+  },
+  {
+   "line": "when serializing dict item 'books_off_cents'",
+   "service": "worker",
+   "t": 54.543
+  },
+  {
+   "line": "Call stack:",
+   "service": "worker",
+   "t": 54.543
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/threading.py\", line 1044, in _bootstrap",
+   "service": "worker",
+   "t": 54.544
+  },
+  {
+   "line": "    self._bootstrap_inner()",
+   "service": "worker",
+   "t": 54.544
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/threading.py\", line 1082, in _bootstrap_inner",
+   "service": "worker",
+   "t": 54.544
+  },
+  {
+   "line": "    self._context.run(self.run)",
+   "service": "worker",
+   "t": 54.544
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/threading.py\", line 1024, in run",
+   "service": "worker",
+   "t": 54.544
+  },
+  {
+   "line": "    self._target(*self._args, **self._kwargs)",
+   "service": "worker",
+   "t": 54.544
+  },
+  {
+   "line": "  File \"/srv/worker/worker.py\", line 180, in audit",
+   "service": "worker",
+   "t": 54.544
+  },
+  {
+   "line": "    log.error(",
+   "service": "worker",
+   "t": 54.544
+  },
+  {
+   "line": "Message: \"books don't balance\"",
+   "service": "worker",
+   "t": 54.544
+  },
+  {
+   "line": "Arguments: ()",
+   "service": "worker",
+   "t": 54.544
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:20.998Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":689,\"balance_cents\":-39639}",
+   "service": "api",
+   "t": 54.579
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:21.111Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":772,\"balance_cents\":-22783}",
+   "service": "api",
+   "t": 54.692
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:21.123Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":380,\"balance_cents\":-15776}",
+   "service": "api",
+   "t": 54.705
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:21.138Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":140,\"balance_cents\":-20717}",
+   "service": "api",
+   "t": 54.719
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:21.359Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":499,\"balance_cents\":-20292}",
+   "service": "api",
+   "t": 54.94
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:21.412Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":154,\"balance_cents\":-19405}",
+   "service": "api",
+   "t": 54.993
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:21.470Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":464,\"balance_cents\":-1285}",
+   "service": "api",
+   "t": 55.051
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:21.552Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":657,\"balance_cents\":-12285}",
+   "service": "api",
+   "t": 55.133
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:21.792Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":563,\"balance_cents\":-19409}",
+   "service": "api",
+   "t": 55.374
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:21.855Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":353,\"balance_cents\":-54059}",
+   "service": "api",
+   "t": 55.436
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:21.936Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":783,\"balance_cents\":-18034}",
+   "service": "api",
+   "t": 55.517
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:22.045Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":561,\"balance_cents\":-17923}",
+   "service": "api",
+   "t": 55.626
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:22.089Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":623,\"balance_cents\":-3824}",
+   "service": "api",
+   "t": 55.67
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:22.181Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":961,\"balance_cents\":-10177}",
+   "service": "api",
+   "t": 55.762
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:22.256Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":819,\"balance_cents\":-68873}",
+   "service": "api",
+   "t": 55.837
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:22.289Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":493,\"balance_cents\":-30094}",
+   "service": "api",
+   "t": 55.87
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:22.299Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":284,\"balance_cents\":-3798}",
+   "service": "api",
+   "t": 55.881
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:22.303Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":612,\"balance_cents\":-35823}",
+   "service": "api",
+   "t": 55.884
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:22.570Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":477,\"balance_cents\":-21360}",
+   "service": "api",
+   "t": 56.151
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:22.675Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":14,\"balance_cents\":-19762}",
+   "service": "api",
+   "t": 56.256
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:22.695Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":700,\"balance_cents\":-8149}",
+   "service": "api",
+   "t": 56.277
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:22.839Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":483,\"balance_cents\":-16791}",
+   "service": "api",
+   "t": 56.42
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:22.847Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":76,\"balance_cents\":-10733}",
+   "service": "api",
+   "t": 56.429
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:22.893Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":762,\"balance_cents\":-6145}",
+   "service": "api",
+   "t": 56.475
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:22.902Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":730,\"balance_cents\":-6419}",
+   "service": "api",
+   "t": 56.483
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:23.001Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":737,\"balance_cents\":-33961}",
+   "service": "api",
+   "t": 56.583
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:23.116Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":184,\"balance_cents\":-18854}",
+   "service": "api",
+   "t": 56.697
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:23.332Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":859,\"balance_cents\":-30394}",
+   "service": "api",
+   "t": 56.913
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:23.690Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":904,\"balance_cents\":-1195}",
+   "service": "api",
+   "t": 57.271
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:23.799Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":116,\"balance_cents\":-29567}",
+   "service": "api",
+   "t": 57.38
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:24.031Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":985,\"balance_cents\":-19783}",
+   "service": "api",
+   "t": 57.612
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:24.167Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":167,\"balance_cents\":-19027}",
+   "service": "api",
+   "t": 57.748
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:24.268Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":354,\"balance_cents\":-24909}",
+   "service": "api",
+   "t": 57.849
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:24.407Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":812,\"balance_cents\":-17322}",
+   "service": "api",
+   "t": 57.988
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:24.448Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":924,\"balance_cents\":-31954}",
+   "service": "api",
+   "t": 58.029
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:24.524Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":492,\"balance_cents\":-67884}",
+   "service": "api",
+   "t": 58.105
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:24.534Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":703,\"balance_cents\":-51830}",
+   "service": "api",
+   "t": 58.115
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:24.583Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":46,\"balance_cents\":-3503}",
+   "service": "api",
+   "t": 58.164
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:24.588Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":170,\"balance_cents\":-4602}",
+   "service": "api",
+   "t": 58.169
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:24.684Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":315,\"balance_cents\":-6222}",
+   "service": "api",
+   "t": 58.265
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:24.721Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":449,\"balance_cents\":-1658}",
+   "service": "api",
+   "t": 58.302
+  },
+  {
+   "line": "2026-11-04 16:27:24.758 UTC [180] ERROR:  permission denied for function pg_ls_waldir",
+   "service": "postgres-db",
+   "t": 58.339
+  },
+  {
+   "line": "2026-11-04 16:27:24.758 UTC [180] STATEMENT:  ",
+   "service": "postgres-db",
+   "t": 58.339
+  },
+  {
+   "line": "\t\t\tSELECT",
+   "service": "postgres-db",
+   "t": 58.339
+  },
+  {
+   "line": "\t\t\t\tCOUNT(*) AS segments,",
+   "service": "postgres-db",
+   "t": 58.339
+  },
+  {
+   "line": "\t\t\t\tSUM(size) AS size",
+   "service": "postgres-db",
+   "t": 58.339
+  },
+  {
+   "line": "\t\t\tFROM pg_ls_waldir()",
+   "service": "postgres-db",
+   "t": 58.339
+  },
+  {
+   "line": "\t\t\tWHERE name ~ '^[0-9A-F]{24}$'",
+   "service": "postgres-db",
+   "t": 58.339
+  },
+  {
+   "line": "time=2026-11-04T16:27:24.758Z level=ERROR source=collector.go:227 msg=\"collector failed\" name=wal duration_seconds=0.01278373 err=\"pq: permission denied for function pg_ls_waldir\"",
+   "service": "postgres-exporter",
+   "t": 58.34
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:24.813Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":172,\"balance_cents\":-2582}",
+   "service": "api",
+   "t": 58.394
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:24.831Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":806,\"balance_cents\":-51168}",
+   "service": "api",
+   "t": 58.412
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:25.032Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":185,\"balance_cents\":-7745}",
+   "service": "api",
+   "t": 58.614
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:25.043Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":754,\"balance_cents\":-53254}",
+   "service": "api",
+   "t": 58.625
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:25.102Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":342,\"balance_cents\":-10672}",
+   "service": "api",
+   "t": 58.683
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:25.157Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":981,\"balance_cents\":-1369}",
+   "service": "api",
+   "t": 58.738
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:25.174Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":381,\"balance_cents\":-26249}",
+   "service": "api",
+   "t": 58.755
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:25.215Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":421,\"balance_cents\":-15973}",
+   "service": "api",
+   "t": 58.797
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:25.289Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":245,\"balance_cents\":-5954}",
+   "service": "api",
+   "t": 58.87
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:25.394Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":249,\"balance_cents\":-45766}",
+   "service": "api",
+   "t": 58.976
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:25.484Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":101,\"balance_cents\":-59573}",
+   "service": "api",
+   "t": 59.065
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:25.557Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":29,\"balance_cents\":-29534}",
+   "service": "api",
+   "t": 59.138
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:25.727Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":435,\"balance_cents\":-37205}",
+   "service": "api",
+   "t": 59.308
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:25.800Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":327,\"balance_cents\":-17681}",
+   "service": "api",
+   "t": 59.382
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:25.912Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":496,\"balance_cents\":-16980}",
+   "service": "api",
+   "t": 59.493
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:25.919Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":874,\"balance_cents\":-17482}",
+   "service": "api",
+   "t": 59.5
+  },
+  {
+   "line": "--- Logging error ---",
+   "service": "worker",
+   "t": 59.547
+  },
+  {
+   "line": "Traceback (most recent call last):",
+   "service": "worker",
+   "t": 59.547
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/logging/__init__.py\", line 1151, in emit",
+   "service": "worker",
+   "t": 59.548
+  },
+  {
+   "line": "    msg = self.format(record)",
+   "service": "worker",
+   "t": 59.548
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/logging/__init__.py\", line 999, in format",
+   "service": "worker",
+   "t": 59.548
+  },
+  {
+   "line": "    return fmt.format(record)",
+   "service": "worker",
+   "t": 59.548
+  },
+  {
+   "line": "           ~~~~~~~~~~^^^^^^^^",
+   "service": "worker",
+   "t": 59.548
+  },
+  {
+   "line": "  File \"/srv/worker/worker.py\", line 71, in format",
+   "service": "worker",
+   "t": 59.548
+  },
+  {
+   "line": "    return json.dumps(entry, separators=(\",\", \":\"))",
+   "service": "worker",
+   "t": 59.548
+  },
+  {
+   "line": "           ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^",
+   "service": "worker",
+   "t": 59.548
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/json/__init__.py\", line 242, in dumps",
+   "service": "worker",
+   "t": 59.548
+  },
+  {
+   "line": "    **kw).encode(obj)",
+   "service": "worker",
+   "t": 59.548
+  },
+  {
+   "line": "          ~~~~~~^^^^^",
+   "service": "worker",
+   "t": 59.548
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/json/encoder.py\", line 202, in encode",
+   "service": "worker",
+   "t": 59.548
+  },
+  {
+   "line": "    chunks = self.iterencode(o, _one_shot=True)",
+   "service": "worker",
+   "t": 59.548
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/json/encoder.py\", line 263, in iterencode",
+   "service": "worker",
+   "t": 59.548
+  },
+  {
+   "line": "    return _iterencode(o, 0)",
+   "service": "worker",
+   "t": 59.548
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/json/encoder.py\", line 182, in default",
+   "service": "worker",
+   "t": 59.548
+  },
+  {
+   "line": "    raise TypeError(f'Object of type {o.__class__.__name__} '",
+   "service": "worker",
+   "t": 59.548
+  },
+  {
+   "line": "                    f'is not JSON serializable')",
+   "service": "worker",
+   "t": 59.548
+  },
+  {
+   "line": "TypeError: Object of type Decimal is not JSON serializable",
+   "service": "worker",
+   "t": 59.548
+  },
+  {
+   "line": "when serializing dict item 'books_off_cents'",
+   "service": "worker",
+   "t": 59.548
+  },
+  {
+   "line": "Call stack:",
+   "service": "worker",
+   "t": 59.548
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/threading.py\", line 1044, in _bootstrap",
+   "service": "worker",
+   "t": 59.548
+  },
+  {
+   "line": "    self._bootstrap_inner()",
+   "service": "worker",
+   "t": 59.548
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/threading.py\", line 1082, in _bootstrap_inner",
+   "service": "worker",
+   "t": 59.548
+  },
+  {
+   "line": "    self._context.run(self.run)",
+   "service": "worker",
+   "t": 59.548
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/threading.py\", line 1024, in run",
+   "service": "worker",
+   "t": 59.548
+  },
+  {
+   "line": "    self._target(*self._args, **self._kwargs)",
+   "service": "worker",
+   "t": 59.548
+  },
+  {
+   "line": "  File \"/srv/worker/worker.py\", line 180, in audit",
+   "service": "worker",
+   "t": 59.548
+  },
+  {
+   "line": "    log.error(",
+   "service": "worker",
+   "t": 59.548
+  },
+  {
+   "line": "Message: \"books don't balance\"",
+   "service": "worker",
+   "t": 59.548
+  },
+  {
+   "line": "Arguments: ()",
+   "service": "worker",
+   "t": 59.548
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:25.985Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":576,\"balance_cents\":-49420}",
+   "service": "api",
+   "t": 59.566
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:26.024Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":589,\"balance_cents\":-39603}",
+   "service": "api",
+   "t": 59.606
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:26.038Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":203,\"balance_cents\":-13839}",
+   "service": "api",
+   "t": 59.62
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:26.105Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":146,\"balance_cents\":-4498}",
+   "service": "api",
+   "t": 59.686
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:26.161Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":442,\"balance_cents\":-9969}",
+   "service": "api",
+   "t": 59.742
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:26.168Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":310,\"balance_cents\":-5711}",
+   "service": "api",
+   "t": 59.749
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:26.189Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":726,\"balance_cents\":-4296}",
+   "service": "api",
+   "t": 59.77
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:26.211Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":743,\"balance_cents\":-18731}",
+   "service": "api",
+   "t": 59.792
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:26.234Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":595,\"balance_cents\":-10548}",
+   "service": "api",
+   "t": 59.815
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:26.300Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":397,\"balance_cents\":-5311}",
+   "service": "api",
+   "t": 59.881
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:26.361Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":333,\"balance_cents\":-1215}",
+   "service": "api",
+   "t": 59.942
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:26.446Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":386,\"balance_cents\":-43221}",
+   "service": "api",
+   "t": 60.028
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:26.638Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":308,\"balance_cents\":-5963}",
+   "service": "api",
+   "t": 60.219
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:26.663Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":421,\"balance_cents\":-13609}",
+   "service": "api",
+   "t": 60.245
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:26.781Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":396,\"balance_cents\":-23720}",
+   "service": "api",
+   "t": 60.362
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:26.800Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":19,\"balance_cents\":-38806}",
+   "service": "api",
+   "t": 60.381
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:26.888Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":41,\"balance_cents\":-9182}",
+   "service": "api",
+   "t": 60.469
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:26.913Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":4,\"balance_cents\":-7798}",
+   "service": "api",
+   "t": 60.494
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:27.023Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":929,\"balance_cents\":-6878}",
+   "service": "api",
+   "t": 60.605
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:27.041Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":105,\"balance_cents\":-32551}",
+   "service": "api",
+   "t": 60.622
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:27.104Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":594,\"balance_cents\":-4629}",
+   "service": "api",
+   "t": 60.685
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:27.175Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":716,\"balance_cents\":-18062}",
+   "service": "api",
+   "t": 60.757
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:27.192Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":89,\"balance_cents\":-11793}",
+   "service": "api",
+   "t": 60.774
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:27.198Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":698,\"balance_cents\":-39806}",
+   "service": "api",
+   "t": 60.779
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:27.325Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":936,\"balance_cents\":-8497}",
+   "service": "api",
+   "t": 60.906
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:27.361Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":745,\"balance_cents\":-16497}",
+   "service": "api",
+   "t": 60.943
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:27.420Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":871,\"balance_cents\":-16194}",
+   "service": "api",
+   "t": 61.001
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:27.442Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":720,\"balance_cents\":-12206}",
+   "service": "api",
+   "t": 61.023
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:27.618Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":362,\"balance_cents\":-43887}",
+   "service": "api",
+   "t": 61.199
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:27.679Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":325,\"balance_cents\":-14246}",
+   "service": "api",
+   "t": 61.26
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:27.888Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":705,\"balance_cents\":-53546}",
+   "service": "api",
+   "t": 61.469
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:27.914Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":973,\"balance_cents\":-11691}",
+   "service": "api",
+   "t": 61.496
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:27.945Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":672,\"balance_cents\":-18873}",
+   "service": "api",
+   "t": 61.526
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:28.060Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":651,\"balance_cents\":-46909}",
+   "service": "api",
+   "t": 61.641
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:28.087Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":118,\"balance_cents\":-11551}",
+   "service": "api",
+   "t": 61.668
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:28.135Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":91,\"balance_cents\":-10860}",
+   "service": "api",
+   "t": 61.716
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:28.146Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":347,\"balance_cents\":-10556}",
+   "service": "api",
+   "t": 61.727
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:28.161Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":675,\"balance_cents\":-14946}",
+   "service": "api",
+   "t": 61.742
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:28.172Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":206,\"balance_cents\":-6640}",
+   "service": "api",
+   "t": 61.754
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:28.242Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":770,\"balance_cents\":-69824}",
+   "service": "api",
+   "t": 61.823
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:28.250Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":611,\"balance_cents\":-3699}",
+   "service": "api",
+   "t": 61.831
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:28.278Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":494,\"balance_cents\":-3332}",
+   "service": "api",
+   "t": 61.859
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:28.323Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":134,\"balance_cents\":-44742}",
+   "service": "api",
+   "t": 61.905
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:28.486Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":135,\"balance_cents\":-47396}",
+   "service": "api",
+   "t": 62.067
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:28.552Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":683,\"balance_cents\":-19492}",
+   "service": "api",
+   "t": 62.133
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:28.589Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":986,\"balance_cents\":-24788}",
+   "service": "api",
+   "t": 62.17
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:28.750Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":236,\"balance_cents\":-8369}",
+   "service": "api",
+   "t": 62.331
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:28.867Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":266,\"balance_cents\":-14566}",
+   "service": "api",
+   "t": 62.448
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:28.872Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":550,\"balance_cents\":-49184}",
+   "service": "api",
+   "t": 62.453
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:28.881Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":291,\"balance_cents\":-28413}",
+   "service": "api",
+   "t": 62.462
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:28.996Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":117,\"balance_cents\":-25439}",
+   "service": "api",
+   "t": 62.577
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:29.086Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":50,\"balance_cents\":-57673}",
+   "service": "api",
+   "t": 62.667
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:29.102Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":583,\"balance_cents\":-19162}",
+   "service": "api",
+   "t": 62.684
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:29.220Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":852,\"balance_cents\":-4482}",
+   "service": "api",
+   "t": 62.802
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:29.228Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":487,\"balance_cents\":-1219}",
+   "service": "api",
+   "t": 62.809
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:29.273Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":350,\"balance_cents\":-4760}",
+   "service": "api",
+   "t": 62.854
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:29.564Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":254,\"balance_cents\":-9897}",
+   "service": "api",
+   "t": 63.145
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:29.594Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":465,\"balance_cents\":-2170}",
+   "service": "api",
+   "t": 63.175
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:29.601Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":961,\"balance_cents\":-15929}",
+   "service": "api",
+   "t": 63.182
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:29.618Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":11,\"balance_cents\":-55111}",
+   "service": "api",
+   "t": 63.199
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:29.640Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":411,\"balance_cents\":-41201}",
+   "service": "api",
+   "t": 63.221
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:29.684Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":286,\"balance_cents\":-18200}",
+   "service": "api",
+   "t": 63.265
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:29.828Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":276,\"balance_cents\":-22372}",
+   "service": "api",
+   "t": 63.409
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:29.895Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":994,\"balance_cents\":-46965}",
+   "service": "api",
+   "t": 63.477
+  },
+  {
+   "line": "2026-11-04 16:27:29.947 UTC [188] ERROR:  permission denied for function pg_ls_waldir",
+   "service": "postgres-db",
+   "t": 63.528
+  },
+  {
+   "line": "2026-11-04 16:27:29.947 UTC [188] STATEMENT:  ",
+   "service": "postgres-db",
+   "t": 63.528
+  },
+  {
+   "line": "\t\t\tSELECT",
+   "service": "postgres-db",
+   "t": 63.528
+  },
+  {
+   "line": "\t\t\t\tCOUNT(*) AS segments,",
+   "service": "postgres-db",
+   "t": 63.528
+  },
+  {
+   "line": "\t\t\t\tSUM(size) AS size",
+   "service": "postgres-db",
+   "t": 63.528
+  },
+  {
+   "line": "\t\t\tFROM pg_ls_waldir()",
+   "service": "postgres-db",
+   "t": 63.528
+  },
+  {
+   "line": "\t\t\tWHERE name ~ '^[0-9A-F]{24}$'",
+   "service": "postgres-db",
+   "t": 63.528
+  },
+  {
+   "line": "time=2026-11-04T16:27:29.947Z level=ERROR source=collector.go:227 msg=\"collector failed\" name=wal duration_seconds=0.03508388 err=\"pq: permission denied for function pg_ls_waldir\"",
+   "service": "postgres-exporter",
+   "t": 63.528
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:30.107Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":588,\"balance_cents\":-6181}",
+   "service": "api",
+   "t": 63.688
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:30.138Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":729,\"balance_cents\":-26141}",
+   "service": "api",
+   "t": 63.719
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:30.199Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":491,\"balance_cents\":-54307}",
+   "service": "api",
+   "t": 63.78
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:30.303Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":582,\"balance_cents\":-11260}",
+   "service": "api",
+   "t": 63.885
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:30.353Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":55,\"balance_cents\":-17284}",
+   "service": "api",
+   "t": 63.934
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:30.374Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":261,\"balance_cents\":-47228}",
+   "service": "api",
+   "t": 63.955
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:30.396Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":505,\"balance_cents\":-57937}",
+   "service": "api",
+   "t": 63.977
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:30.430Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":792,\"balance_cents\":-14339}",
+   "service": "api",
+   "t": 64.011
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:30.477Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":478,\"balance_cents\":-52762}",
+   "service": "api",
+   "t": 64.059
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:30.490Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":736,\"balance_cents\":-8251}",
+   "service": "api",
+   "t": 64.072
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:30.667Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":34,\"balance_cents\":-4263}",
+   "service": "api",
+   "t": 64.248
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:30.705Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":43,\"balance_cents\":-16496}",
+   "service": "api",
+   "t": 64.287
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:30.825Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":447,\"balance_cents\":-3650}",
+   "service": "api",
+   "t": 64.406
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:30.855Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":604,\"balance_cents\":-19077}",
+   "service": "api",
+   "t": 64.436
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:30.890Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":263,\"balance_cents\":-18060}",
+   "service": "api",
+   "t": 64.471
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:30.939Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":27,\"balance_cents\":-5900}",
+   "service": "api",
+   "t": 64.52
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:30.942Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":566,\"balance_cents\":-52860}",
+   "service": "api",
+   "t": 64.523
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:30.960Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":57,\"balance_cents\":-11290}",
+   "service": "api",
+   "t": 64.542
+  },
+  {
+   "line": "--- Logging error ---",
+   "service": "worker",
+   "t": 64.552
+  },
+  {
+   "line": "Traceback (most recent call last):",
+   "service": "worker",
+   "t": 64.553
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/logging/__init__.py\", line 1151, in emit",
+   "service": "worker",
+   "t": 64.553
+  },
+  {
+   "line": "    msg = self.format(record)",
+   "service": "worker",
+   "t": 64.553
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/logging/__init__.py\", line 999, in format",
+   "service": "worker",
+   "t": 64.553
+  },
+  {
+   "line": "    return fmt.format(record)",
+   "service": "worker",
+   "t": 64.553
+  },
+  {
+   "line": "           ~~~~~~~~~~^^^^^^^^",
+   "service": "worker",
+   "t": 64.553
+  },
+  {
+   "line": "  File \"/srv/worker/worker.py\", line 71, in format",
+   "service": "worker",
+   "t": 64.553
+  },
+  {
+   "line": "    return json.dumps(entry, separators=(\",\", \":\"))",
+   "service": "worker",
+   "t": 64.553
+  },
+  {
+   "line": "           ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^",
+   "service": "worker",
+   "t": 64.553
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/json/__init__.py\", line 242, in dumps",
+   "service": "worker",
+   "t": 64.553
+  },
+  {
+   "line": "    **kw).encode(obj)",
+   "service": "worker",
+   "t": 64.553
+  },
+  {
+   "line": "          ~~~~~~^^^^^",
+   "service": "worker",
+   "t": 64.553
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/json/encoder.py\", line 202, in encode",
+   "service": "worker",
+   "t": 64.553
+  },
+  {
+   "line": "    chunks = self.iterencode(o, _one_shot=True)",
+   "service": "worker",
+   "t": 64.553
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/json/encoder.py\", line 263, in iterencode",
+   "service": "worker",
+   "t": 64.553
+  },
+  {
+   "line": "    return _iterencode(o, 0)",
+   "service": "worker",
+   "t": 64.553
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/json/encoder.py\", line 182, in default",
+   "service": "worker",
+   "t": 64.553
+  },
+  {
+   "line": "    raise TypeError(f'Object of type {o.__class__.__name__} '",
+   "service": "worker",
+   "t": 64.553
+  },
+  {
+   "line": "                    f'is not JSON serializable')",
+   "service": "worker",
+   "t": 64.553
+  },
+  {
+   "line": "TypeError: Object of type Decimal is not JSON serializable",
+   "service": "worker",
+   "t": 64.553
+  },
+  {
+   "line": "when serializing dict item 'books_off_cents'",
+   "service": "worker",
+   "t": 64.553
+  },
+  {
+   "line": "Call stack:",
+   "service": "worker",
+   "t": 64.553
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/threading.py\", line 1044, in _bootstrap",
+   "service": "worker",
+   "t": 64.553
+  },
+  {
+   "line": "    self._bootstrap_inner()",
+   "service": "worker",
+   "t": 64.553
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/threading.py\", line 1082, in _bootstrap_inner",
+   "service": "worker",
+   "t": 64.553
+  },
+  {
+   "line": "    self._context.run(self.run)",
+   "service": "worker",
+   "t": 64.553
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/threading.py\", line 1024, in run",
+   "service": "worker",
+   "t": 64.553
+  },
+  {
+   "line": "    self._target(*self._args, **self._kwargs)",
+   "service": "worker",
+   "t": 64.553
+  },
+  {
+   "line": "  File \"/srv/worker/worker.py\", line 180, in audit",
+   "service": "worker",
+   "t": 64.553
+  },
+  {
+   "line": "    log.error(",
+   "service": "worker",
+   "t": 64.553
+  },
+  {
+   "line": "Message: \"books don't balance\"",
+   "service": "worker",
+   "t": 64.553
+  },
+  {
+   "line": "Arguments: ()",
+   "service": "worker",
+   "t": 64.553
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:31.001Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":108,\"balance_cents\":-42564}",
+   "service": "api",
+   "t": 64.582
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:31.003Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":935,\"balance_cents\":-12123}",
+   "service": "api",
+   "t": 64.585
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:31.116Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":410,\"balance_cents\":-3445}",
+   "service": "api",
+   "t": 64.697
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:31.162Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":841,\"balance_cents\":-4863}",
+   "service": "api",
+   "t": 64.743
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:31.185Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":342,\"balance_cents\":-15730}",
+   "service": "api",
+   "t": 64.766
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:31.187Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":594,\"balance_cents\":-18147}",
+   "service": "api",
+   "t": 64.768
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:31.225Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":200,\"balance_cents\":-5532}",
+   "service": "api",
+   "t": 64.806
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:31.242Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":738,\"balance_cents\":-38187}",
+   "service": "api",
+   "t": 64.823
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:31.303Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":704,\"balance_cents\":-48572}",
+   "service": "api",
+   "t": 64.885
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:31.405Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":597,\"balance_cents\":-29254}",
+   "service": "api",
+   "t": 64.986
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:31.413Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":632,\"balance_cents\":-26966}",
+   "service": "api",
+   "t": 64.994
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:31.525Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":159,\"balance_cents\":-31407}",
+   "service": "api",
+   "t": 65.107
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:31.612Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":222,\"balance_cents\":-40978}",
+   "service": "api",
+   "t": 65.193
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:31.742Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":518,\"balance_cents\":-9509}",
+   "service": "api",
+   "t": 65.323
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:31.980Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":141,\"balance_cents\":-2543}",
+   "service": "api",
+   "t": 65.561
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:31.991Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":913,\"balance_cents\":-36664}",
+   "service": "api",
+   "t": 65.573
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:32.004Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":70,\"balance_cents\":-44101}",
+   "service": "api",
+   "t": 65.586
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:32.019Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":517,\"balance_cents\":-68972}",
+   "service": "api",
+   "t": 65.6
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:32.059Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":434,\"balance_cents\":-7600}",
+   "service": "api",
+   "t": 65.641
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:32.216Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":579,\"balance_cents\":-54039}",
+   "service": "api",
+   "t": 65.797
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:32.364Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":2,\"balance_cents\":-24533}",
+   "service": "api",
+   "t": 65.945
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:32.419Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":766,\"balance_cents\":-910}",
+   "service": "api",
+   "t": 66.0
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:32.581Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":489,\"balance_cents\":-9294}",
+   "service": "api",
+   "t": 66.162
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:32.606Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":670,\"balance_cents\":-10282}",
+   "service": "api",
+   "t": 66.187
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:32.713Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":131,\"balance_cents\":-37305}",
+   "service": "api",
+   "t": 66.294
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:32.843Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":637,\"balance_cents\":-4754}",
+   "service": "api",
+   "t": 66.424
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:32.866Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":987,\"balance_cents\":-11363}",
+   "service": "api",
+   "t": 66.447
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:32.893Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":281,\"balance_cents\":-28278}",
+   "service": "api",
+   "t": 66.474
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:32.945Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":470,\"balance_cents\":-14477}",
+   "service": "api",
+   "t": 66.526
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:33.054Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":440,\"balance_cents\":-18375}",
+   "service": "api",
+   "t": 66.635
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:33.138Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":121,\"balance_cents\":-1794}",
+   "service": "api",
+   "t": 66.719
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:33.246Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":265,\"balance_cents\":-1425}",
+   "service": "api",
+   "t": 66.827
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:33.305Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":426,\"balance_cents\":-5953}",
+   "service": "api",
+   "t": 66.886
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:33.368Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":334,\"balance_cents\":-40640}",
+   "service": "api",
+   "t": 66.949
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:33.421Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":543,\"balance_cents\":-15548}",
+   "service": "api",
+   "t": 67.002
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:33.502Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":897,\"balance_cents\":-17757}",
+   "service": "api",
+   "t": 67.083
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:33.534Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":771,\"balance_cents\":-13406}",
+   "service": "api",
+   "t": 67.115
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:33.548Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":984,\"balance_cents\":-900}",
+   "service": "api",
+   "t": 67.13
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:33.576Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":687,\"balance_cents\":-4464}",
+   "service": "api",
+   "t": 67.158
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:33.660Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":248,\"balance_cents\":-45684}",
+   "service": "api",
+   "t": 67.241
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:33.744Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":382,\"balance_cents\":-3785}",
+   "service": "api",
+   "t": 67.326
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:33.774Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":797,\"balance_cents\":-9686}",
+   "service": "api",
+   "t": 67.355
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:33.837Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":673,\"balance_cents\":-12324}",
+   "service": "api",
+   "t": 67.418
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:33.909Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":546,\"balance_cents\":-25574}",
+   "service": "api",
+   "t": 67.49
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:34.217Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":890,\"balance_cents\":-4334}",
+   "service": "api",
+   "t": 67.798
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:34.329Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":20,\"balance_cents\":-18771}",
+   "service": "api",
+   "t": 67.911
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:34.432Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":269,\"balance_cents\":-4329}",
+   "service": "api",
+   "t": 68.013
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:34.500Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":548,\"balance_cents\":-4596}",
+   "service": "api",
+   "t": 68.081
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:34.593Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":713,\"balance_cents\":-9985}",
+   "service": "api",
+   "t": 68.174
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:34.807Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":892,\"balance_cents\":-42889}",
+   "service": "api",
+   "t": 68.388
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:35.003Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":580,\"balance_cents\":-13699}",
+   "service": "api",
+   "t": 68.585
+  },
+  {
+   "line": "2026-11-04 16:27:35.103 UTC [197] ERROR:  permission denied for function pg_ls_waldir",
+   "service": "postgres-db",
+   "t": 68.685
+  },
+  {
+   "line": "2026-11-04 16:27:35.103 UTC [197] STATEMENT:  ",
+   "service": "postgres-db",
+   "t": 68.685
+  },
+  {
+   "line": "\t\t\tSELECT",
+   "service": "postgres-db",
+   "t": 68.685
+  },
+  {
+   "line": "\t\t\t\tCOUNT(*) AS segments,",
+   "service": "postgres-db",
+   "t": 68.685
+  },
+  {
+   "line": "\t\t\t\tSUM(size) AS size",
+   "service": "postgres-db",
+   "t": 68.685
+  },
+  {
+   "line": "\t\t\tFROM pg_ls_waldir()",
+   "service": "postgres-db",
+   "t": 68.685
+  },
+  {
+   "line": "\t\t\tWHERE name ~ '^[0-9A-F]{24}$'",
+   "service": "postgres-db",
+   "t": 68.685
+  },
+  {
+   "line": "time=2026-11-04T16:27:35.104Z level=ERROR source=collector.go:227 msg=\"collector failed\" name=wal duration_seconds=0.03739461 err=\"pq: permission denied for function pg_ls_waldir\"",
+   "service": "postgres-exporter",
+   "t": 68.685
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:27:35.148Z\",\"level\":\"error\",\"service\":\"ledger-api\",\"logger\":\"db\",\"msg\":\"wallet overdrawn\",\"account_id\":61,\"balance_cents\":-4341}",
+   "service": "api",
+   "t": 68.729
+  }
+ ],
+ "recorded_at": 1793809586.4,
+ "samples": [
+  {
+   "t": 5.5,
+   "values": {
+    "accounts_off": 0.0,
+    "books_off_cents": 0.0,
+    "db_connections": 18.0,
+    "db_pool_in_use": 0.0,
+    "deadlocks": 0.0,
+    "error_rate": 0.0,
+    "negative_balances": 112.0,
+    "overdrafts": 25.984,
+    "p99_latency_ms": 97.25,
+    "refused_rate": null,
+    "request_rate": 203.06,
+    "settlements_pending": 3.0
+   }
+  },
+  {
+   "t": 10.7,
+   "values": {
+    "accounts_off": 0.0,
+    "books_off_cents": 0.0,
+    "db_connections": 18.0,
+    "db_pool_in_use": 0.0,
+    "deadlocks": 0.0,
+    "error_rate": 0.0,
+    "negative_balances": 194.0,
+    "overdrafts": 22.6901,
+    "p99_latency_ms": 40.84,
+    "refused_rate": 10.0845,
+    "request_rate": 197.0352,
+    "settlements_pending": 15.0
+   }
+  },
+  {
+   "t": 15.8,
+   "values": {
+    "accounts_off": 0.0,
+    "books_off_cents": 0.0,
+    "db_connections": 18.0,
+    "db_pool_in_use": 0.0,
+    "deadlocks": 0.0,
+    "error_rate": 0.0,
+    "negative_balances": 284.0,
+    "overdrafts": 19.834,
+    "p99_latency_ms": 27.0,
+    "refused_rate": 13.0282,
+    "request_rate": 196.784,
+    "settlements_pending": 8.0
+   }
+  },
+  {
+   "t": 21.0,
+   "values": {
+    "accounts_off": 0.0,
+    "books_off_cents": 0.0,
+    "db_connections": 18.0,
+    "db_pool_in_use": 0.0,
+    "deadlocks": 0.0,
+    "error_rate": 0.0,
+    "negative_balances": 327.0,
+    "overdrafts": 19.0729,
+    "p99_latency_ms": 24.8859,
+    "refused_rate": 16.7374,
+    "request_rate": 196.1781,
+    "settlements_pending": 7.0
+   }
+  },
+  {
+   "t": 26.1,
+   "values": {
+    "accounts_off": 0.0,
+    "books_off_cents": 0.0,
+    "db_connections": 18.0,
+    "db_pool_in_use": 0.0,
+    "deadlocks": 0.0,
+    "error_rate": 0.0,
+    "negative_balances": 394.0,
+    "overdrafts": 22.108,
+    "p99_latency_ms": 24.163,
+    "refused_rate": 15.9023,
+    "request_rate": 201.1054,
+    "settlements_pending": 14.0
+   }
+  },
+  {
+   "t": 31.3,
+   "values": {
+    "accounts_off": 0.0,
+    "books_off_cents": 0.0,
+    "db_connections": 18.0,
+    "db_pool_in_use": 0.0,
+    "deadlocks": 0.0,
+    "error_rate": 0.0,
+    "negative_balances": 435.0,
+    "overdrafts": 17.9828,
+    "p99_latency_ms": 36.75,
+    "refused_rate": 20.3032,
+    "request_rate": 193.5572,
+    "settlements_pending": 2.0
+   }
+  },
+  {
+   "t": 36.4,
+   "values": {
+    "accounts_off": 0.0,
+    "books_off_cents": 0.0,
+    "db_connections": 18.0,
+    "db_pool_in_use": 1.0,
+    "deadlocks": 0.0,
+    "error_rate": 0.0,
+    "negative_balances": 459.0,
+    "overdrafts": 14.1471,
+    "p99_latency_ms": 47.75,
+    "refused_rate": 19.7672,
+    "request_rate": 184.4937,
+    "settlements_pending": 6.0
+   }
+  },
+  {
+   "t": 41.6,
+   "values": {
+    "accounts_off": 0.0,
+    "books_off_cents": 0.0,
+    "db_connections": 18.0,
+    "db_pool_in_use": 1.0,
+    "deadlocks": 0.0,
+    "error_rate": 0.0,
+    "negative_balances": 482.0,
+    "overdrafts": 14.9719,
+    "p99_latency_ms": 67.5769,
+    "refused_rate": 24.7611,
+    "request_rate": 181.0059,
+    "settlements_pending": 7.0
+   }
+  },
+  {
+   "t": 46.8,
+   "values": {
+    "accounts_off": 0.0,
+    "books_off_cents": 0.0,
+    "db_connections": 20.0,
+    "db_pool_in_use": 1.0,
+    "deadlocks": 0.0,
+    "error_rate": 0.0,
+    "negative_balances": 500.0,
+    "overdrafts": 11.0522,
+    "p99_latency_ms": 197.7812,
+    "refused_rate": 17.4213,
+    "request_rate": 141.8056,
+    "settlements_pending": 12.0
+   }
+  },
+  {
+   "t": 52.1,
+   "values": {
+    "accounts_off": 0.0,
+    "books_off_cents": 0.0,
+    "db_connections": 20.0,
+    "db_pool_in_use": 3.0,
+    "deadlocks": 0.0,
+    "error_rate": 0.0,
+    "negative_balances": 507.0,
+    "overdrafts": 10.2327,
+    "p99_latency_ms": 157.5769,
+    "refused_rate": 18.6048,
+    "request_rate": 149.0248,
+    "settlements_pending": 4.0
+   }
+  },
+  {
+   "t": 57.5,
+   "values": {
+    "accounts_off": 0.0,
+    "books_off_cents": 0.0,
+    "db_connections": 20.0,
+    "db_pool_in_use": 0.0,
+    "deadlocks": 0.0,
+    "error_rate": 0.0,
+    "negative_balances": 491.0,
+    "overdrafts": 11.0553,
+    "p99_latency_ms": 58.75,
+    "refused_rate": 26.1837,
+    "request_rate": 186.195,
+    "settlements_pending": 10.0
+   }
+  },
+  {
+   "t": 62.7,
+   "values": {
+    "accounts_off": 0.0,
+    "books_off_cents": 0.0,
+    "db_connections": 20.0,
+    "db_pool_in_use": 1.0,
+    "deadlocks": 0.0,
+    "error_rate": 0.0,
+    "negative_balances": 471.0,
+    "overdrafts": 15.4251,
+    "p99_latency_ms": 24.0365,
+    "refused_rate": 24.6802,
+    "request_rate": 195.7064,
+    "settlements_pending": 9.0
+   }
+  },
+  {
+   "t": 67.9,
+   "values": {
+    "accounts_off": 0.0,
+    "books_off_cents": 0.0,
+    "db_connections": 20.0,
+    "db_pool_in_use": 0.0,
+    "deadlocks": 0.0,
+    "error_rate": 0.0,
+    "negative_balances": 482.0,
+    "overdrafts": 13.4182,
+    "p99_latency_ms": 24.8029,
+    "refused_rate": 28.5867,
+    "request_rate": 190.9669,
+    "settlements_pending": 15.0
+   }
+  }
+ ],
+ "schema": "devgrill/case-evidence@1",
+ "source_hash": "76300f75b1ae8b1958e101adfaeeeb1f8255c0ba8b2e460c46da240f4ca2f9b7",
+ "status": [
+  {
+   "health": "healthy",
+   "name": "api",
+   "oom_killed": false,
+   "restarts": 0,
+   "started_at": "2026-11-04T16:26:21.461081212Z",
+   "state": "running"
+  },
+  {
+   "health": "healthy",
+   "name": "postgres-db",
+   "oom_killed": false,
+   "restarts": 0,
+   "started_at": "2026-11-04T16:26:12.361948019Z",
+   "state": "running"
+  },
+  {
+   "health": null,
+   "name": "postgres-exporter",
+   "oom_killed": false,
+   "restarts": 0,
+   "started_at": "2026-11-04T16:26:14.345456824Z",
+   "state": "running"
+  },
+  {
+   "health": null,
+   "name": "tools",
+   "oom_killed": false,
+   "restarts": 0,
+   "started_at": "2026-11-04T16:26:19.528475284Z",
+   "state": "running"
+  },
+  {
+   "health": null,
+   "name": "worker",
+   "oom_killed": false,
+   "restarts": 0,
+   "started_at": "2026-11-04T16:26:14.350937085Z",
+   "state": "running"
+  }
+ ]
+}

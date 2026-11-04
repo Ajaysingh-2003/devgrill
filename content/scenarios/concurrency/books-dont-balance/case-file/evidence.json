@@ -1,0 +1,2430 @@
+{
+ "breached_after_s": 7.2,
+ "cache": null,
+ "changes": {
+  "0bb9b19c073a5b757805b69d2e24027eb8d71b37": {
+   "at": 1790958282,
+   "author": "priya",
+   "diff": "diff --git a/Dockerfile b/Dockerfile\nnew file mode 100644\nindex 0000000..11923a9\n--- /dev/null\n+++ b/Dockerfile\n@@ -0,0 +1,19 @@\n+# Ledger API image. The same source is a git repo in the tools container (/workspace/api);\n+# `devgrill deploy` copies app/ and config/ from there into /srv/app and restarts this service.\n+FROM python:3.14-slim\n+\n+ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1 \\\n+    PROMETHEUS_MULTIPROC_DIR=/tmp/prometheus\n+RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*\n+\n+WORKDIR /srv/app\n+COPY pyproject.toml ./\n+RUN pip install --quiet \\\n+    \"fastapi==0.143.3\" \"uvicorn==0.54.0\" \"psycopg[binary,pool]==3.3.6\" \\\n+    \"prometheus-client==0.26.0\"\n+COPY app ./app\n+COPY config ./config\n+\n+EXPOSE 8000\n+# Metric files from a previous run would double-count after a restart: start clean.\n+CMD [\"sh\", \"-c\", \"rm -rf \\\"$PROMETHEUS_MULTIPROC_DIR\\\" && mkdir -p \\\"$PROMETHEUS_MULTIPROC_DIR\\\" && exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4 --no-access-log\"]\ndiff --git a/app/__init__.py b/app/__init__.py\nnew file mode 100644\nindex 0000000..e69de29\ndiff --git a/app/db.py b/app/db.py\nnew file mode 100644\nindex 0000000..a109483\n--- /dev/null\n+++ b/app/db.py\n@@ -0,0 +1,136 @@\n+\"\"\"Postgres access through a connection pool (psycopg 3). Every movement of money is one\n+transaction: a transfer row, two entries that sum to zero, and both balances.\"\"\"\n+\n+from __future__ import annotations\n+\n+import logging\n+from collections.abc import Iterator\n+from contextlib import contextmanager\n+from typing import Any\n+\n+from prometheus_client import Counter\n+from psycopg import Connection\n+from psycopg.rows import dict_row\n+from psycopg_pool import ConnectionPool, PoolTimeout\n+\n+from app import settings\n+from app.logging_setup import fields\n+\n+log = logging.getLogger(\"db\")\n+\n+#: Debits that left a customer's wallet below zero. Never meant to happen.\n+OVERDRAFTS = Counter(\"ledger_overdrafts_total\", \"Debits that took a wallet below zero\")\n+\n+\n+class DatabaseBusy(Exception):\n+    \"\"\"No connection became free within the pool timeout.\"\"\"\n+\n+\n+class InsufficientFunds(Exception):\n+    \"\"\"The payer's balance doesn't cover the amount.\"\"\"\n+\n+\n+pool = ConnectionPool(\n+    settings.DATABASE_URL,\n+    min_size=settings.DB_POOL_MIN,\n+    max_size=settings.DB_POOL_MAX,\n+    timeout=settings.DB_POOL_TIMEOUT_S,\n+    kwargs={\"row_factory\": dict_row},\n+    open=False,\n+)\n+\n+\n+@contextmanager\n+def connection() -> Iterator[Connection[dict[str, Any]]]:\n+    try:\n+        with pool.connection() as conn:\n+            yield conn\n+    except PoolTimeout as exc:\n+        log.error(\"pool exhausted\", extra=fields(pool_max=settings.DB_POOL_MAX))\n+        raise DatabaseBusy() from exc\n+\n+\n+def account(account_id: int) -> dict[str, Any] | None:\n+    with connection() as conn:\n+        return conn.execute(\n+            \"SELECT id, owner, kind, balance_cents, updated_at FROM accounts WHERE id = %s\",\n+            (account_id,),\n+        ).fetchone()\n+\n+\n+def _move(\n+    conn: Connection[dict[str, Any]], from_id: int, to_id: int, amount: int, kind: str\n+) -> dict[str, Any]:\n+    \"\"\"Moves `amount` from one account to another inside the caller's transaction.\"\"\"\n+    # Lock both accounts, always in id order: two transfers in opposite directions take the\n+    # locks in the same order, so neither can hold one row while waiting for the other, and\n+    # the balance read here can't change before the debit below.\n+    rows = conn.execute(\n+        \"SELECT id, kind, balance_cents FROM accounts WHERE id = ANY(%s) ORDER BY id FOR UPDATE\",\n+        ([from_id, to_id],),\n+    ).fetchall()\n+    accounts = {row[\"id\"]: row for row in rows}\n+    if from_id not in accounts or to_id not in accounts:\n+        raise LookupError(\"account\")\n+    payer = accounts[from_id]\n+    if payer[\"kind\"] != \"house\" and payer[\"balance_cents\"] < amount:\n+        raise InsufficientFunds()\n+    transfer = conn.execute(\n+        \"INSERT INTO transfers (from_account, to_account, amount_cents, kind)\"\n+        \" VALUES (%s, %s, %s, %s) RETURNING id, from_account, to_account, amount_cents, kind,\"\n+        \" created_at\",\n+        (from_id, to_id, amount, kind),\n+    ).fetchone()\n+    assert transfer is not None\n+    conn.execute(\n+        \"INSERT INTO entries (transfer_id, account_id, amount_cents)\"\n+        \" VALUES (%s, %s, %s), (%s, %s, %s)\",\n+        (transfer[\"id\"], to_id, amount, transfer[\"id\"], from_id, -amount),\n+    )\n+    debited = conn.execute(\n+        \"UPDATE accounts SET balance_cents = balance_cents - %s, updated_at = now() WHERE id = %s\"\n+        \" RETURNING kind, balance_cents\",\n+        (amount, from_id),\n+    ).fetchone()\n+    if debited and debited[\"kind\"] != \"house\" and debited[\"balance_cents\"] < 0:\n+        OVERDRAFTS.inc()\n+        log.error(\n+            \"wallet overdrawn\",\n+            extra=fields(account_id=from_id, balance_cents=debited[\"balance_cents\"]),\n+        )\n+    conn.execute(\n+        \"UPDATE accounts SET balance_cents = balance_cents + %s, updated_at = now() WHERE id = %s\",\n+        (amount, to_id),\n+    )\n+    return transfer\n+\n+\n+def transfer(from_id: int, to_id: int, amount: int) -> dict[str, Any]:\n+    with connection() as conn, conn.transaction():\n+        return _move(conn, from_id, to_id, amount, \"transfer\")\n+\n+\n+def pay(customer_id: int, merchant_id: int, amount: int) -> dict[str, Any]:\n+    \"\"\"A card payment: the customer is debited now (into the house's clearing balance), and the\n+    merchant is paid out later by the worker's settlement run.\"\"\"\n+    with connection() as conn, conn.transaction():\n+        merchant = conn.execute(\n+            \"SELECT id FROM accounts WHERE id = %s AND kind = 'merchant'\", (merchant_id,)\n+        ).fetchone()\n+        if merchant is None:\n+            raise LookupError(\"merchant\")\n+        payment = _move(conn, customer_id, settings.HOUSE_ACCOUNT, amount, \"payment\")\n+        conn.execute(\n+            \"INSERT INTO settlements (merchant_id, amount_cents) VALUES (%s, %s)\",\n+            (merchant_id, amount),\n+        )\n+        return payment\n+\n+\n+def healthy() -> bool:\n+    try:\n+        with connection() as conn:\n+            conn.execute(\"SELECT 1\")\n+        return True\n+    except Exception:\n+        return False\ndiff --git a/app/logging_setup.py b/app/logging_setup.py\nnew file mode 100644\nindex 0000000..1130280\n--- /dev/null\n+++ b/app/logging_setup.py\n@@ -0,0 +1,45 @@\n+\"\"\"JSON logs on stdout, one object per line, so the Logs panel can filter by field.\"\"\"\n+\n+from __future__ import annotations\n+\n+import json\n+import logging\n+import sys\n+import time\n+from typing import Any\n+\n+from app import settings\n+\n+\n+class JsonFormatter(logging.Formatter):\n+    def format(self, record: logging.LogRecord) -> str:\n+        entry: dict[str, Any] = {\n+            \"ts\": time.strftime(\"%Y-%m-%dT%H:%M:%S\", time.gmtime(record.created))\n+            + f\".{int(record.msecs):03d}Z\",\n+            \"level\": record.levelname.lower(),\n+            \"service\": settings.SERVICE_NAME,\n+            \"logger\": record.name,\n+            \"msg\": record.getMessage(),\n+        }\n+        for key, value in record.__dict__.items():\n+            if key.startswith(\"x_\"):\n+                entry[key[2:]] = value\n+        if record.exc_info:\n+            entry[\"exc\"] = self.formatException(record.exc_info)\n+        return json.dumps(entry, separators=(\",\", \":\"))\n+\n+\n+def configure() -> None:\n+    handler = logging.StreamHandler(sys.stdout)\n+    handler.setFormatter(JsonFormatter())\n+    root = logging.getLogger()\n+    root.handlers[:] = [handler]\n+    root.setLevel(logging.INFO)\n+    # uvicorn's access log duplicates our request log; keep its errors only.\n+    logging.getLogger(\"uvicorn.access\").disabled = True\n+    logging.getLogger(\"uvicorn.error\").setLevel(logging.WARNING)\n+\n+\n+def fields(**values: Any) -> dict[str, Any]:\n+    \"\"\"`log.info(\"cache miss\", extra=fields(product_id=42))` -> a `product_id` JSON field.\"\"\"\n+    return {f\"x_{key}\": value for key, value in values.items()}\ndiff --git a/app/main.py b/app/main.py\nnew file mode 100644\nindex 0000000..7486636\n--- /dev/null\n+++ b/app/main.py\n@@ -0,0 +1,174 @@\n+\"\"\"Ledger payments API: wallets, transfers and card payments. Small on purpose: every line is\n+something an on-call engineer may have to read at 2 a.m., and the money has to add up.\"\"\"\n+\n+from __future__ import annotations\n+\n+import logging\n+import time\n+from collections.abc import AsyncIterator\n+from contextlib import asynccontextmanager\n+from typing import Any\n+\n+from fastapi import FastAPI, HTTPException, Request, Response\n+from fastapi.responses import JSONResponse\n+from prometheus_client import (\n+    CONTENT_TYPE_LATEST,\n+    CollectorRegistry,\n+    Counter,\n+    Gauge,\n+    Histogram,\n+    generate_latest,\n+    multiprocess,\n+)\n+from psycopg import errors as pg_errors\n+from pydantic import BaseModel, Field\n+\n+from app import db, logging_setup, settings\n+from app.logging_setup import fields\n+\n+logging_setup.configure()\n+log = logging.getLogger(\"api\")\n+\n+REQUESTS = Counter(\"http_requests_total\", \"HTTP requests\", [\"method\", \"route\", \"status\"])\n+LATENCY = Histogram(\n+    \"http_request_duration_seconds\",\n+    \"Request latency\",\n+    [\"route\"],\n+    buckets=(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10),\n+)\n+#: Money movements by outcome: ok, insufficient (refused), or failed.\n+MOVEMENTS = Counter(\"ledger_movements_total\", \"Transfers and payments\", [\"kind\", \"result\"])\n+# Four uvicorn processes share these through PROMETHEUS_MULTIPROC_DIR.\n+DB_POOL_IN_USE = Gauge(\n+    \"db_pool_in_use\", \"Connections checked out of the pool\", multiprocess_mode=\"livesum\"\n+)\n+BUILD = Gauge(\"build_info\", \"Build\", [\"sha\"], multiprocess_mode=\"max\")\n+\n+\n+@asynccontextmanager\n+async def lifespan(app: FastAPI) -> AsyncIterator[None]:\n+    BUILD.labels(sha=settings.GIT_SHA).set(1)\n+    db.pool.open()\n+    log.info(\"started\", extra=fields(sha=settings.GIT_SHA))\n+    try:\n+        yield\n+    finally:\n+        db.pool.close()\n+\n+\n+app = FastAPI(title=\"Ledger\", lifespan=lifespan)\n+\n+\n+def _route_name(request: Request) -> str:\n+    route = request.scope.get(\"route\")\n+    return getattr(route, \"path\", \"unmatched\")\n+\n+\n+@app.middleware(\"http\")\n+async def observe(request: Request, call_next: Any) -> Response:\n+    started = time.perf_counter()\n+    try:\n+        response: Response = await call_next(request)\n+    except Exception:\n+        name = _route_name(request)\n+        REQUESTS.labels(request.method, name, \"500\").inc()\n+        LATENCY.labels(name).observe(time.perf_counter() - started)\n+        log.exception(\"request failed\", extra=fields(route=name))\n+        raise\n+    name = _route_name(request)\n+    elapsed = time.perf_counter() - started\n+    stats = db.pool.get_stats()\n+    DB_POOL_IN_USE.set(stats.get(\"pool_size\", 0) - stats.get(\"pool_available\", 0))\n+    REQUESTS.labels(request.method, name, str(response.status_code)).inc()\n+    LATENCY.labels(name).observe(elapsed)\n+    if response.status_code >= 500 or elapsed > 1.0:\n+        log.warning(\n+            \"slow or failed request\",\n+            extra=fields(route=name, status=response.status_code, ms=round(elapsed * 1000)),\n+        )\n+    return response\n+\n+\n+@app.exception_handler(db.DatabaseBusy)\n+async def _busy(request: Request, exc: db.DatabaseBusy) -> JSONResponse:\n+    return JSONResponse({\"error\": \"database busy, try again\"}, status_code=503)\n+\n+\n+@app.exception_handler(pg_errors.DeadlockDetected)\n+async def _deadlock(request: Request, exc: pg_errors.DeadlockDetected) -> JSONResponse:\n+    log.error(\"deadlock detected\", extra=fields(route=_route_name(request), error=str(exc).strip()))\n+    return JSONResponse({\"error\": \"the transfer failed, try again\"}, status_code=503)\n+\n+\n+@app.exception_handler(pg_errors.QueryCanceled)\n+async def _cancelled(request: Request, exc: pg_errors.QueryCanceled) -> JSONResponse:\n+    log.error(\"query cancelled\", extra=fields(route=_route_name(request), error=str(exc).strip()))\n+    return JSONResponse({\"error\": \"the database took too long\"}, status_code=503)\n+\n+\n+@app.get(\"/healthz\")\n+def healthz() -> dict[str, Any]:\n+    return {\"status\": \"ok\", \"sha\": settings.GIT_SHA}\n+\n+\n+@app.get(\"/readyz\")\n+def readyz() -> JSONResponse:\n+    ok = db.healthy()\n+    return JSONResponse({\"database\": ok}, status_code=200 if ok else 503)\n+\n+\n+@app.get(\"/metrics\")\n+def metrics() -> Response:\n+    registry = CollectorRegistry()\n+    multiprocess.MultiProcessCollector(registry)\n+    return Response(generate_latest(registry), media_type=CONTENT_TYPE_LATEST)\n+\n+\n+@app.get(\"/accounts/{account_id}\")\n+def get_account(account_id: int) -> dict[str, Any]:\n+    account = db.account(account_id)\n+    if account is None:\n+        raise HTTPException(404, \"no such account\")\n+    return account\n+\n+\n+class TransferIn(BaseModel):\n+    from_account: int = Field(ge=0)\n+    to_account: int = Field(ge=0)\n+    amount_cents: int = Field(gt=0, le=10_000_000)\n+\n+\n+@app.post(\"/transfers\", status_code=201)\n+def create_transfer(body: TransferIn) -> dict[str, Any]:\n+    if body.from_account == body.to_account:\n+        raise HTTPException(422, \"an account can't pay itself\")\n+    return _record(\n+        \"transfer\", lambda: db.transfer(body.from_account, body.to_account, body.amount_cents)\n+    )\n+\n+\n+class PaymentIn(BaseModel):\n+    account_id: int = Field(ge=1)\n+    merchant_id: int = Field(ge=1)\n+    amount_cents: int = Field(gt=0, le=10_000_000)\n+\n+\n+@app.post(\"/payments\", status_code=201)\n+def create_payment(body: PaymentIn) -> dict[str, Any]:\n+    return _record(\"payment\", lambda: db.pay(body.account_id, body.merchant_id, body.amount_cents))\n+\n+\n+def _record(kind: str, move: Any) -> dict[str, Any]:\n+    try:\n+        result: dict[str, Any] = move()\n+    except LookupError:\n+        MOVEMENTS.labels(kind, \"refused\").inc()\n+        raise HTTPException(404, \"no such account\") from None\n+    except db.InsufficientFunds:\n+        MOVEMENTS.labels(kind, \"insufficient\").inc()\n+        raise HTTPException(409, \"insufficient funds\") from None\n+    except Exception:\n+        MOVEMENTS.labels(kind, \"failed\").inc()\n+        raise\n+    MOVEMENTS.labels(kind, \"ok\").inc()\n+    return result\ndiff --git a/app/settings.py b/app/settings.py\nnew file mode 100644\nindex 0000000..c2649ba\n--- /dev/null\n+++ b/app/settings.py\n@@ -0,0 +1,41 @@\n+\"\"\"Configuration: connection strings from the environment, tunables from config/app.env.\n+\n+config/app.env is part of the repo and ships with every deploy, so a config change is a\n+commit you can find in `git log`, revert, and redeploy. The environment wins over the file.\n+\"\"\"\n+\n+from __future__ import annotations\n+\n+import os\n+from pathlib import Path\n+\n+\n+def _load_env_file(path: Path) -> None:\n+    if not path.is_file():\n+        return\n+    for raw in path.read_text(encoding=\"utf-8\").splitlines():\n+        line = raw.strip()\n+        if not line or line.startswith(\"#\") or \"=\" not in line:\n+            continue\n+        name, value = line.split(\"=\", 1)\n+        os.environ.setdefault(name.strip(), value.strip())\n+\n+\n+_load_env_file(Path(__file__).resolve().parent.parent / \"config\" / \"app.env\")\n+\n+\n+def _int(name: str, default: int) -> int:\n+    return int(os.environ.get(name, default))\n+\n+\n+DATABASE_URL = os.environ.get(\"DATABASE_URL\", \"postgresql://ledger:ledger@postgres-db:5432/ledger\")\n+DB_POOL_MIN = _int(\"DB_POOL_MIN\", 2)\n+DB_POOL_MAX = _int(\"DB_POOL_MAX\", 10)\n+DB_POOL_TIMEOUT_S = float(os.environ.get(\"DB_POOL_TIMEOUT_S\", \"5\"))\n+\n+#: The house account: it funds opening balances and clears card payments until the\n+#: merchant is paid out. It is the only account allowed below zero.\n+HOUSE_ACCOUNT = 0\n+\n+SERVICE_NAME = os.environ.get(\"SERVICE_NAME\", \"ledger-api\")\n+GIT_SHA = os.environ.get(\"GIT_SHA\", \"dev\")\ndiff --git a/config/app.env b/config/app.env\nnew file mode 100644\nindex 0000000..54baede\n--- /dev/null\n+++ b/config/app.env\n@@ -0,0 +1,8 @@\n+# ledger-api runtime config. Ships with\n(cut short in this recording)",
+   "files": [
+    "Dockerfile",
+    "app/__init__.py",
+    "app/db.py",
+    "app/logging_setup.py",
+    "app/main.py",
+    "app/settings.py",
+    "config/app.env",
+    "pyproject.toml"
+   ],
+   "message": "Ledger api: initial import",
+   "service": "api",
+   "sha": "0bb9b19c073a5b757805b69d2e24027eb8d71b37",
+   "short": "0bb9b19"
+  },
+  "2daf1995d78c1e83aafa22a8e69c83715edc25ed": {
+   "at": 1793723083,
+   "author": "deploy-bot",
+   "diff": "diff --git a/CHANGELOG.md b/CHANGELOG.md\nnew file mode 100644\nindex 0000000..547adee\n--- /dev/null\n+++ b/CHANGELOG.md\n@@ -0,0 +1 @@\n+- worker: audit the books every 5 seconds\n",
+   "files": [
+    "CHANGELOG.md"
+   ],
+   "message": "worker: audit the books every 5 seconds",
+   "service": "worker",
+   "sha": "2daf1995d78c1e83aafa22a8e69c83715edc25ed",
+   "short": "2daf199"
+  },
+  "5ff5ac3a4a86d39a4fd8d3d3442d22f163a8e56d": {
+   "at": 1793550282,
+   "author": "deploy-bot",
+   "diff": "diff --git a/CHANGELOG.md b/CHANGELOG.md\nnew file mode 100644\nindex 0000000..8b83762\n--- /dev/null\n+++ b/CHANGELOG.md\n@@ -0,0 +1 @@\n+- accounts: show the last 20 entries on the statement\n",
+   "files": [
+    "CHANGELOG.md"
+   ],
+   "message": "accounts: show the last 20 entries on the statement",
+   "service": "api",
+   "sha": "5ff5ac3a4a86d39a4fd8d3d3442d22f163a8e56d",
+   "short": "5ff5ac3"
+  },
+  "6a127b3f8b6b17a11f8bf64c5adbbf19d3e2ba8f": {
+   "at": 1790958283,
+   "author": "priya",
+   "diff": "diff --git a/Dockerfile b/Dockerfile\nnew file mode 100644\nindex 0000000..7b3933c\n--- /dev/null\n+++ b/Dockerfile\n@@ -0,0 +1,8 @@\n+FROM python:3.14-slim\n+ENV PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1\n+RUN pip install --quiet \"psycopg[binary]==3.3.6\" \"prometheus-client==0.26.0\"\n+WORKDIR /srv/worker\n+COPY worker.py ./\n+COPY config ./config\n+EXPOSE 9100\n+CMD [\"python\", \"worker.py\"]\ndiff --git a/config/worker.env b/config/worker.env\nnew file mode 100644\nindex 0000000..5548993\n--- /dev/null\n+++ b/config/worker.env\n@@ -0,0 +1,9 @@\n+# ledger worker runtime config. Ships with every deploy (`devgrill deploy worker`).\n+\n+# Settlement consumers (threads), and how many settlements each pays out per transaction.\n+CONSUMERS=1\n+BATCH=20\n+# Seconds a consumer waits when there is nothing to settle.\n+POLL_S=0.2\n+# Seconds between audits of the books.\n+AUDIT_EVERY_S=5\ndiff --git a/worker.py b/worker.py\nnew file mode 100644\nindex 0000000..422acb9\n--- /dev/null\n+++ b/worker.py\n@@ -0,0 +1,211 @@\n+\"\"\"Ledger worker: pays merchants out for card payments, and audits the books.\n+\n+Settlement: each card payment leaves a pending settlement. Consumers take them in batches\n+(FOR UPDATE SKIP LOCKED, so two consumers never take the same one) and pay each one from the\n+house's clearing balance to the merchant: a transfer, two entries and both balances, in the\n+batch's transaction.\n+\n+Audit: every AUDIT_EVERY_S seconds the worker checks the books in one snapshot: customer\n+accounts below zero, accounts whose balance isn't the sum of their entries, and whether all\n+balances still add up to zero. Logs JSON like the API; metrics on :9100. Tunables live in\n+config/worker.env, deployed with the code.\n+\"\"\"\n+\n+from __future__ import annotations\n+\n+import json\n+import logging\n+import os\n+import signal\n+import sys\n+import threading\n+import time\n+from pathlib import Path\n+from typing import Any\n+\n+import psycopg\n+from prometheus_client import Counter, Gauge, start_http_server\n+\n+\n+def _load_env_file(path: Path) -> None:\n+    \"\"\"config/worker.env: KEY=value lines; the process environment wins.\"\"\"\n+    if not path.is_file():\n+        return\n+    for raw in path.read_text(encoding=\"utf-8\").splitlines():\n+        line = raw.strip()\n+        if line and not line.startswith(\"#\") and \"=\" in line:\n+            name, value = line.split(\"=\", 1)\n+            os.environ.setdefault(name.strip(), value.strip())\n+\n+\n+_load_env_file(Path(__file__).resolve().parent / \"config\" / \"worker.env\")\n+\n+DATABASE_URL = os.environ.get(\"DATABASE_URL\", \"postgresql://ledger:ledger@postgres-db:5432/ledger\")\n+HOUSE_ACCOUNT = 0\n+#: Settlement consumers (threads), and settlements each takes per transaction.\n+CONSUMERS = int(os.environ.get(\"CONSUMERS\", \"1\"))\n+BATCH = int(os.environ.get(\"BATCH\", \"20\"))\n+POLL_S = float(os.environ.get(\"POLL_S\", \"0.2\"))\n+AUDIT_EVERY_S = float(os.environ.get(\"AUDIT_EVERY_S\", \"5\"))\n+\n+SETTLED = Counter(\"settlements_processed_total\", \"Settlements paid out\", [\"result\"])\n+PENDING = Gauge(\"settlements_pending\", \"Settlements waiting to be paid out\")\n+OLDEST = Gauge(\"settlements_oldest_seconds\", \"Age of the oldest pending settlement\")\n+NEGATIVE = Gauge(\"ledger_negative_balances\", \"Customer accounts below zero\")\n+ACCOUNTS_OFF = Gauge(\"ledger_accounts_off\", \"Accounts whose balance isn't the sum of entries\")\n+BOOKS_OFF = Gauge(\"ledger_books_off_cents\", \"How far all balances are from adding up to zero\")\n+\n+\n+class JsonFormatter(logging.Formatter):\n+    def format(self, record: logging.LogRecord) -> str:\n+        entry: dict[str, Any] = {\n+            \"ts\": time.strftime(\"%Y-%m-%dT%H:%M:%S\", time.gmtime(record.created))\n+            + f\".{int(record.msecs):03d}Z\",\n+            \"level\": record.levelname.lower(),\n+            \"service\": \"worker\",\n+            \"msg\": record.getMessage(),\n+        }\n+        entry.update({k[2:]: v for k, v in record.__dict__.items() if k.startswith(\"x_\")})\n+        if record.exc_info:\n+            entry[\"exc\"] = self.formatException(record.exc_info)\n+        return json.dumps(entry, separators=(\",\", \":\"))\n+\n+\n+handler = logging.StreamHandler(sys.stdout)\n+handler.setFormatter(JsonFormatter())\n+logging.basicConfig(level=logging.INFO, handlers=[handler])\n+log = logging.getLogger(\"worker\")\n+\n+running = True\n+\n+\n+def stop(*_: Any) -> None:\n+    global running\n+    running = False\n+\n+\n+def pay_out(conn: psycopg.Connection[Any], settlement: tuple[int, int, int]) -> None:\n+    \"\"\"Moves one settlement's amount from the house's clearing balance to the merchant (the\n+    house's balance is debited once per batch, by settle_batch).\"\"\"\n+    settlement_id, merchant_id, amount = settlement\n+    row = conn.execute(\n+        \"INSERT INTO transfers (from_account, to_account, amount_cents, kind)\"\n+        \" VALUES (%s, %s, %s, 'settlement') RETURNING id\",\n+        (HOUSE_ACCOUNT, merchant_id, amount),\n+    ).fetchone()\n+    assert row is not None\n+    transfer_id = row[0]\n+    conn.execute(\n+        \"INSERT INTO entries (transfer_id, account_id, amount_cents)\"\n+        \" VALUES (%s, %s, %s), (%s, %s, %s)\",\n+        (transfer_id, merchant_id, amount, transfer_id, HOUSE_ACCOUNT, -amount),\n+    )\n+    conn.execute(\n+        \"UPDATE accounts SET balance_cents = balance_cents + %s, updated_at = now() WHERE id = %s\",\n+        (amount, merchant_id),\n+    )\n+    conn.execute(\n+        \"UPDATE settlements SET status = 'settled', transfer_id = %s, settled_at = now()\"\n+        \" WHERE id = %s\",\n+        (transfer_id, settlement_id),\n+    )\n+\n+\n+def settle_batch(conn: psycopg.Connection[Any]) -> int:\n+    \"\"\"Pays out up to BATCH pending settlements in one transaction; returns how many.\"\"\"\n+    with conn.transaction():\n+        batch = conn.execute(\n+            \"SELECT id, merchant_id, amount_cents FROM settlements WHERE status = 'pending'\"\n+            \" ORDER BY id LIMIT %s FOR UPDATE SKIP LOCKED\",\n+            (BATCH,),\n+        ).fetchall()\n+        # Credit merchants in id order, as transfers lock accounts: a batch and a transfer\n+        # between two merchants never take the same two locks in opposite orders.\n+        batch.sort(key=lambda settlement: settlement[1])\n+        for settlement in batch:\n+            pay_out(conn, settlement)\n+        if batch:\n+            # Every payment locks the house's row too: debit it once, last, so the batch\n+            # holds that lock for a moment instead of for the whole batch.\n+            conn.execute(\n+                \"UPDATE accounts SET balance_cents = balance_cents - %s, updated_at = now()\"\n+                \" WHERE id = %s\",\n+                (sum(settlement[2] for settlement in batch), HOUSE_ACCOUNT),\n+            )\n+    SETTLED.labels(\"paid\").inc(len(batch))\n+    return len(batch)\n+\n+\n+def consume() -> None:\n+    while running:\n+        try:\n+            with psycopg.connect(DATABASE_URL, autocommit=True) as conn:\n+                while running:\n+                    if settle_batch(conn) < BATCH:\n+                        time.sleep(POLL_S)\n+        except psycopg.Error as exc:\n+            log.error(\"settlement failed, retrying\", extra={\"x_error\": str(exc).strip()[:300]})\n+            SETTLED.labels(\"failed\").inc()\n+            time.sleep(1)\n+\n+\n+AUDIT_SQL = \"\"\"\n+SELECT\n+  (SELECT count(*) FROM accounts WHERE kind <> 'house' AND balance_cents < 0),\n+  (SELECT count(*) FROM accounts a\n+     LEFT JOIN (SELECT account_id, sum(amount_cents) AS total FROM entries GROUP BY account_id) e\n+       ON e.account_id = a.id\n+    WHERE a.balance_cents <> coalesce(e.total, 0)),\n+  (SELECT coalesce(sum(balance_cents), 0) FROM accounts),\n+  (SELECT count(*) FROM settlements WHERE status = 'pending'),\n+  (SELECT coalesce(extract(epoch FROM now() - min(created_at)), 0) FROM settlements\n+    WHERE status = 'pending')\n+\"\"\"\n+\n+\n+def audit() -> None:\n+    while running:\n+        try:\n+            with psycopg.connect(DATABASE_URL, autocommit=True) as conn:\n+                while running:\n+                    row = conn.execute(AUDIT_SQL).fetchone()\n+                    assert row is not None\n+                    negative, off, books, pending, oldest = row\n+                    NEGATIVE.set(negative)\n+                    ACCOUNTS_OFF.set(off)\n+                    BOOKS_OFF.set(abs(books))\n+                    PENDING.set(pending)\n+                    OLDEST.set(float(oldest))\n+                    if negative or off or books:\n+                        log.error(\n+                            \"books don't balance\",\n+                            extra={\n+                                \"x_negative_accounts\": negative,\n+                                \"x_accounts_off\": off,\n+                                \"x_books_off_cents\": books,\n+                            },\n+                        )\n+                    time.sleep(AUDIT_EVERY_S)\n+        except psycopg.Error as exc:\n+            log.error(\"audit failed, retrying\", extra={\"x_error\": str(exc).strip()[:300]})\n+            time.sleep(2)\n+\n+\n+def main() -> None:\n+    signal.signal(signal.SIGTERM, stop)\n+    signal.signal(signal.SIGINT, stop)\n+    start_http_server(9100)\n+    log.info(\"started\", extra={\"x_consumers\": CONSUMERS, \"x_batch\": BATCH})\n+    threads = [threading.Thread(target=consume, daemon=True) for _ in range(CONSUMERS)]\n+    threads.append(threading.Thread(target=audit, daemon=True))\n+    for thread in threads:\n+        thread.start()\n+    while running:\n+        time.sleep(0.5)\n+    # A deploy stops the worker: each consumer finishes its batch before the process exits.\n+    for thread in threads:\n+        thread.join(timeout=4)\n+\n+\n+if __name__ == \"__main__\":\n+    main()\n",
+   "files": [
+    "Dockerfile",
+    "config/worker.env",
+    "worker.py"
+   ],
+   "message": "Ledger worker: initial import",
+   "service": "worker",
+   "sha": "6a127b3f8b6b17a11f8bf64c5adbbf19d3e2ba8f",
+   "short": "6a127b3"
+  },
+  "e880c416f31af2444344496b2ced3a2faf3e87bd": {
+   "at": 1793805884,
+   "author": "deploy-bot",
+   "diff": "diff --git a/config/worker.env b/config/worker.env\nindex 5548993..cc65cdf 100644\n--- a/config/worker.env\n+++ b/config/worker.env\n@@ -1,7 +1,7 @@\n # ledger worker runtime config. Ships with every deploy (`devgrill deploy worker`).\n \n # Settlement consumers (threads), and how many settlements each pays out per transaction.\n-CONSUMERS=1\n+CONSUMERS=4\n BATCH=20\n # Seconds a consumer waits when there is nothing to settle.\n POLL_S=0.2\ndiff --git a/worker.py b/worker.py\nindex 422acb9..3a0d670 100644\n--- a/worker.py\n+++ b/worker.py\n@@ -100,10 +100,6 @@ def pay_out(conn: psycopg.Connection[Any], settlement: tuple[int, int, int]) ->\n         \" VALUES (%s, %s, %s), (%s, %s, %s)\",\n         (transfer_id, merchant_id, amount, transfer_id, HOUSE_ACCOUNT, -amount),\n     )\n-    conn.execute(\n-        \"UPDATE accounts SET balance_cents = balance_cents + %s, updated_at = now() WHERE id = %s\",\n-        (amount, merchant_id),\n-    )\n     conn.execute(\n         \"UPDATE settlements SET status = 'settled', transfer_id = %s, settled_at = now()\"\n         \" WHERE id = %s\",\n@@ -122,8 +118,23 @@ def settle_batch(conn: psycopg.Connection[Any]) -> int:\n         # Credit merchants in id order, as transfers lock accounts: a batch and a transfer\n         # between two merchants never take the same two locks in opposite orders.\n         batch.sort(key=lambda settlement: settlement[1])\n+        # One write per merchant instead of one per settlement: read each merchant's balance\n+        # once, add the batch's credits, write it back.\n+        merchants = sorted({settlement[1] for settlement in batch})\n+        balances = {\n+            merchant_id: conn.execute(\n+                \"SELECT balance_cents FROM accounts WHERE id = %s\", (merchant_id,)\n+            ).fetchone()[0]\n+            for merchant_id in merchants\n+        }\n         for settlement in batch:\n             pay_out(conn, settlement)\n+            balances[settlement[1]] += settlement[2]\n+        for merchant_id in merchants:\n+            conn.execute(\n+                \"UPDATE accounts SET balance_cents = %s, updated_at = now() WHERE id = %s\",\n+                (balances[merchant_id], merchant_id),\n+            )\n         if batch:\n             # Every payment locks the house's row too: debit it once, last, so the batch\n             # holds that lock for a moment instead of for the whole batch.\n",
+   "files": [
+    "config/worker.env",
+    "worker.py"
+   ],
+   "message": "settlements: 4 consumers, one balance write per merchant per batch",
+   "service": "worker",
+   "sha": "e880c416f31af2444344496b2ced3a2faf3e87bd",
+   "short": "e880c41"
+  }
+ },
+ "commands": [
+  {
+   "command": "devgrill status",
+   "ok": true,
+   "output": "SERVICE               STATE       HEALTH      RESTARTS\napi                   running     healthy     0\npostgres-db           running     healthy     0\npostgres-exporter     running     -           0\ntools                 running     -           0\nworker                running     -           0",
+   "service": "tools",
+   "title": "Every service"
+  },
+  {
+   "command": "psql -c \"SELECT a.id, a.owner, a.balance_cents, e.total AS entries_cents, e.total - a.balance_cents AS short_by FROM accounts a JOIN (SELECT account_id, sum(amount_cents) AS total FROM entries GROUP BY 1) e ON e.account_id = a.id WHERE a.balance_cents <> e.total ORDER BY short_by DESC LIMIT 8\"",
+   "ok": true,
+   "output": "id  |    owner    | balance_cents | entries_cents | short_by \n------+-------------+---------------+---------------+----------\n 9006 | merchant-6  |       1337061 |       1359290 |    22229\n 9001 | merchant-1  |       1317961 |       1332729 |    14768\n 9018 | merchant-18 |       1335467 |       1349845 |    14378\n 9012 | merchant-12 |       1186551 |       1200649 |    14098\n 9014 | merchant-14 |       1294304 |       1307332 |    13028\n 9010 | merchant-10 |       1242565 |       1255006 |    12441\n 9004 | merchant-4  |       1302908 |       1314800 |    11892\n 9013 | merchant-13 |       1231672 |       1240514 |     8842\n(8 rows)",
+   "service": "tools",
+   "title": "Merchants whose balance doesn't match their entries"
+  },
+  {
+   "command": "psql -c \"SELECT sum(amount_cents) AS all_entries_cents, count(*) AS entries FROM entries\"",
+   "ok": true,
+   "output": "all_entries_cents | entries \n-------------------+---------\n                 0 |   14660\n(1 row)",
+   "service": "tools",
+   "title": "Do the entries themselves add up?"
+  }
+ ],
+ "db": {
+  "active": [],
+  "connections": [
+   {
+    "n": 20,
+    "state": "idle"
+   },
+   {
+    "n": 1,
+    "state": "active"
+   }
+  ],
+  "max_connections": 100,
+  "top": [
+   {
+    "calls": 9497,
+    "mean_ms": 0.0,
+    "query": "BEGIN",
+    "rows": 0,
+    "total_ms": 14.1
+   },
+   {
+    "calls": 9497,
+    "mean_ms": 0.0,
+    "query": "COMMIT",
+    "rows": 0,
+    "total_ms": 13.1
+   },
+   {
+    "calls": 6258,
+    "mean_ms": 0.37,
+    "query": "INSERT INTO entries (transfer_id, account_id, amount_cents) VALUES ($1, $2, $3), ($4, $5, $6)",
+    "rows": 12516,
+    "total_ms": 2329.3
+   },
+   {
+    "calls": 4163,
+    "mean_ms": 27.36,
+    "query": "SELECT id, kind, balance_cents FROM accounts WHERE id = ANY($1) ORDER BY id FOR UPDATE",
+    "rows": 8326,
+    "total_ms": 113888.1
+   },
+   {
+    "calls": 4163,
+    "mean_ms": 0.19,
+    "query": "INSERT INTO transfers (from_account, to_account, amount_cents, kind) VALUES ($1, $2, $3, $4) RETURNING id, from_account, to_account, amount_cents, kind, created_at",
+    "rows": 4163,
+    "total_ms": 785.6
+   },
+   {
+    "calls": 4163,
+    "mean_ms": 0.13,
+    "query": "UPDATE accounts SET balance_cents = balance_cents + $1, updated_at = now() WHERE id = $2",
+    "rows": 4163,
+    "total_ms": 529.1
+   },
+   {
+    "calls": 4163,
+    "mean_ms": 0.14,
+    "query": "UPDATE accounts SET balance_cents = balance_cents - $1, updated_at = now() WHERE id = $2 RETURNING kind, balance_cents",
+    "rows": 4163,
+    "total_ms": 582.9
+   },
+   {
+    "calls": 4147,
+    "mean_ms": 0.12,
+    "query": "SELECT id, owner, kind, balance_cents, updated_at FROM accounts WHERE id = $1",
+    "rows": 4147,
+    "total_ms": 481.4
+   },
+   {
+    "calls": 2100,
+    "mean_ms": 0.08,
+    "query": "SELECT id FROM accounts WHERE id = $1 AND kind = $2",
+    "rows": 2100,
+    "total_ms": 163.0
+   },
+   {
+    "calls": 2100,
+    "mean_ms": 0.13,
+    "query": "INSERT INTO settlements (merchant_id, amount_cents) VALUES ($1, $2)",
+    "rows": 2100,
+    "total_ms": 270.1
+   }
+  ]
+ },
+ "db_rates": {
+  "BEGIN": 144.5,
+  "COMMIT": 144.5,
+  "INSERT INTO entries (transfer_id, account_id, amount_cents) VALUES ($1, $2, $3), ($4, $5, $6)": 96.3,
+  "INSERT INTO transfers (from_account, to_account, amount_cents, kind) VALUES ($1, $2, $3, $4) RETURNING id, from_account, to_account, amount_cents, kind, created_at": 64.1,
+  "SELECT id FROM accounts WHERE id = $1 AND kind = $2": 32.3,
+  "SELECT id, kind, balance_cents FROM accounts WHERE id = ANY($1) ORDER BY id FOR UPDATE": 64.1,
+  "SELECT id, owner, kind, balance_cents, updated_at FROM accounts WHERE id = $1": 63.8,
+  "UPDATE accounts SET balance_cents = balance_cents + $1, updated_at = now() WHERE id = $2": 64.1,
+  "UPDATE accounts SET balance_cents = balance_cents - $1, updated_at = now() WHERE id = $2 RETURNING kind, balance_cents": 64.1
+ },
+ "deploys": {
+  "api": {
+   "commits": [
+    {
+     "at": 1793550282,
+     "author": "deploy-bot",
+     "message": "accounts: show the last 20 entries on the statement",
+     "sha": "5ff5ac3a4a86d39a4fd8d3d3442d22f163a8e56d",
+     "short": "5ff5ac3"
+    },
+    {
+     "at": 1790958282,
+     "author": "priya",
+     "message": "Ledger api: initial import",
+     "sha": "0bb9b19c073a5b757805b69d2e24027eb8d71b37",
+     "short": "0bb9b19"
+    }
+   ],
+   "live": "5ff5ac3a4a86d39a4fd8d3d3442d22f163a8e56d",
+   "live_dirty": false,
+   "service": "api"
+  },
+  "worker": {
+   "commits": [
+    {
+     "at": 1793805884,
+     "author": "deploy-bot",
+     "message": "settlements: 4 consumers, one balance write per merchant per batch",
+     "sha": "e880c416f31af2444344496b2ced3a2faf3e87bd",
+     "short": "e880c41"
+    },
+    {
+     "at": 1793723083,
+     "author": "deploy-bot",
+     "message": "worker: audit the books every 5 seconds",
+     "sha": "2daf1995d78c1e83aafa22a8e69c83715edc25ed",
+     "short": "2daf199"
+    },
+    {
+     "at": 1790958283,
+     "author": "priya",
+     "message": "Ledger worker: initial import",
+     "sha": "6a127b3f8b6b17a11f8bf64c5adbbf19d3e2ba8f",
+     "short": "6a127b3"
+    }
+   ],
+   "live": "e880c416f31af2444344496b2ced3a2faf3e87bd",
+   "live_dirty": false,
+   "service": "worker"
+  }
+ },
+ "duration_s": 74.7,
+ "files": {
+  "api": {
+   "CHANGELOG.md": "- accounts: show the last 20 entries on the statement\n",
+   "Dockerfile": "# Ledger API image. The same source is a git repo in the tools container (/workspace/api);\n# `devgrill deploy` copies app/ and config/ from there into /srv/app and restarts this service.\nFROM python:3.14-slim\n\nENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1 \\\n    PROMETHEUS_MULTIPROC_DIR=/tmp/prometheus\nRUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*\n\nWORKDIR /srv/app\nCOPY pyproject.toml ./\nRUN pip install --quiet \\\n    \"fastapi==0.143.3\" \"uvicorn==0.54.0\" \"psycopg[binary,pool]==3.3.6\" \\\n    \"prometheus-client==0.26.0\"\nCOPY app ./app\nCOPY config ./config\n\nEXPOSE 8000\n# Metric files from a previous run would double-count after a restart: start clean.\nCMD [\"sh\", \"-c\", \"rm -rf \\\"$PROMETHEUS_MULTIPROC_DIR\\\" && mkdir -p \\\"$PROMETHEUS_MULTIPROC_DIR\\\" && exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4 --no-access-log\"]\n",
+   "app/__init__.py": "",
+   "app/db.py": "\"\"\"Postgres access through a connection pool (psycopg 3). Every movement of money is one\ntransaction: a transfer row, two entries that sum to zero, and both balances.\"\"\"\n\nfrom __future__ import annotations\n\nimport logging\nfrom collections.abc import Iterator\nfrom contextlib import contextmanager\nfrom typing import Any\n\nfrom prometheus_client import Counter\nfrom psycopg import Connection\nfrom psycopg.rows import dict_row\nfrom psycopg_pool import ConnectionPool, PoolTimeout\n\nfrom app import settings\nfrom app.logging_setup import fields\n\nlog = logging.getLogger(\"db\")\n\n#: Debits that left a customer's wallet below zero. Never meant to happen.\nOVERDRAFTS = Counter(\"ledger_overdrafts_total\", \"Debits that took a wallet below zero\")\n\n\nclass DatabaseBusy(Exception):\n    \"\"\"No connection became free within the pool timeout.\"\"\"\n\n\nclass InsufficientFunds(Exception):\n    \"\"\"The payer's balance doesn't cover the amount.\"\"\"\n\n\npool = ConnectionPool(\n    settings.DATABASE_URL,\n    min_size=settings.DB_POOL_MIN,\n    max_size=settings.DB_POOL_MAX,\n    timeout=settings.DB_POOL_TIMEOUT_S,\n    kwargs={\"row_factory\": dict_row},\n    open=False,\n)\n\n\n@contextmanager\ndef connection() -> Iterator[Connection[dict[str, Any]]]:\n    try:\n        with pool.connection() as conn:\n            yield conn\n    except PoolTimeout as exc:\n        log.error(\"pool exhausted\", extra=fields(pool_max=settings.DB_POOL_MAX))\n        raise DatabaseBusy() from exc\n\n\ndef account(account_id: int) -> dict[str, Any] | None:\n    with connection() as conn:\n        return conn.execute(\n            \"SELECT id, owner, kind, balance_cents, updated_at FROM accounts WHERE id = %s\",\n            (account_id,),\n        ).fetchone()\n\n\ndef _move(\n    conn: Connection[dict[str, Any]], from_id: int, to_id: int, amount: int, kind: str\n) -> dict[str, Any]:\n    \"\"\"Moves `amount` from one account to another inside the caller's transaction.\"\"\"\n    # Lock both accounts, always in id order: two transfers in opposite directions take the\n    # locks in the same order, so neither can hold one row while waiting for the other, and\n    # the balance read here can't change before the debit below.\n    rows = conn.execute(\n        \"SELECT id, kind, balance_cents FROM accounts WHERE id = ANY(%s) ORDER BY id FOR UPDATE\",\n        ([from_id, to_id],),\n    ).fetchall()\n    accounts = {row[\"id\"]: row for row in rows}\n    if from_id not in accounts or to_id not in accounts:\n        raise LookupError(\"account\")\n    payer = accounts[from_id]\n    if payer[\"kind\"] != \"house\" and payer[\"balance_cents\"] < amount:\n        raise InsufficientFunds()\n    transfer = conn.execute(\n        \"INSERT INTO transfers (from_account, to_account, amount_cents, kind)\"\n        \" VALUES (%s, %s, %s, %s) RETURNING id, from_account, to_account, amount_cents, kind,\"\n        \" created_at\",\n        (from_id, to_id, amount, kind),\n    ).fetchone()\n    assert transfer is not None\n    conn.execute(\n        \"INSERT INTO entries (transfer_id, account_id, amount_cents)\"\n        \" VALUES (%s, %s, %s), (%s, %s, %s)\",\n        (transfer[\"id\"], to_id, amount, transfer[\"id\"], from_id, -amount),\n    )\n    debited = conn.execute(\n        \"UPDATE accounts SET balance_cents = balance_cents - %s, updated_at = now() WHERE id = %s\"\n        \" RETURNING kind, balance_cents\",\n        (amount, from_id),\n    ).fetchone()\n    if debited and debited[\"kind\"] != \"house\" and debited[\"balance_cents\"] < 0:\n        OVERDRAFTS.inc()\n        log.error(\n            \"wallet overdrawn\",\n            extra=fields(account_id=from_id, balance_cents=debited[\"balance_cents\"]),\n        )\n    conn.execute(\n        \"UPDATE accounts SET balance_cents = balance_cents + %s, updated_at = now() WHERE id = %s\",\n        (amount, to_id),\n    )\n    return transfer\n\n\ndef transfer(from_id: int, to_id: int, amount: int) -> dict[str, Any]:\n    with connection() as conn, conn.transaction():\n        return _move(conn, from_id, to_id, amount, \"transfer\")\n\n\ndef pay(customer_id: int, merchant_id: int, amount: int) -> dict[str, Any]:\n    \"\"\"A card payment: the customer is debited now (into the house's clearing balance), and the\n    merchant is paid out later by the worker's settlement run.\"\"\"\n    with connection() as conn, conn.transaction():\n        merchant = conn.execute(\n            \"SELECT id FROM accounts WHERE id = %s AND kind = 'merchant'\", (merchant_id,)\n        ).fetchone()\n        if merchant is None:\n            raise LookupError(\"merchant\")\n        payment = _move(conn, customer_id, settings.HOUSE_ACCOUNT, amount, \"payment\")\n        conn.execute(\n            \"INSERT INTO settlements (merchant_id, amount_cents) VALUES (%s, %s)\",\n            (merchant_id, amount),\n        )\n        return payment\n\n\ndef healthy() -> bool:\n    try:\n        with connection() as conn:\n            conn.execute(\"SELECT 1\")\n        return True\n    except Exception:\n        return False\n",
+   "app/logging_setup.py": "\"\"\"JSON logs on stdout, one object per line, so the Logs panel can filter by field.\"\"\"\n\nfrom __future__ import annotations\n\nimport json\nimport logging\nimport sys\nimport time\nfrom typing import Any\n\nfrom app import settings\n\n\nclass JsonFormatter(logging.Formatter):\n    def format(self, record: logging.LogRecord) -> str:\n        entry: dict[str, Any] = {\n            \"ts\": time.strftime(\"%Y-%m-%dT%H:%M:%S\", time.gmtime(record.created))\n            + f\".{int(record.msecs):03d}Z\",\n            \"level\": record.levelname.lower(),\n            \"service\": settings.SERVICE_NAME,\n            \"logger\": record.name,\n            \"msg\": record.getMessage(),\n        }\n        for key, value in record.__dict__.items():\n            if key.startswith(\"x_\"):\n                entry[key[2:]] = value\n        if record.exc_info:\n            entry[\"exc\"] = self.formatException(record.exc_info)\n        return json.dumps(entry, separators=(\",\", \":\"))\n\n\ndef configure() -> None:\n    handler = logging.StreamHandler(sys.stdout)\n    handler.setFormatter(JsonFormatter())\n    root = logging.getLogger()\n    root.handlers[:] = [handler]\n    root.setLevel(logging.INFO)\n    # uvicorn's access log duplicates our request log; keep its errors only.\n    logging.getLogger(\"uvicorn.access\").disabled = True\n    logging.getLogger(\"uvicorn.error\").setLevel(logging.WARNING)\n\n\ndef fields(**values: Any) -> dict[str, Any]:\n    \"\"\"`log.info(\"cache miss\", extra=fields(product_id=42))` -> a `product_id` JSON field.\"\"\"\n    return {f\"x_{key}\": value for key, value in values.items()}\n",
+   "app/main.py": "\"\"\"Ledger payments API: wallets, transfers and card payments. Small on purpose: every line is\nsomething an on-call engineer may have to read at 2 a.m., and the money has to add up.\"\"\"\n\nfrom __future__ import annotations\n\nimport logging\nimport time\nfrom collections.abc import AsyncIterator\nfrom contextlib import asynccontextmanager\nfrom typing import Any\n\nfrom fastapi import FastAPI, HTTPException, Request, Response\nfrom fastapi.responses import JSONResponse\nfrom prometheus_client import (\n    CONTENT_TYPE_LATEST,\n    CollectorRegistry,\n    Counter,\n    Gauge,\n    Histogram,\n    generate_latest,\n    multiprocess,\n)\nfrom psycopg import errors as pg_errors\nfrom pydantic import BaseModel, Field\n\nfrom app import db, logging_setup, settings\nfrom app.logging_setup import fields\n\nlogging_setup.configure()\nlog = logging.getLogger(\"api\")\n\nREQUESTS = Counter(\"http_requests_total\", \"HTTP requests\", [\"method\", \"route\", \"status\"])\nLATENCY = Histogram(\n    \"http_request_duration_seconds\",\n    \"Request latency\",\n    [\"route\"],\n    buckets=(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10),\n)\n#: Money movements by outcome: ok, insufficient (refused), or failed.\nMOVEMENTS = Counter(\"ledger_movements_total\", \"Transfers and payments\", [\"kind\", \"result\"])\n# Four uvicorn processes share these through PROMETHEUS_MULTIPROC_DIR.\nDB_POOL_IN_USE = Gauge(\n    \"db_pool_in_use\", \"Connections checked out of the pool\", multiprocess_mode=\"livesum\"\n)\nBUILD = Gauge(\"build_info\", \"Build\", [\"sha\"], multiprocess_mode=\"max\")\n\n\n@asynccontextmanager\nasync def lifespan(app: FastAPI) -> AsyncIterator[None]:\n    BUILD.labels(sha=settings.GIT_SHA).set(1)\n    db.pool.open()\n    log.info(\"started\", extra=fields(sha=settings.GIT_SHA))\n    try:\n        yield\n    finally:\n        db.pool.close()\n\n\napp = FastAPI(title=\"Ledger\", lifespan=lifespan)\n\n\ndef _route_name(request: Request) -> str:\n    route = request.scope.get(\"route\")\n    return getattr(route, \"path\", \"unmatched\")\n\n\n@app.middleware(\"http\")\nasync def observe(request: Request, call_next: Any) -> Response:\n    started = time.perf_counter()\n    try:\n        response: Response = await call_next(request)\n    except Exception:\n        name = _route_name(request)\n        REQUESTS.labels(request.method, name, \"500\").inc()\n        LATENCY.labels(name).observe(time.perf_counter() - started)\n        log.exception(\"request failed\", extra=fields(route=name))\n        raise\n    name = _route_name(request)\n    elapsed = time.perf_counter() - started\n    stats = db.pool.get_stats()\n    DB_POOL_IN_USE.set(stats.get(\"pool_size\", 0) - stats.get(\"pool_available\", 0))\n    REQUESTS.labels(request.method, name, str(response.status_code)).inc()\n    LATENCY.labels(name).observe(elapsed)\n    if response.status_code >= 500 or elapsed > 1.0:\n        log.warning(\n            \"slow or failed request\",\n            extra=fields(route=name, status=response.status_code, ms=round(elapsed * 1000)),\n        )\n    return response\n\n\n@app.exception_handler(db.DatabaseBusy)\nasync def _busy(request: Request, exc: db.DatabaseBusy) -> JSONResponse:\n    return JSONResponse({\"error\": \"database busy, try again\"}, status_code=503)\n\n\n@app.exception_handler(pg_errors.DeadlockDetected)\nasync def _deadlock(request: Request, exc: pg_errors.DeadlockDetected) -> JSONResponse:\n    log.error(\"deadlock detected\", extra=fields(route=_route_name(request), error=str(exc).strip()))\n    return JSONResponse({\"error\": \"the transfer failed, try again\"}, status_code=503)\n\n\n@app.exception_handler(pg_errors.QueryCanceled)\nasync def _cancelled(request: Request, exc: pg_errors.QueryCanceled) -> JSONResponse:\n    log.error(\"query cancelled\", extra=fields(route=_route_name(request), error=str(exc).strip()))\n    return JSONResponse({\"error\": \"the database took too long\"}, status_code=503)\n\n\n@app.get(\"/healthz\")\ndef healthz() -> dict[str, Any]:\n    return {\"status\": \"ok\", \"sha\": settings.GIT_SHA}\n\n\n@app.get(\"/readyz\")\ndef readyz() -> JSONResponse:\n    ok = db.healthy()\n    return JSONResponse({\"database\": ok}, status_code=200 if ok else 503)\n\n\n@app.get(\"/metrics\")\ndef metrics() -> Response:\n    registry = CollectorRegistry()\n    multiprocess.MultiProcessCollector(registry)\n    return Response(generate_latest(registry), media_type=CONTENT_TYPE_LATEST)\n\n\n@app.get(\"/accounts/{account_id}\")\ndef get_account(account_id: int) -> dict[str, Any]:\n    account = db.account(account_id)\n    if account is None:\n        raise HTTPException(404, \"no such account\")\n    return account\n\n\nclass TransferIn(BaseModel):\n    from_account: int = Field(ge=0)\n    to_account: int = Field(ge=0)\n    amount_cents: int = Field(gt=0, le=10_000_000)\n\n\n@app.post(\"/transfers\", status_code=201)\ndef create_transfer(body: TransferIn) -> dict[str, Any]:\n    if body.from_account == body.to_account:\n        raise HTTPException(422, \"an account can't pay itself\")\n    return _record(\n        \"transfer\", lambda: db.transfer(body.from_account, body.to_account, body.amount_cents)\n    )\n\n\nclass PaymentIn(BaseModel):\n    account_id: int = Field(ge=1)\n    merchant_id: int = Field(ge=1)\n    amount_cents: int = Field(gt=0, le=10_000_000)\n\n\n@app.post(\"/payments\", status_code=201)\ndef create_payment(body: PaymentIn) -> dict[str, Any]:\n    return _record(\"payment\", lambda: db.pay(body.account_id, body.merchant_id, body.amount_cents))\n\n\ndef _record(kind: str, move: Any) -> dict[str, Any]:\n    try:\n        result: dict[str, Any] = move()\n    except LookupError:\n        MOVEMENTS.labels(kind, \"refused\").inc()\n        raise HTTPException(404, \"no such account\") from None\n    except db.InsufficientFunds:\n        MOVEMENTS.labels(kind, \"insufficient\").inc()\n        raise HTTPException(409, \"insufficient funds\") from None\n    except Exception:\n        MOVEMENTS.labels(kind, \"failed\").inc()\n        raise\n    MOVEMENTS.labels(kind, \"ok\").inc()\n    return result\n",
+   "app/settings.py": "\"\"\"Configuration: connection strings from the environment, tunables from config/app.env.\n\nconfig/app.env is part of the repo and ships with every deploy, so a config change is a\ncommit you can find in `git log`, revert, and redeploy. The environment wins over the file.\n\"\"\"\n\nfrom __future__ import annotations\n\nimport os\nfrom pathlib import Path\n\n\ndef _load_env_file(path: Path) -> None:\n    if not path.is_file():\n        return\n    for raw in path.read_text(encoding=\"utf-8\").splitlines():\n        line = raw.strip()\n        if not line or line.startswith(\"#\") or \"=\" not in line:\n            continue\n        name, value = line.split(\"=\", 1)\n        os.environ.setdefault(name.strip(), value.strip())\n\n\n_load_env_file(Path(__file__).resolve().parent.parent / \"config\" / \"app.env\")\n\n\ndef _int(name: str, default: int) -> int:\n    return int(os.environ.get(name, default))\n\n\nDATABASE_URL = os.environ.get(\"DATABASE_URL\", \"postgresql://ledger:ledger@postgres-db:5432/ledger\")\nDB_POOL_MIN = _int(\"DB_POOL_MIN\", 2)\nDB_POOL_MAX = _int(\"DB_POOL_MAX\", 10)\nDB_POOL_TIMEOUT_S = float(os.environ.get(\"DB_POOL_TIMEOUT_S\", \"5\"))\n\n#: The house account: it funds opening balances and clears card payments until the\n#: merchant is paid out. It is the only account allowed below zero.\nHOUSE_ACCOUNT = 0\n\nSERVICE_NAME = os.environ.get(\"SERVICE_NAME\", \"ledger-api\")\nGIT_SHA = os.environ.get(\"GIT_SHA\", \"dev\")\n",
+   "config/app.env": "# ledger-api runtime config. Ships with every deploy (`devgrill deploy`).\n\nDATABASE_URL=postgresql://ledger:ledger@postgres-db:5432/ledger\n# Postgres connections per API process (4 processes share the database's 100 slots).\nDB_POOL_MIN=2\nDB_POOL_MAX=10\n# Seconds a request waits for a free connection before failing with 503.\nDB_POOL_TIMEOUT_S=5\n",
+   "pyproject.toml": "[project]\nname = \"ledger-api\"\nversion = \"1.0.0\"\ndescription = \"Ledger payments API\"\nrequires-python = \">=3.14\"\ndependencies = [\n    \"fastapi==0.143.3\",\n    \"uvicorn==0.54.0\",\n    \"psycopg[binary,pool]==3.3.6\",\n    \"prometheus-client==0.26.0\",\n]\n"
+  },
+  "worker": {
+   "CHANGELOG.md": "- worker: audit the books every 5 seconds\n",
+   "Dockerfile": "FROM python:3.14-slim\nENV PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1\nRUN pip install --quiet \"psycopg[binary]==3.3.6\" \"prometheus-client==0.26.0\"\nWORKDIR /srv/worker\nCOPY worker.py ./\nCOPY config ./config\nEXPOSE 9100\nCMD [\"python\", \"worker.py\"]\n",
+   "config/worker.env": "# ledger worker runtime config. Ships with every deploy (`devgrill deploy worker`).\n\n# Settlement consumers (threads), and how many settlements each pays out per transaction.\nCONSUMERS=4\nBATCH=20\n# Seconds a consumer waits when there is nothing to settle.\nPOLL_S=0.2\n# Seconds between audits of the books.\nAUDIT_EVERY_S=5\n",
+   "worker.py": "\"\"\"Ledger worker: pays merchants out for card payments, and audits the books.\n\nSettlement: each card payment leaves a pending settlement. Consumers take them in batches\n(FOR UPDATE SKIP LOCKED, so two consumers never take the same one) and pay each one from the\nhouse's clearing balance to the merchant: a transfer, two entries and both balances, in the\nbatch's transaction.\n\nAudit: every AUDIT_EVERY_S seconds the worker checks the books in one snapshot: customer\naccounts below zero, accounts whose balance isn't the sum of their entries, and whether all\nbalances still add up to zero. Logs JSON like the API; metrics on :9100. Tunables live in\nconfig/worker.env, deployed with the code.\n\"\"\"\n\nfrom __future__ import annotations\n\nimport json\nimport logging\nimport os\nimport signal\nimport sys\nimport threading\nimport time\nfrom pathlib import Path\nfrom typing import Any\n\nimport psycopg\nfrom prometheus_client import Counter, Gauge, start_http_server\n\n\ndef _load_env_file(path: Path) -> None:\n    \"\"\"config/worker.env: KEY=value lines; the process environment wins.\"\"\"\n    if not path.is_file():\n        return\n    for raw in path.read_text(encoding=\"utf-8\").splitlines():\n        line = raw.strip()\n        if line and not line.startswith(\"#\") and \"=\" in line:\n            name, value = line.split(\"=\", 1)\n            os.environ.setdefault(name.strip(), value.strip())\n\n\n_load_env_file(Path(__file__).resolve().parent / \"config\" / \"worker.env\")\n\nDATABASE_URL = os.environ.get(\"DATABASE_URL\", \"postgresql://ledger:ledger@postgres-db:5432/ledger\")\nHOUSE_ACCOUNT = 0\n#: Settlement consumers (threads), and settlements each takes per transaction.\nCONSUMERS = int(os.environ.get(\"CONSUMERS\", \"1\"))\nBATCH = int(os.environ.get(\"BATCH\", \"20\"))\nPOLL_S = float(os.environ.get(\"POLL_S\", \"0.2\"))\nAUDIT_EVERY_S = float(os.environ.get(\"AUDIT_EVERY_S\", \"5\"))\n\nSETTLED = Counter(\"settlements_processed_total\", \"Settlements paid out\", [\"result\"])\nPENDING = Gauge(\"settlements_pending\", \"Settlements waiting to be paid out\")\nOLDEST = Gauge(\"settlements_oldest_seconds\", \"Age of the oldest pending settlement\")\nNEGATIVE = Gauge(\"ledger_negative_balances\", \"Customer accounts below zero\")\nACCOUNTS_OFF = Gauge(\"ledger_accounts_off\", \"Accounts whose balance isn't the sum of entries\")\nBOOKS_OFF = Gauge(\"ledger_books_off_cents\", \"How far all balances are from adding up to zero\")\n\n\nclass JsonFormatter(logging.Formatter):\n    def format(self, record: logging.LogRecord) -> str:\n        entry: dict[str, Any] = {\n            \"ts\": time.strftime(\"%Y-%m-%dT%H:%M:%S\", time.gmtime(record.created))\n            + f\".{int(record.msecs):03d}Z\",\n            \"level\": record.levelname.lower(),\n            \"service\": \"worker\",\n            \"msg\": record.getMessage(),\n        }\n        entry.update({k[2:]: v for k, v in record.__dict__.items() if k.startswith(\"x_\")})\n        if record.exc_info:\n            entry[\"exc\"] = self.formatException(record.exc_info)\n        return json.dumps(entry, separators=(\",\", \":\"))\n\n\nhandler = logging.StreamHandler(sys.stdout)\nhandler.setFormatter(JsonFormatter())\nlogging.basicConfig(level=logging.INFO, handlers=[handler])\nlog = logging.getLogger(\"worker\")\n\nrunning = True\n\n\ndef stop(*_: Any) -> None:\n    global running\n    running = False\n\n\ndef pay_out(conn: psycopg.Connection[Any], settlement: tuple[int, int, int]) -> None:\n    \"\"\"Moves one settlement's amount from the house's clearing balance to the merchant (the\n    house's balance is debited once per batch, by settle_batch).\"\"\"\n    settlement_id, merchant_id, amount = settlement\n    row = conn.execute(\n        \"INSERT INTO transfers (from_account, to_account, amount_cents, kind)\"\n        \" VALUES (%s, %s, %s, 'settlement') RETURNING id\",\n        (HOUSE_ACCOUNT, merchant_id, amount),\n    ).fetchone()\n    assert row is not None\n    transfer_id = row[0]\n    conn.execute(\n        \"INSERT INTO entries (transfer_id, account_id, amount_cents)\"\n        \" VALUES (%s, %s, %s), (%s, %s, %s)\",\n        (transfer_id, merchant_id, amount, transfer_id, HOUSE_ACCOUNT, -amount),\n    )\n    conn.execute(\n        \"UPDATE settlements SET status = 'settled', transfer_id = %s, settled_at = now()\"\n        \" WHERE id = %s\",\n        (transfer_id, settlement_id),\n    )\n\n\ndef settle_batch(conn: psycopg.Connection[Any]) -> int:\n    \"\"\"Pays out up to BATCH pending settlements in one transaction; returns how many.\"\"\"\n    with conn.transaction():\n        batch = conn.execute(\n            \"SELECT id, merchant_id, amount_cents FROM settlements WHERE status = 'pending'\"\n            \" ORDER BY id LIMIT %s FOR UPDATE SKIP LOCKED\",\n            (BATCH,),\n        ).fetchall()\n        # Credit merchants in id order, as transfers lock accounts: a batch and a transfer\n        # between two merchants never take the same two locks in opposite orders.\n        batch.sort(key=lambda settlement: settlement[1])\n        # One write per merchant instead of one per settlement: read each merchant's balance\n        # once, add the batch's credits, write it back.\n        merchants = sorted({settlement[1] for settlement in batch})\n        balances = {\n            merchant_id: conn.execute(\n                \"SELECT balance_cents FROM accounts WHERE id = %s\", (merchant_id,)\n            ).fetchone()[0]\n            for merchant_id in merchants\n        }\n        for settlement in batch:\n            pay_out(conn, settlement)\n            balances[settlement[1]] += settlement[2]\n        for merchant_id in merchants:\n            conn.execute(\n                \"UPDATE accounts SET balance_cents = %s, updated_at = now() WHERE id = %s\",\n                (balances[merchant_id], merchant_id),\n            )\n        if batch:\n            # Every payment locks the house's row too: debit it once, last, so the batch\n            # holds that lock for a moment instead of for the whole batch.\n            conn.execute(\n                \"UPDATE accounts SET balance_cents = balance_cents - %s, updated_at = now()\"\n                \" WHERE id = %s\",\n                (sum(settlement[2] for settlement in batch), HOUSE_ACCOUNT),\n            )\n    SETTLED.labels(\"paid\").inc(len(batch))\n    return len(batch)\n\n\ndef consume() -> None:\n    while running:\n        try:\n            with psycopg.connect(DATABASE_URL, autocommit=True) as conn:\n                while running:\n                    if settle_batch(conn) < BATCH:\n                        time.sleep(POLL_S)\n        except psycopg.Error as exc:\n            log.error(\"settlement failed, retrying\", extra={\"x_error\": str(exc).strip()[:300]})\n            SETTLED.labels(\"failed\").inc()\n            time.sleep(1)\n\n\nAUDIT_SQL = \"\"\"\nSELECT\n  (SELECT count(*) FROM accounts WHERE kind <> 'house' AND balance_cents < 0),\n  (SELECT count(*) FROM accounts a\n     LEFT JOIN (SELECT account_id, sum(amount_cents) AS total FROM entries GROUP BY account_id) e\n       ON e.account_id = a.id\n    WHERE a.balance_cents <> coalesce(e.total, 0)),\n  (SELECT coalesce(sum(balance_cents), 0) FROM accounts),\n  (SELECT count(*) FROM settlements WHERE status = 'pending'),\n  (SELECT coalesce(extract(epoch FROM now() - min(created_at)), 0) FROM settlements\n    WHERE status = 'pending')\n\"\"\"\n\n\ndef audit() -> None:\n    while running:\n        try:\n            with psycopg.connect(DATABASE_URL, autocommit=True) as conn:\n                while running:\n                    row = conn.execute(AUDIT_SQL).fetchone()\n                    assert row is not None\n                    negative, off, books, pending, oldest = row\n                    NEGATIVE.set(negative)\n                    ACCOUNTS_OFF.set(off)\n                    BOOKS_OFF.set(abs(books))\n                    PENDING.set(pending)\n                    OLDEST.set(float(oldest))\n                    if negative or off or books:\n                        log.error(\n                            \"books don't balance\",\n                            extra={\n                                \"x_negative_accounts\": negative,\n                                \"x_accounts_off\": off,\n                                \"x_books_off_cents\": books,\n                            },\n                        )\n                    time.sleep(AUDIT_EVERY_S)\n        except psycopg.Error as exc:\n            log.error(\"audit failed, retrying\", extra={\"x_error\": str(exc).strip()[:300]})\n            time.sleep(2)\n\n\ndef main() -> None:\n    signal.signal(signal.SIGTERM, stop)\n    signal.signal(signal.SIGINT, stop)\n    start_http_server(9100)\n    log.info(\"started\", extra={\"x_consumers\": CONSUMERS, \"x_batch\": BATCH})\n    threads = [threading.Thread(target=consume, daemon=True) for _ in range(CONSUMERS)]\n    threads.append(threading.Thread(target=audit, daemon=True))\n    for thread in threads:\n        thread.start()\n    while running:\n        time.sleep(0.5)\n    # A deploy stops the worker: each consumer finishes its batch before the process exits.\n    for thread in threads:\n        thread.join(timeout=4)\n\n\nif __name__ == \"__main__\":\n    main()\n"
+  }
+ },
+ "logs": [
+  {
+   "line": "",
+   "service": "postgres-db",
+   "t": -25.645
+  },
+  {
+   "line": "PostgreSQL Database directory appears to contain a database; Skipping initialization",
+   "service": "postgres-db",
+   "t": -25.645
+  },
+  {
+   "line": "",
+   "service": "postgres-db",
+   "t": -25.645
+  },
+  {
+   "line": "2026-11-04 16:24:28.380 UTC [1] LOG:  starting PostgreSQL 18.6 on x86_64-pc-linux-musl, compiled by gcc (Alpine 15.2.0) 15.2.0, 64-bit",
+   "service": "postgres-db",
+   "t": -25.594
+  },
+  {
+   "line": "2026-11-04 16:24:28.381 UTC [1] LOG:  listening on IPv4 address \"0.0.0.0\", port 5432",
+   "service": "postgres-db",
+   "t": -25.593
+  },
+  {
+   "line": "2026-11-04 16:24:28.381 UTC [1] LOG:  listening on IPv6 address \"::\", port 5432",
+   "service": "postgres-db",
+   "t": -25.593
+  },
+  {
+   "line": "2026-11-04 16:24:28.390 UTC [1] LOG:  listening on Unix socket \"/var/run/postgresql/.s.PGSQL.5432\"",
+   "service": "postgres-db",
+   "t": -25.584
+  },
+  {
+   "line": "2026-11-04 16:24:28.416 UTC [32] LOG:  database system was shut down at 2026-11-03 17:26:54 UTC",
+   "service": "postgres-db",
+   "t": -25.558
+  },
+  {
+   "line": "2026-11-04 16:24:28.467 UTC [1] LOG:  database system is ready to accept connections",
+   "service": "postgres-db",
+   "t": -25.507
+  },
+  {
+   "line": "time=2026-11-04T16:24:30.701Z level=WARN source=main.go:81 msg=\"Error loading config\" err=\"error opening config file \\\"postgres_exporter.yml\\\": open postgres_exporter.yml: no such file or directory\"",
+   "service": "postgres-exporter",
+   "t": -23.272
+  },
+  {
+   "line": "time=2026-11-04T16:24:30.701Z level=INFO source=main.go:91 msg=\"Excluded databases\" databases=[]",
+   "service": "postgres-exporter",
+   "t": -23.272
+  },
+  {
+   "line": "time=2026-11-04T16:24:30.730Z level=INFO source=tls_config.go:372 msg=\"Listening on\" address=[::]:9187",
+   "service": "postgres-exporter",
+   "t": -23.244
+  },
+  {
+   "line": "time=2026-11-04T16:24:30.730Z level=INFO source=tls_config.go:375 msg=\"TLS is disabled.\" http2=false address=[::]:9187",
+   "service": "postgres-exporter",
+   "t": -23.243
+  },
+  {
+   "line": "INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)",
+   "service": "api",
+   "t": -21.202
+  },
+  {
+   "line": "INFO:     Started parent process [1]",
+   "service": "api",
+   "t": -21.196
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:24:33.367Z\",\"level\":\"info\",\"service\":\"worker\",\"msg\":\"started\",\"consumers\":1,\"batch\":20}",
+   "service": "worker",
+   "t": -20.606
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:24:38.772Z\",\"level\":\"info\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"started\",\"sha\":\"dev\"}",
+   "service": "api",
+   "t": -15.202
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:24:38.777Z\",\"level\":\"info\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"started\",\"sha\":\"dev\"}",
+   "service": "api",
+   "t": -15.197
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:24:38.841Z\",\"level\":\"info\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"started\",\"sha\":\"dev\"}",
+   "service": "api",
+   "t": -15.133
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:24:38.964Z\",\"level\":\"info\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"started\",\"sha\":\"dev\"}",
+   "service": "api",
+   "t": -15.01
+  },
+  {
+   "line": "time=2026-11-04T16:24:54.473Z level=INFO source=server.go:96 msg=\"Established new database connection\" fingerprint=postgres-db:5432",
+   "service": "postgres-exporter",
+   "t": 0.499
+  },
+  {
+   "line": "time=2026-11-04T16:24:54.568Z level=INFO source=postgres_exporter.go:537 msg=\"Semantic version changed\" server=postgres-db:5432 from=0.0.0 to=18.6.0",
+   "service": "postgres-exporter",
+   "t": 0.594
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:24:54.978Z\",\"level\":\"info\",\"service\":\"worker\",\"msg\":\"started\",\"consumers\":4,\"batch\":20}",
+   "service": "worker",
+   "t": 1.018
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:24:56.004Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":1343}",
+   "service": "api",
+   "t": 2.05
+  },
+  {
+   "line": "time=2026-11-04T16:24:56.007Z level=ERROR source=collector.go:227 msg=\"collector failed\" name=wal duration_seconds=1.43452388 err=\"pq: permission denied for function pg_ls_waldir\"",
+   "service": "postgres-exporter",
+   "t": 2.05
+  },
+  {
+   "line": "2026-11-04 16:24:56.006 UTC [86] ERROR:  permission denied for function pg_ls_waldir",
+   "service": "postgres-db",
+   "t": 2.05
+  },
+  {
+   "line": "2026-11-04 16:24:56.006 UTC [86] STATEMENT:  ",
+   "service": "postgres-db",
+   "t": 2.05
+  },
+  {
+   "line": "\t\t\tSELECT",
+   "service": "postgres-db",
+   "t": 2.05
+  },
+  {
+   "line": "\t\t\t\tCOUNT(*) AS segments,",
+   "service": "postgres-db",
+   "t": 2.05
+  },
+  {
+   "line": "\t\t\t\tSUM(size) AS size",
+   "service": "postgres-db",
+   "t": 2.05
+  },
+  {
+   "line": "\t\t\tFROM pg_ls_waldir()",
+   "service": "postgres-db",
+   "t": 2.05
+  },
+  {
+   "line": "\t\t\tWHERE name ~ '^[0-9A-F]{24}$'",
+   "service": "postgres-db",
+   "t": 2.05
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:24:56.443Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":1007}",
+   "service": "api",
+   "t": 2.471
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:24:56.999Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":1920}",
+   "service": "api",
+   "t": 3.028
+  },
+  {
+   "line": "--- Logging error ---",
+   "service": "worker",
+   "t": 6.419
+  },
+  {
+   "line": "Traceback (most recent call last):",
+   "service": "worker",
+   "t": 6.433
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/logging/__init__.py\", line 1151, in emit",
+   "service": "worker",
+   "t": 6.443
+  },
+  {
+   "line": "    msg = self.format(record)",
+   "service": "worker",
+   "t": 6.443
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/logging/__init__.py\", line 999, in format",
+   "service": "worker",
+   "t": 6.443
+  },
+  {
+   "line": "    return fmt.format(record)",
+   "service": "worker",
+   "t": 6.443
+  },
+  {
+   "line": "           ~~~~~~~~~~^^^^^^^^",
+   "service": "worker",
+   "t": 6.443
+  },
+  {
+   "line": "  File \"/srv/worker/worker.py\", line 71, in format",
+   "service": "worker",
+   "t": 6.443
+  },
+  {
+   "line": "    return json.dumps(entry, separators=(\",\", \":\"))",
+   "service": "worker",
+   "t": 6.443
+  },
+  {
+   "line": "           ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^",
+   "service": "worker",
+   "t": 6.443
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/json/__init__.py\", line 242, in dumps",
+   "service": "worker",
+   "t": 6.443
+  },
+  {
+   "line": "    **kw).encode(obj)",
+   "service": "worker",
+   "t": 6.443
+  },
+  {
+   "line": "          ~~~~~~^^^^^",
+   "service": "worker",
+   "t": 6.443
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/json/encoder.py\", line 202, in encode",
+   "service": "worker",
+   "t": 6.443
+  },
+  {
+   "line": "    chunks = self.iterencode(o, _one_shot=True)",
+   "service": "worker",
+   "t": 6.443
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/json/encoder.py\", line 263, in iterencode",
+   "service": "worker",
+   "t": 6.443
+  },
+  {
+   "line": "    return _iterencode(o, 0)",
+   "service": "worker",
+   "t": 6.443
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/json/encoder.py\", line 182, in default",
+   "service": "worker",
+   "t": 6.443
+  },
+  {
+   "line": "    raise TypeError(f'Object of type {o.__class__.__name__} '",
+   "service": "worker",
+   "t": 6.443
+  },
+  {
+   "line": "                    f'is not JSON serializable')",
+   "service": "worker",
+   "t": 6.443
+  },
+  {
+   "line": "TypeError: Object of type Decimal is not JSON serializable",
+   "service": "worker",
+   "t": 6.443
+  },
+  {
+   "line": "when serializing dict item 'books_off_cents'",
+   "service": "worker",
+   "t": 6.443
+  },
+  {
+   "line": "Call stack:",
+   "service": "worker",
+   "t": 6.443
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/threading.py\", line 1044, in _bootstrap",
+   "service": "worker",
+   "t": 6.443
+  },
+  {
+   "line": "    self._bootstrap_inner()",
+   "service": "worker",
+   "t": 6.443
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/threading.py\", line 1082, in _bootstrap_inner",
+   "service": "worker",
+   "t": 6.443
+  },
+  {
+   "line": "    self._context.run(self.run)",
+   "service": "worker",
+   "t": 6.443
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/threading.py\", line 1024, in run",
+   "service": "worker",
+   "t": 6.443
+  },
+  {
+   "line": "    self._target(*self._args, **self._kwargs)",
+   "service": "worker",
+   "t": 6.443
+  },
+  {
+   "line": "  File \"/srv/worker/worker.py\", line 191, in audit",
+   "service": "worker",
+   "t": 6.443
+  },
+  {
+   "line": "    log.error(",
+   "service": "worker",
+   "t": 6.443
+  },
+  {
+   "line": "Message: \"books don't balance\"",
+   "service": "worker",
+   "t": 6.443
+  },
+  {
+   "line": "Arguments: ()",
+   "service": "worker",
+   "t": 6.444
+  },
+  {
+   "line": "time=2026-11-04T16:25:01.704Z level=ERROR source=collector.go:227 msg=\"collector failed\" name=wal duration_seconds=0.067210989 err=\"pq: permission denied for function pg_ls_waldir\"",
+   "service": "postgres-exporter",
+   "t": 7.73
+  },
+  {
+   "line": "2026-11-04 16:25:01.704 UTC [109] ERROR:  permission denied for function pg_ls_waldir",
+   "service": "postgres-db",
+   "t": 7.731
+  },
+  {
+   "line": "2026-11-04 16:25:01.704 UTC [109] STATEMENT:  ",
+   "service": "postgres-db",
+   "t": 7.731
+  },
+  {
+   "line": "\t\t\tSELECT",
+   "service": "postgres-db",
+   "t": 7.732
+  },
+  {
+   "line": "\t\t\t\tCOUNT(*) AS segments,",
+   "service": "postgres-db",
+   "t": 7.732
+  },
+  {
+   "line": "\t\t\t\tSUM(size) AS size",
+   "service": "postgres-db",
+   "t": 7.732
+  },
+  {
+   "line": "\t\t\tFROM pg_ls_waldir()",
+   "service": "postgres-db",
+   "t": 7.732
+  },
+  {
+   "line": "\t\t\tWHERE name ~ '^[0-9A-F]{24}$'",
+   "service": "postgres-db",
+   "t": 7.732
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:25:03.149Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":1362}",
+   "service": "api",
+   "t": 9.188
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:25:03.304Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/payments\",\"status\":201,\"ms\":1062}",
+   "service": "api",
+   "t": 9.33
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:25:03.887Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":1739}",
+   "service": "api",
+   "t": 9.914
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:25:04.041Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":1017}",
+   "service": "api",
+   "t": 10.067
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:25:04.640Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/payments\",\"status\":201,\"ms\":1142}",
+   "service": "api",
+   "t": 10.67
+  },
+  {
+   "line": "2026-11-04 16:25:06.814 UTC [111] ERROR:  permission denied for function pg_ls_waldir",
+   "service": "postgres-db",
+   "t": 12.84
+  },
+  {
+   "line": "2026-11-04 16:25:06.814 UTC [111] STATEMENT:  ",
+   "service": "postgres-db",
+   "t": 12.84
+  },
+  {
+   "line": "\t\t\tSELECT",
+   "service": "postgres-db",
+   "t": 12.84
+  },
+  {
+   "line": "\t\t\t\tCOUNT(*) AS segments,",
+   "service": "postgres-db",
+   "t": 12.84
+  },
+  {
+   "line": "\t\t\t\tSUM(size) AS size",
+   "service": "postgres-db",
+   "t": 12.84
+  },
+  {
+   "line": "\t\t\tFROM pg_ls_waldir()",
+   "service": "postgres-db",
+   "t": 12.84
+  },
+  {
+   "line": "\t\t\tWHERE name ~ '^[0-9A-F]{24}$'",
+   "service": "postgres-db",
+   "t": 12.84
+  },
+  {
+   "line": "time=2026-11-04T16:25:06.814Z level=ERROR source=collector.go:227 msg=\"collector failed\" name=wal duration_seconds=0.280695771 err=\"pq: permission denied for function pg_ls_waldir\"",
+   "service": "postgres-exporter",
+   "t": 12.84
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:25:07.379Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/payments\",\"status\":201,\"ms\":1051}",
+   "service": "api",
+   "t": 13.405
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:25:07.537Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/payments\",\"status\":201,\"ms\":1230}",
+   "service": "api",
+   "t": 13.568
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:25:10.547Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/payments\",\"status\":201,\"ms\":1080}",
+   "service": "api",
+   "t": 16.583
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:25:10.591Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/payments\",\"status\":201,\"ms\":1121}",
+   "service": "api",
+   "t": 16.636
+  },
+  {
+   "line": "2026-11-04 16:25:12.873 UTC [127] ERROR:  permission denied for function pg_ls_waldir",
+   "service": "postgres-db",
+   "t": 18.9
+  },
+  {
+   "line": "2026-11-04 16:25:12.873 UTC [127] STATEMENT:  ",
+   "service": "postgres-db",
+   "t": 18.9
+  },
+  {
+   "line": "\t\t\tSELECT",
+   "service": "postgres-db",
+   "t": 18.9
+  },
+  {
+   "line": "\t\t\t\tCOUNT(*) AS segments,",
+   "service": "postgres-db",
+   "t": 18.9
+  },
+  {
+   "line": "\t\t\t\tSUM(size) AS size",
+   "service": "postgres-db",
+   "t": 18.9
+  },
+  {
+   "line": "\t\t\tFROM pg_ls_waldir()",
+   "service": "postgres-db",
+   "t": 18.9
+  },
+  {
+   "line": "\t\t\tWHERE name ~ '^[0-9A-F]{24}$'",
+   "service": "postgres-db",
+   "t": 18.9
+  },
+  {
+   "line": "time=2026-11-04T16:25:12.874Z level=ERROR source=collector.go:227 msg=\"collector failed\" name=wal duration_seconds=0.132643391 err=\"pq: permission denied for function pg_ls_waldir\"",
+   "service": "postgres-exporter",
+   "t": 18.9
+  },
+  {
+   "line": "2026-11-04 16:25:18.343 UTC [134] ERROR:  permission denied for function pg_ls_waldir",
+   "service": "postgres-db",
+   "t": 24.37
+  },
+  {
+   "line": "2026-11-04 16:25:18.343 UTC [134] STATEMENT:  ",
+   "service": "postgres-db",
+   "t": 24.37
+  },
+  {
+   "line": "\t\t\tSELECT",
+   "service": "postgres-db",
+   "t": 24.37
+  },
+  {
+   "line": "\t\t\t\tCOUNT(*) AS segments,",
+   "service": "postgres-db",
+   "t": 24.37
+  },
+  {
+   "line": "\t\t\t\tSUM(size) AS size",
+   "service": "postgres-db",
+   "t": 24.37
+  },
+  {
+   "line": "\t\t\tFROM pg_ls_waldir()",
+   "service": "postgres-db",
+   "t": 24.37
+  },
+  {
+   "line": "\t\t\tWHERE name ~ '^[0-9A-F]{24}$'",
+   "service": "postgres-db",
+   "t": 24.37
+  },
+  {
+   "line": "time=2026-11-04T16:25:18.344Z level=ERROR source=collector.go:227 msg=\"collector failed\" name=wal duration_seconds=0.081405059 err=\"pq: permission denied for function pg_ls_waldir\"",
+   "service": "postgres-exporter",
+   "t": 24.372
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:25:21.618Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/transfers\",\"status\":201,\"ms\":1396}",
+   "service": "api",
+   "t": 27.647
+  },
+  {
+   "line": "{\"ts\":\"2026-11-04T16:25:21.682Z\",\"level\":\"warning\",\"service\":\"ledger-api\",\"logger\":\"api\",\"msg\":\"slow or failed request\",\"route\":\"/payments\",\"status\":201,\"ms\":1468}",
+   "service": "api",
+   "t": 27.71
+  },
+  {
+   "line": "2026-11-04 16:25:23.844 UTC [142] ERROR:  permission denied for function pg_ls_waldir",
+   "service": "postgres-db",
+   "t": 29.874
+  },
+  {
+   "line": "2026-11-04 16:25:23.844 UTC [142] STATEMENT:  ",
+   "service": "postgres-db",
+   "t": 29.874
+  },
+  {
+   "line": "\t\t\tSELECT",
+   "service": "postgres-db",
+   "t": 29.874
+  },
+  {
+   "line": "\t\t\t\tCOUNT(*) AS segments,",
+   "service": "postgres-db",
+   "t": 29.874
+  },
+  {
+   "line": "\t\t\t\tSUM(size) AS size",
+   "service": "postgres-db",
+   "t": 29.874
+  },
+  {
+   "line": "\t\t\tFROM pg_ls_waldir()",
+   "service": "postgres-db",
+   "t": 29.874
+  },
+  {
+   "line": "\t\t\tWHERE name ~ '^[0-9A-F]{24}$'",
+   "service": "postgres-db",
+   "t": 29.874
+  },
+  {
+   "line": "time=2026-11-04T16:25:23.846Z level=ERROR source=collector.go:227 msg=\"collector failed\" name=wal duration_seconds=0.044807135 err=\"pq: permission denied for function pg_ls_waldir\"",
+   "service": "postgres-exporter",
+   "t": 29.877
+  },
+  {
+   "line": "2026-11-04 16:25:29.681 UTC [151] ERROR:  permission denied for function pg_ls_waldir",
+   "service": "postgres-db",
+   "t": 35.707
+  },
+  {
+   "line": "2026-11-04 16:25:29.681 UTC [151] STATEMENT:  ",
+   "service": "postgres-db",
+   "t": 35.707
+  },
+  {
+   "line": "\t\t\tSELECT",
+   "service": "postgres-db",
+   "t": 35.707
+  },
+  {
+   "line": "\t\t\t\tCOUNT(*) AS segments,",
+   "service": "postgres-db",
+   "t": 35.707
+  },
+  {
+   "line": "\t\t\t\tSUM(size) AS size",
+   "service": "postgres-db",
+   "t": 35.707
+  },
+  {
+   "line": "\t\t\tFROM pg_ls_waldir()",
+   "service": "postgres-db",
+   "t": 35.707
+  },
+  {
+   "line": "\t\t\tWHERE name ~ '^[0-9A-F]{24}$'",
+   "service": "postgres-db",
+   "t": 35.707
+  },
+  {
+   "line": "time=2026-11-04T16:25:29.681Z level=ERROR source=collector.go:227 msg=\"collector failed\" name=wal duration_seconds=0.154405748 err=\"pq: permission denied for function pg_ls_waldir\"",
+   "service": "postgres-exporter",
+   "t": 35.708
+  },
+  {
+   "line": "2026-11-04 16:25:34.958 UTC [158] ERROR:  permission denied for function pg_ls_waldir",
+   "service": "postgres-db",
+   "t": 40.984
+  },
+  {
+   "line": "2026-11-04 16:25:34.958 UTC [158] STATEMENT:  ",
+   "service": "postgres-db",
+   "t": 40.984
+  },
+  {
+   "line": "\t\t\tSELECT",
+   "service": "postgres-db",
+   "t": 40.984
+  },
+  {
+   "line": "\t\t\t\tCOUNT(*) AS segments,",
+   "service": "postgres-db",
+   "t": 40.984
+  },
+  {
+   "line": "\t\t\t\tSUM(size) AS size",
+   "service": "postgres-db",
+   "t": 40.984
+  },
+  {
+   "line": "\t\t\tFROM pg_ls_waldir()",
+   "service": "postgres-db",
+   "t": 40.984
+  },
+  {
+   "line": "\t\t\tWHERE name ~ '^[0-9A-F]{24}$'",
+   "service": "postgres-db",
+   "t": 40.984
+  },
+  {
+   "line": "time=2026-11-04T16:25:34.958Z level=ERROR source=collector.go:227 msg=\"collector failed\" name=wal duration_seconds=0.046477146 err=\"pq: permission denied for function pg_ls_waldir\"",
+   "service": "postgres-exporter",
+   "t": 40.984
+  },
+  {
+   "line": "Message: \"books don't balance\"",
+   "service": "worker",
+   "t": 41.562
+  },
+  {
+   "line": "Arguments: ()",
+   "service": "worker",
+   "t": 41.562
+  },
+  {
+   "line": "time=2026-11-04T16:25:40.089Z level=ERROR source=collector.go:227 msg=\"collector failed\" name=wal duration_seconds=0.019630929 err=\"pq: permission denied for function pg_ls_waldir\"",
+   "service": "postgres-exporter",
+   "t": 46.115
+  },
+  {
+   "line": "2026-11-04 16:25:40.089 UTC [166] ERROR:  permission denied for function pg_ls_waldir",
+   "service": "postgres-db",
+   "t": 46.115
+  },
+  {
+   "line": "2026-11-04 16:25:40.089 UTC [166] STATEMENT:  ",
+   "service": "postgres-db",
+   "t": 46.115
+  },
+  {
+   "line": "\t\t\tSELECT",
+   "service": "postgres-db",
+   "t": 46.115
+  },
+  {
+   "line": "\t\t\t\tCOUNT(*) AS segments,",
+   "service": "postgres-db",
+   "t": 46.115
+  },
+  {
+   "line": "\t\t\t\tSUM(size) AS size",
+   "service": "postgres-db",
+   "t": 46.115
+  },
+  {
+   "line": "\t\t\tFROM pg_ls_waldir()",
+   "service": "postgres-db",
+   "t": 46.115
+  },
+  {
+   "line": "\t\t\tWHERE name ~ '^[0-9A-F]{24}$'",
+   "service": "postgres-db",
+   "t": 46.115
+  },
+  {
+   "line": "--- Logging error ---",
+   "service": "worker",
+   "t": 46.567
+  },
+  {
+   "line": "Traceback (most recent call last):",
+   "service": "worker",
+   "t": 46.567
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/logging/__init__.py\", line 1151, in emit",
+   "service": "worker",
+   "t": 46.568
+  },
+  {
+   "line": "    msg = self.format(record)",
+   "service": "worker",
+   "t": 46.568
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/logging/__init__.py\", line 999, in format",
+   "service": "worker",
+   "t": 46.568
+  },
+  {
+   "line": "    return fmt.format(record)",
+   "service": "worker",
+   "t": 46.568
+  },
+  {
+   "line": "           ~~~~~~~~~~^^^^^^^^",
+   "service": "worker",
+   "t": 46.568
+  },
+  {
+   "line": "  File \"/srv/worker/worker.py\", line 71, in format",
+   "service": "worker",
+   "t": 46.568
+  },
+  {
+   "line": "    return json.dumps(entry, separators=(\",\", \":\"))",
+   "service": "worker",
+   "t": 46.568
+  },
+  {
+   "line": "           ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^",
+   "service": "worker",
+   "t": 46.568
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/json/__init__.py\", line 242, in dumps",
+   "service": "worker",
+   "t": 46.568
+  },
+  {
+   "line": "    **kw).encode(obj)",
+   "service": "worker",
+   "t": 46.568
+  },
+  {
+   "line": "          ~~~~~~^^^^^",
+   "service": "worker",
+   "t": 46.568
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/json/encoder.py\", line 202, in encode",
+   "service": "worker",
+   "t": 46.568
+  },
+  {
+   "line": "    chunks = self.iterencode(o, _one_shot=True)",
+   "service": "worker",
+   "t": 46.568
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/json/encoder.py\", line 263, in iterencode",
+   "service": "worker",
+   "t": 46.568
+  },
+  {
+   "line": "    return _iterencode(o, 0)",
+   "service": "worker",
+   "t": 46.568
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/json/encoder.py\", line 182, in default",
+   "service": "worker",
+   "t": 46.568
+  },
+  {
+   "line": "    raise TypeError(f'Object of type {o.__class__.__name__} '",
+   "service": "worker",
+   "t": 46.568
+  },
+  {
+   "line": "                    f'is not JSON serializable')",
+   "service": "worker",
+   "t": 46.568
+  },
+  {
+   "line": "TypeError: Object of type Decimal is not JSON serializable",
+   "service": "worker",
+   "t": 46.568
+  },
+  {
+   "line": "when serializing dict item 'books_off_cents'",
+   "service": "worker",
+   "t": 46.568
+  },
+  {
+   "line": "Call stack:",
+   "service": "worker",
+   "t": 46.568
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/threading.py\", line 1044, in _bootstrap",
+   "service": "worker",
+   "t": 46.568
+  },
+  {
+   "line": "    self._bootstrap_inner()",
+   "service": "worker",
+   "t": 46.568
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/threading.py\", line 1082, in _bootstrap_inner",
+   "service": "worker",
+   "t": 46.568
+  },
+  {
+   "line": "    self._context.run(self.run)",
+   "service": "worker",
+   "t": 46.568
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/threading.py\", line 1024, in run",
+   "service": "worker",
+   "t": 46.568
+  },
+  {
+   "line": "    self._target(*self._args, **self._kwargs)",
+   "service": "worker",
+   "t": 46.568
+  },
+  {
+   "line": "  File \"/srv/worker/worker.py\", line 191, in audit",
+   "service": "worker",
+   "t": 46.568
+  },
+  {
+   "line": "    log.error(",
+   "service": "worker",
+   "t": 46.568
+  },
+  {
+   "line": "Message: \"books don't balance\"",
+   "service": "worker",
+   "t": 46.568
+  },
+  {
+   "line": "Arguments: ()",
+   "service": "worker",
+   "t": 46.568
+  },
+  {
+   "line": "2026-11-04 16:25:45.245 UTC [174] ERROR:  permission denied for function pg_ls_waldir",
+   "service": "postgres-db",
+   "t": 51.271
+  },
+  {
+   "line": "2026-11-04 16:25:45.245 UTC [174] STATEMENT:  ",
+   "service": "postgres-db",
+   "t": 51.271
+  },
+  {
+   "line": "\t\t\tSELECT",
+   "service": "postgres-db",
+   "t": 51.271
+  },
+  {
+   "line": "\t\t\t\tCOUNT(*) AS segments,",
+   "service": "postgres-db",
+   "t": 51.271
+  },
+  {
+   "line": "\t\t\t\tSUM(size) AS size",
+   "service": "postgres-db",
+   "t": 51.271
+  },
+  {
+   "line": "\t\t\tFROM pg_ls_waldir()",
+   "service": "postgres-db",
+   "t": 51.271
+  },
+  {
+   "line": "\t\t\tWHERE name ~ '^[0-9A-F]{24}$'",
+   "service": "postgres-db",
+   "t": 51.271
+  },
+  {
+   "line": "time=2026-11-04T16:25:45.246Z level=ERROR source=collector.go:227 msg=\"collector failed\" name=wal duration_seconds=0.01785746 err=\"pq: permission denied for function pg_ls_waldir\"",
+   "service": "postgres-exporter",
+   "t": 51.272
+  },
+  {
+   "line": "--- Logging error ---",
+   "service": "worker",
+   "t": 51.574
+  },
+  {
+   "line": "Traceback (most recent call last):",
+   "service": "worker",
+   "t": 51.574
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/logging/__init__.py\", line 1151, in emit",
+   "service": "worker",
+   "t": 51.575
+  },
+  {
+   "line": "    msg = self.format(record)",
+   "service": "worker",
+   "t": 51.576
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/logging/__init__.py\", line 999, in format",
+   "service": "worker",
+   "t": 51.576
+  },
+  {
+   "line": "    return fmt.format(record)",
+   "service": "worker",
+   "t": 51.576
+  },
+  {
+   "line": "           ~~~~~~~~~~^^^^^^^^",
+   "service": "worker",
+   "t": 51.576
+  },
+  {
+   "line": "  File \"/srv/worker/worker.py\", line 71, in format",
+   "service": "worker",
+   "t": 51.576
+  },
+  {
+   "line": "    return json.dumps(entry, separators=(\",\", \":\"))",
+   "service": "worker",
+   "t": 51.576
+  },
+  {
+   "line": "           ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^",
+   "service": "worker",
+   "t": 51.576
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/json/__init__.py\", line 242, in dumps",
+   "service": "worker",
+   "t": 51.576
+  },
+  {
+   "line": "    **kw).encode(obj)",
+   "service": "worker",
+   "t": 51.576
+  },
+  {
+   "line": "          ~~~~~~^^^^^",
+   "service": "worker",
+   "t": 51.576
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/json/encoder.py\", line 202, in encode",
+   "service": "worker",
+   "t": 51.576
+  },
+  {
+   "line": "    chunks = self.iterencode(o, _one_shot=True)",
+   "service": "worker",
+   "t": 51.576
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/json/encoder.py\", line 263, in iterencode",
+   "service": "worker",
+   "t": 51.576
+  },
+  {
+   "line": "    return _iterencode(o, 0)",
+   "service": "worker",
+   "t": 51.576
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/json/encoder.py\", line 182, in default",
+   "service": "worker",
+   "t": 51.576
+  },
+  {
+   "line": "    raise TypeError(f'Object of type {o.__class__.__name__} '",
+   "service": "worker",
+   "t": 51.576
+  },
+  {
+   "line": "                    f'is not JSON serializable')",
+   "service": "worker",
+   "t": 51.576
+  },
+  {
+   "line": "TypeError: Object of type Decimal is not JSON serializable",
+   "service": "worker",
+   "t": 51.576
+  },
+  {
+   "line": "when serializing dict item 'books_off_cents'",
+   "service": "worker",
+   "t": 51.576
+  },
+  {
+   "line": "Call stack:",
+   "service": "worker",
+   "t": 51.576
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/threading.py\", line 1044, in _bootstrap",
+   "service": "worker",
+   "t": 51.576
+  },
+  {
+   "line": "    self._bootstrap_inner()",
+   "service": "worker",
+   "t": 51.576
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/threading.py\", line 1082, in _bootstrap_inner",
+   "service": "worker",
+   "t": 51.576
+  },
+  {
+   "line": "    self._context.run(self.run)",
+   "service": "worker",
+   "t": 51.576
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/threading.py\", line 1024, in run",
+   "service": "worker",
+   "t": 51.576
+  },
+  {
+   "line": "    self._target(*self._args, **self._kwargs)",
+   "service": "worker",
+   "t": 51.576
+  },
+  {
+   "line": "  File \"/srv/worker/worker.py\", line 191, in audit",
+   "service": "worker",
+   "t": 51.576
+  },
+  {
+   "line": "    log.error(",
+   "service": "worker",
+   "t": 51.576
+  },
+  {
+   "line": "Message: \"books don't balance\"",
+   "service": "worker",
+   "t": 51.576
+  },
+  {
+   "line": "Arguments: ()",
+   "service": "worker",
+   "t": 51.576
+  },
+  {
+   "line": "2026-11-04 16:25:50.421 UTC [183] ERROR:  permission denied for function pg_ls_waldir",
+   "service": "postgres-db",
+   "t": 56.448
+  },
+  {
+   "line": "2026-11-04 16:25:50.421 UTC [183] STATEMENT:  ",
+   "service": "postgres-db",
+   "t": 56.448
+  },
+  {
+   "line": "\t\t\tSELECT",
+   "service": "postgres-db",
+   "t": 56.448
+  },
+  {
+   "line": "\t\t\t\tCOUNT(*) AS segments,",
+   "service": "postgres-db",
+   "t": 56.448
+  },
+  {
+   "line": "\t\t\t\tSUM(size) AS size",
+   "service": "postgres-db",
+   "t": 56.448
+  },
+  {
+   "line": "\t\t\tFROM pg_ls_waldir()",
+   "service": "postgres-db",
+   "t": 56.448
+  },
+  {
+   "line": "\t\t\tWHERE name ~ '^[0-9A-F]{24}$'",
+   "service": "postgres-db",
+   "t": 56.448
+  },
+  {
+   "line": "time=2026-11-04T16:25:50.422Z level=ERROR source=collector.go:227 msg=\"collector failed\" name=wal duration_seconds=0.019798522 err=\"pq: permission denied for function pg_ls_waldir\"",
+   "service": "postgres-exporter",
+   "t": 56.448
+  },
+  {
+   "line": "--- Logging error ---",
+   "service": "worker",
+   "t": 56.577
+  },
+  {
+   "line": "Traceback (most recent call last):",
+   "service": "worker",
+   "t": 56.578
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/logging/__init__.py\", line 1151, in emit",
+   "service": "worker",
+   "t": 56.579
+  },
+  {
+   "line": "    msg = self.format(record)",
+   "service": "worker",
+   "t": 56.579
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/logging/__init__.py\", line 999, in format",
+   "service": "worker",
+   "t": 56.579
+  },
+  {
+   "line": "    return fmt.format(record)",
+   "service": "worker",
+   "t": 56.579
+  },
+  {
+   "line": "           ~~~~~~~~~~^^^^^^^^",
+   "service": "worker",
+   "t": 56.579
+  },
+  {
+   "line": "  File \"/srv/worker/worker.py\", line 71, in format",
+   "service": "worker",
+   "t": 56.579
+  },
+  {
+   "line": "    return json.dumps(entry, separators=(\",\", \":\"))",
+   "service": "worker",
+   "t": 56.579
+  },
+  {
+   "line": "           ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^",
+   "service": "worker",
+   "t": 56.579
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/json/__init__.py\", line 242, in dumps",
+   "service": "worker",
+   "t": 56.579
+  },
+  {
+   "line": "    **kw).encode(obj)",
+   "service": "worker",
+   "t": 56.579
+  },
+  {
+   "line": "          ~~~~~~^^^^^",
+   "service": "worker",
+   "t": 56.579
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/json/encoder.py\", line 202, in encode",
+   "service": "worker",
+   "t": 56.579
+  },
+  {
+   "line": "    chunks = self.iterencode(o, _one_shot=True)",
+   "service": "worker",
+   "t": 56.579
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/json/encoder.py\", line 263, in iterencode",
+   "service": "worker",
+   "t": 56.579
+  },
+  {
+   "line": "    return _iterencode(o, 0)",
+   "service": "worker",
+   "t": 56.579
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/json/encoder.py\", line 182, in default",
+   "service": "worker",
+   "t": 56.579
+  },
+  {
+   "line": "    raise TypeError(f'Object of type {o.__class__.__name__} '",
+   "service": "worker",
+   "t": 56.579
+  },
+  {
+   "line": "                    f'is not JSON serializable')",
+   "service": "worker",
+   "t": 56.579
+  },
+  {
+   "line": "TypeError: Object of type Decimal is not JSON serializable",
+   "service": "worker",
+   "t": 56.579
+  },
+  {
+   "line": "when serializing dict item 'books_off_cents'",
+   "service": "worker",
+   "t": 56.579
+  },
+  {
+   "line": "Call stack:",
+   "service": "worker",
+   "t": 56.579
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/threading.py\", line 1044, in _bootstrap",
+   "service": "worker",
+   "t": 56.579
+  },
+  {
+   "line": "    self._bootstrap_inner()",
+   "service": "worker",
+   "t": 56.579
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/threading.py\", line 1082, in _bootstrap_inner",
+   "service": "worker",
+   "t": 56.579
+  },
+  {
+   "line": "    self._context.run(self.run)",
+   "service": "worker",
+   "t": 56.579
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/threading.py\", line 1024, in run",
+   "service": "worker",
+   "t": 56.579
+  },
+  {
+   "line": "    self._target(*self._args, **self._kwargs)",
+   "service": "worker",
+   "t": 56.579
+  },
+  {
+   "line": "  File \"/srv/worker/worker.py\", line 191, in audit",
+   "service": "worker",
+   "t": 56.579
+  },
+  {
+   "line": "    log.error(",
+   "service": "worker",
+   "t": 56.579
+  },
+  {
+   "line": "Message: \"books don't balance\"",
+   "service": "worker",
+   "t": 56.579
+  },
+  {
+   "line": "Arguments: ()",
+   "service": "worker",
+   "t": 56.579
+  },
+  {
+   "line": "--- Logging error ---",
+   "service": "worker",
+   "t": 61.584
+  },
+  {
+   "line": "Traceback (most recent call last):",
+   "service": "worker",
+   "t": 61.586
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/logging/__init__.py\", line 1151, in emit",
+   "service": "worker",
+   "t": 61.587
+  },
+  {
+   "line": "    msg = self.format(record)",
+   "service": "worker",
+   "t": 61.588
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/logging/__init__.py\", line 999, in format",
+   "service": "worker",
+   "t": 61.588
+  },
+  {
+   "line": "    return fmt.format(record)",
+   "service": "worker",
+   "t": 61.588
+  },
+  {
+   "line": "           ~~~~~~~~~~^^^^^^^^",
+   "service": "worker",
+   "t": 61.588
+  },
+  {
+   "line": "  File \"/srv/worker/worker.py\", line 71, in format",
+   "service": "worker",
+   "t": 61.588
+  },
+  {
+   "line": "    return json.dumps(entry, separators=(\",\", \":\"))",
+   "service": "worker",
+   "t": 61.588
+  },
+  {
+   "line": "           ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^",
+   "service": "worker",
+   "t": 61.588
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/json/__init__.py\", line 242, in dumps",
+   "service": "worker",
+   "t": 61.588
+  },
+  {
+   "line": "    **kw).encode(obj)",
+   "service": "worker",
+   "t": 61.588
+  },
+  {
+   "line": "          ~~~~~~^^^^^",
+   "service": "worker",
+   "t": 61.588
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/json/encoder.py\", line 202, in encode",
+   "service": "worker",
+   "t": 61.588
+  },
+  {
+   "line": "    chunks = self.iterencode(o, _one_shot=True)",
+   "service": "worker",
+   "t": 61.588
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/json/encoder.py\", line 263, in iterencode",
+   "service": "worker",
+   "t": 61.588
+  },
+  {
+   "line": "    return _iterencode(o, 0)",
+   "service": "worker",
+   "t": 61.588
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/json/encoder.py\", line 182, in default",
+   "service": "worker",
+   "t": 61.588
+  },
+  {
+   "line": "    raise TypeError(f'Object of type {o.__class__.__name__} '",
+   "service": "worker",
+   "t": 61.588
+  },
+  {
+   "line": "                    f'is not JSON serializable')",
+   "service": "worker",
+   "t": 61.588
+  },
+  {
+   "line": "TypeError: Object of type Decimal is not JSON serializable",
+   "service": "worker",
+   "t": 61.588
+  },
+  {
+   "line": "when serializing dict item 'books_off_cents'",
+   "service": "worker",
+   "t": 61.588
+  },
+  {
+   "line": "Call stack:",
+   "service": "worker",
+   "t": 61.588
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/threading.py\", line 1044, in _bootstrap",
+   "service": "worker",
+   "t": 61.588
+  },
+  {
+   "line": "    self._bootstrap_inner()",
+   "service": "worker",
+   "t": 61.588
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/threading.py\", line 1082, in _bootstrap_inner",
+   "service": "worker",
+   "t": 61.588
+  },
+  {
+   "line": "    self._context.run(self.run)",
+   "service": "worker",
+   "t": 61.588
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/threading.py\", line 1024, in run",
+   "service": "worker",
+   "t": 61.588
+  },
+  {
+   "line": "    self._target(*self._args, **self._kwargs)",
+   "service": "worker",
+   "t": 61.588
+  },
+  {
+   "line": "  File \"/srv/worker/worker.py\", line 191, in audit",
+   "service": "worker",
+   "t": 61.588
+  },
+  {
+   "line": "    log.error(",
+   "service": "worker",
+   "t": 61.588
+  },
+  {
+   "line": "Message: \"books don't balance\"",
+   "service": "worker",
+   "t": 61.588
+  },
+  {
+   "line": "Arguments: ()",
+   "service": "worker",
+   "t": 61.588
+  },
+  {
+   "line": "2026-11-04 16:25:55.609 UTC [192] ERROR:  permission denied for function pg_ls_waldir",
+   "service": "postgres-db",
+   "t": 61.634
+  },
+  {
+   "line": "2026-11-04 16:25:55.609 UTC [192] STATEMENT:  ",
+   "service": "postgres-db",
+   "t": 61.634
+  },
+  {
+   "line": "\t\t\tSELECT",
+   "service": "postgres-db",
+   "t": 61.634
+  },
+  {
+   "line": "\t\t\t\tCOUNT(*) AS segments,",
+   "service": "postgres-db",
+   "t": 61.634
+  },
+  {
+   "line": "\t\t\t\tSUM(size) AS size",
+   "service": "postgres-db",
+   "t": 61.634
+  },
+  {
+   "line": "\t\t\tFROM pg_ls_waldir()",
+   "service": "postgres-db",
+   "t": 61.634
+  },
+  {
+   "line": "\t\t\tWHERE name ~ '^[0-9A-F]{24}$'",
+   "service": "postgres-db",
+   "t": 61.634
+  },
+  {
+   "line": "time=2026-11-04T16:25:55.609Z level=ERROR source=collector.go:227 msg=\"collector failed\" name=wal duration_seconds=0.027894383 err=\"pq: permission denied for function pg_ls_waldir\"",
+   "service": "postgres-exporter",
+   "t": 61.635
+  },
+  {
+   "line": "--- Logging error ---",
+   "service": "worker",
+   "t": 66.59
+  },
+  {
+   "line": "Traceback (most recent call last):",
+   "service": "worker",
+   "t": 66.59
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/logging/__init__.py\", line 1151, in emit",
+   "service": "worker",
+   "t": 66.59
+  },
+  {
+   "line": "    msg = self.format(record)",
+   "service": "worker",
+   "t": 66.59
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/logging/__init__.py\", line 999, in format",
+   "service": "worker",
+   "t": 66.59
+  },
+  {
+   "line": "    return fmt.format(record)",
+   "service": "worker",
+   "t": 66.59
+  },
+  {
+   "line": "           ~~~~~~~~~~^^^^^^^^",
+   "service": "worker",
+   "t": 66.59
+  },
+  {
+   "line": "  File \"/srv/worker/worker.py\", line 71, in format",
+   "service": "worker",
+   "t": 66.59
+  },
+  {
+   "line": "    return json.dumps(entry, separators=(\",\", \":\"))",
+   "service": "worker",
+   "t": 66.59
+  },
+  {
+   "line": "           ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^",
+   "service": "worker",
+   "t": 66.59
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/json/__init__.py\", line 242, in dumps",
+   "service": "worker",
+   "t": 66.59
+  },
+  {
+   "line": "    **kw).encode(obj)",
+   "service": "worker",
+   "t": 66.59
+  },
+  {
+   "line": "          ~~~~~~^^^^^",
+   "service": "worker",
+   "t": 66.59
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/json/encoder.py\", line 202, in encode",
+   "service": "worker",
+   "t": 66.59
+  },
+  {
+   "line": "    chunks = self.iterencode(o, _one_shot=True)",
+   "service": "worker",
+   "t": 66.59
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/json/encoder.py\", line 263, in iterencode",
+   "service": "worker",
+   "t": 66.59
+  },
+  {
+   "line": "    return _iterencode(o, 0)",
+   "service": "worker",
+   "t": 66.59
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/json/encoder.py\", line 182, in default",
+   "service": "worker",
+   "t": 66.59
+  },
+  {
+   "line": "    raise TypeError(f'Object of type {o.__class__.__name__} '",
+   "service": "worker",
+   "t": 66.59
+  },
+  {
+   "line": "                    f'is not JSON serializable')",
+   "service": "worker",
+   "t": 66.59
+  },
+  {
+   "line": "TypeError: Object of type Decimal is not JSON serializable",
+   "service": "worker",
+   "t": 66.59
+  },
+  {
+   "line": "when serializing dict item 'books_off_cents'",
+   "service": "worker",
+   "t": 66.59
+  },
+  {
+   "line": "Call stack:",
+   "service": "worker",
+   "t": 66.59
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/threading.py\", line 1044, in _bootstrap",
+   "service": "worker",
+   "t": 66.59
+  },
+  {
+   "line": "    self._bootstrap_inner()",
+   "service": "worker",
+   "t": 66.59
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/threading.py\", line 1082, in _bootstrap_inner",
+   "service": "worker",
+   "t": 66.59
+  },
+  {
+   "line": "    self._context.run(self.run)",
+   "service": "worker",
+   "t": 66.59
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/threading.py\", line 1024, in run",
+   "service": "worker",
+   "t": 66.59
+  },
+  {
+   "line": "    self._target(*self._args, **self._kwargs)",
+   "service": "worker",
+   "t": 66.59
+  },
+  {
+   "line": "  File \"/srv/worker/worker.py\", line 191, in audit",
+   "service": "worker",
+   "t": 66.59
+  },
+  {
+   "line": "    log.error(",
+   "service": "worker",
+   "t": 66.59
+  },
+  {
+   "line": "Message: \"books don't balance\"",
+   "service": "worker",
+   "t": 66.59
+  },
+  {
+   "line": "Arguments: ()",
+   "service": "worker",
+   "t": 66.59
+  },
+  {
+   "line": "2026-11-04 16:26:00.719 UTC [200] ERROR:  permission denied for function pg_ls_waldir",
+   "service": "postgres-db",
+   "t": 66.745
+  },
+  {
+   "line": "2026-11-04 16:26:00.719 UTC [200] STATEMENT:  ",
+   "service": "postgres-db",
+   "t": 66.745
+  },
+  {
+   "line": "\t\t\tSELECT",
+   "service": "postgres-db",
+   "t": 66.745
+  },
+  {
+   "line": "\t\t\t\tCOUNT(*) AS segments,",
+   "service": "postgres-db",
+   "t": 66.745
+  },
+  {
+   "line": "\t\t\t\tSUM(size) AS size",
+   "service": "postgres-db",
+   "t": 66.745
+  },
+  {
+   "line": "\t\t\tFROM pg_ls_waldir()",
+   "service": "postgres-db",
+   "t": 66.745
+  },
+  {
+   "line": "\t\t\tWHERE name ~ '^[0-9A-F]{24}$'",
+   "service": "postgres-db",
+   "t": 66.745
+  },
+  {
+   "line": "time=2026-11-04T16:26:00.720Z level=ERROR source=collector.go:227 msg=\"collector failed\" name=wal duration_seconds=0.021498701 err=\"pq: permission denied for function pg_ls_waldir\"",
+   "service": "postgres-exporter",
+   "t": 66.746
+  },
+  {
+   "line": "--- Logging error ---",
+   "service": "worker",
+   "t": 71.598
+  },
+  {
+   "line": "Traceback (most recent call last):",
+   "service": "worker",
+   "t": 71.598
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/logging/__init__.py\", line 1151, in emit",
+   "service": "worker",
+   "t": 71.6
+  },
+  {
+   "line": "    msg = self.format(record)",
+   "service": "worker",
+   "t": 71.6
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/logging/__init__.py\", line 999, in format",
+   "service": "worker",
+   "t": 71.6
+  },
+  {
+   "line": "    return fmt.format(record)",
+   "service": "worker",
+   "t": 71.6
+  },
+  {
+   "line": "           ~~~~~~~~~~^^^^^^^^",
+   "service": "worker",
+   "t": 71.6
+  },
+  {
+   "line": "  File \"/srv/worker/worker.py\", line 71, in format",
+   "service": "worker",
+   "t": 71.6
+  },
+  {
+   "line": "    return json.dumps(entry, separators=(\",\", \":\"))",
+   "service": "worker",
+   "t": 71.6
+  },
+  {
+   "line": "           ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^",
+   "service": "worker",
+   "t": 71.6
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/json/__init__.py\", line 242, in dumps",
+   "service": "worker",
+   "t": 71.6
+  },
+  {
+   "line": "    **kw).encode(obj)",
+   "service": "worker",
+   "t": 71.6
+  },
+  {
+   "line": "          ~~~~~~^^^^^",
+   "service": "worker",
+   "t": 71.6
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/json/encoder.py\", line 202, in encode",
+   "service": "worker",
+   "t": 71.6
+  },
+  {
+   "line": "    chunks = self.iterencode(o, _one_shot=True)",
+   "service": "worker",
+   "t": 71.6
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/json/encoder.py\", line 263, in iterencode",
+   "service": "worker",
+   "t": 71.6
+  },
+  {
+   "line": "    return _iterencode(o, 0)",
+   "service": "worker",
+   "t": 71.6
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/json/encoder.py\", line 182, in default",
+   "service": "worker",
+   "t": 71.6
+  },
+  {
+   "line": "    raise TypeError(f'Object of type {o.__class__.__name__} '",
+   "service": "worker",
+   "t": 71.6
+  },
+  {
+   "line": "                    f'is not JSON serializable')",
+   "service": "worker",
+   "t": 71.6
+  },
+  {
+   "line": "TypeError: Object of type Decimal is not JSON serializable",
+   "service": "worker",
+   "t": 71.6
+  },
+  {
+   "line": "when serializing dict item 'books_off_cents'",
+   "service": "worker",
+   "t": 71.6
+  },
+  {
+   "line": "Call stack:",
+   "service": "worker",
+   "t": 71.6
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/threading.py\", line 1044, in _bootstrap",
+   "service": "worker",
+   "t": 71.6
+  },
+  {
+   "line": "    self._bootstrap_inner()",
+   "service": "worker",
+   "t": 71.6
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/threading.py\", line 1082, in _bootstrap_inner",
+   "service": "worker",
+   "t": 71.6
+  },
+  {
+   "line": "    self._context.run(self.run)",
+   "service": "worker",
+   "t": 71.6
+  },
+  {
+   "line": "  File \"/usr/local/lib/python3.14/threading.py\", line 1024, in run",
+   "service": "worker",
+   "t": 71.6
+  },
+  {
+   "line": "    self._target(*self._args, **self._kwargs)",
+   "service": "worker",
+   "t": 71.6
+  },
+  {
+   "line": "  File \"/srv/worker/worker.py\", line 191, in audit",
+   "service": "worker",
+   "t": 71.6
+  },
+  {
+   "line": "    log.error(",
+   "service": "worker",
+   "t": 71.6
+  },
+  {
+   "line": "Message: \"books don't balance\"",
+   "service": "worker",
+   "t": 71.6
+  },
+  {
+   "line": "Arguments: ()",
+   "service": "worker",
+   "t": 71.6
+  },
+  {
+   "line": "2026-11-04 16:26:05.851 UTC [208] ERROR:  permission denied for function pg_ls_waldir",
+   "service": "postgres-db",
+   "t": 71.877
+  },
+  {
+   "line": "2026-11-04 16:26:05.851 UTC [208] STATEMENT:  ",
+   "service": "postgres-db",
+   "t": 71.877
+  },
+  {
+   "line": "\t\t\tSELECT",
+   "service": "postgres-db",
+   "t": 71.877
+  },
+  {
+   "line": "\t\t\t\tCOUNT(*) AS segments,",
+   "service": "postgres-db",
+   "t": 71.877
+  },
+  {
+   "line": "\t\t\t\tSUM(size) AS size",
+   "service": "postgres-db",
+   "t": 71.877
+  },
+  {
+   "line": "\t\t\tFROM pg_ls_waldir()",
+   "service": "postgres-db",
+   "t": 71.877
+  },
+  {
+   "line": "\t\t\tWHERE name ~ '^[0-9A-F]{24}$'",
+   "service": "postgres-db",
+   "t": 71.877
+  },
+  {
+   "line": "time=2026-11-04T16:26:05.851Z level=ERROR source=collector.go:227 msg=\"collector failed\" name=wal duration_seconds=0.007185666 err=\"pq: permission denied for function pg_ls_waldir\"",
+   "service": "postgres-exporter",
+   "t": 71.877
+  }
+ ],
+ "recorded_at": 1793809494.0,
+ "samples": [
+  {
+   "t": 7.2,
+   "values": {
+    "accounts_off": 6.0,
+    "books_off_cents": 27153.0,
+    "db_connections": 20.0,
+    "db_pool_in_use": 1.0,
+    "deadlocks": 0.0,
+    "error_rate": 0.0,
+    "negative_balances": 0.0,
+    "overdrafts": 0.0,
+    "p99_latency_ms": 975.5,
+    "refused_rate": null,
+    "request_rate": 68.2006,
+    "settlements_pending": 6.0
+   }
+  },
+  {
+   "t": 13.6,
+   "values": {
+    "accounts_off": 9.0,
+    "books_off_cents": 42303.0,
+    "db_connections": 20.0,
+    "db_pool_in_use": 3.0,
+    "deadlocks": 0.0,
+    "error_rate": 0.0,
+    "negative_balances": 0.0,
+    "overdrafts": 0.0,
+    "p99_latency_ms": 1333.75,
+    "refused_rate": null,
+    "request_rate": 54.0244,
+    "settlements_pending": 5.0
+   }
+  },
+  {
+   "t": 19.3,
+   "values": {
+    "accounts_off": 12.0,
+    "books_off_cents": 55163.0,
+    "db_connections": 20.0,
+    "db_pool_in_use": 2.0,
+    "deadlocks": 0.0,
+    "error_rate": 0.0,
+    "negative_balances": 0.0,
+    "overdrafts": 0.0,
+    "p99_latency_ms": 373.6111,
+    "refused_rate": null,
+    "request_rate": 82.5582,
+    "settlements_pending": 0.0
+   }
+  },
+  {
+   "t": 24.8,
+   "values": {
+    "accounts_off": 13.0,
+    "books_off_cents": 59407.0,
+    "db_connections": 20.0,
+    "db_pool_in_use": 7.0,
+    "deadlocks": 0.0,
+    "error_rate": 0.0,
+    "negative_balances": 0.0,
+    "overdrafts": 0.0,
+    "p99_latency_ms": 962.7273,
+    "refused_rate": null,
+    "request_rate": 49.8212,
+    "settlements_pending": 5.0
+   }
+  },
+  {
+   "t": 30.5,
+   "values": {
+    "accounts_off": 16.0,
+    "books_off_cents": 82066.0,
+    "db_connections": 20.0,
+    "db_pool_in_use": 1.0,
+    "deadlocks": 0.0,
+    "error_rate": 0.0,
+    "negative_balances": 0.0,
+    "overdrafts": 0.0,
+    "p99_latency_ms": 746.1111,
+    "refused_rate": null,
+    "request_rate": 80.6533,
+    "settlements_pending": 2.0
+   }
+  },
+  {
+   "t": 36.1,
+   "values": {
+    "accounts_off": 17.0,
+    "books_off_cents": 100959.0,
+    "db_connections": 20.0,
+    "db_pool_in_use": 0.0,
+    "deadlocks": 0.0,
+    "error_rate": 0.0,
+    "negative_balances": 0.0,
+    "overdrafts": 0.0,
+    "p99_latency_ms": 122.5,
+    "refused_rate": null,
+    "request_rate": 154.3241,
+    "settlements_pending": 4.0
+   }
+  },
+  {
+   "t": 41.3,
+   "values": {
+    "accounts_off": 17.0,
+    "books_off_cents": 104631.0,
+    "db_connections": 20.0,
+    "db_pool_in_use": 0.0,
+    "deadlocks": 0.0,
+    "error_rate": 0.0,
+    "negative_balances": 0.0,
+    "overdrafts": 0.0,
+    "p99_latency_ms": 44.6705,
+    "refused_rate": null,
+    "request_rate": 168.4454,
+    "settlements_pending": 0.0
+   }
+  },
+  {
+   "t": 46.4,
+   "values": {
+    "accounts_off": 17.0,
+    "books_off_cents": 113719.0,
+    "db_connections": 20.0,
+    "db_pool_in_use": 0.0,
+    "deadlocks": 0.0,
+    "error_rate": 0.0,
+    "negative_balances": 0.0,
+    "overdrafts": 0.0,
+    "p99_latency_ms": 24.1214,
+    "refused_rate": null,
+    "request_rate": 173.0283,
+    "settlements_pending": 3.0
+   }
+  },
+  {
+   "t": 51.6,
+   "values": {
+    "accounts_off": 18.0,
+    "books_off_cents": 117309.0,
+    "db_connections": 20.0,
+    "db_pool_in_use": 0.0,
+    "deadlocks": 0.0,
+    "error_rate": 0.0,
+    "negative_balances": 0.0,
+    "overdrafts": 0.0,
+    "p99_latency_ms": 36.1719,
+    "refused_rate": null,
+    "request_rate": 171.9338,
+    "settlements_pending": 4.0
+   }
+  },
+  {
+   "t": 56.8,
+   "values": {
+    "accounts_off": 19.0,
+    "books_off_cents": 146446.0,
+    "db_connections": 20.0,
+    "db_pool_in_use": 0.0,
+    "deadlocks": 0.0,
+    "error_rate": 0.0,
+    "negative_balances": 0.0,
+    "overdrafts": 0.0,
+    "p99_latency_ms": 24.1102,
+    "refused_rate": null,
+    "request_rate": 174.0049,
+    "settlements_pending": 2.0
+   }
+  },
+  {
+   "t": 61.9,
+   "values": {
+    "accounts_off": 19.0,
+    "books_off_cents": 156734.0,
+    "db_connections": 20.0,
+    "db_pool_in_use": 0.0,
+    "deadlocks": 0.0,
+    "error_rate": 0.0,
+    "negative_balances": 0.0,
+    "overdrafts": 0.0,
+    "p99_latency_ms": 27.125,
+    "refused_rate": null,
+    "request_rate": 179.198,
+    "settlements_pending": 5.0
+   }
+  },
+  {
+   "t": 67.1,
+   "values": {
+    "accounts_off": 19.0,
+    "books_off_cents": 161658.0,
+    "db_connections": 20.0,
+    "db_pool_in_use": 4.0,
+    "deadlocks": 0.0,
+    "error_rate": 0.0,
+    "negative_balances": 0.0,
+    "overdrafts": 0.0,
+    "p99_latency_ms": 47.37,
+    "refused_rate": null,
+    "request_rate": 166.947,
+    "settlements_pending": 8.0
+   }
+  }
+ ],
+ "schema": "devgrill/case-evidence@1",
+ "source_hash": "9b4057fd0fac1b32e45260d43cada6cfb2723b2e7c47e7b524c3e3c79a863ff8",
+ "status": [
+  {
+   "health": "healthy",
+   "name": "api",
+   "oom_killed": false,
+   "restarts": 0,
+   "started_at": "2026-11-04T16:24:30.322396369Z",
+   "state": "running"
+  },
+  {
+   "health": "healthy",
+   "name": "postgres-db",
+   "oom_killed": false,
+   "restarts": 0,
+   "started_at": "2026-11-04T16:24:27.844838759Z",
+   "state": "running"
+  },
+  {
+   "health": null,
+   "name": "postgres-exporter",
+   "oom_killed": false,
+   "restarts": 0,
+   "started_at": "2026-11-04T16:24:30.273385042Z",
+   "state": "running"
+  },
+  {
+   "health": null,
+   "name": "tools",
+   "oom_killed": false,
+   "restarts": 0,
+   "started_at": "2026-11-04T16:24:41.24342046Z",
+   "state": "running"
+  },
+  {
+   "health": null,
+   "name": "worker",
+   "oom_killed": false,
+   "restarts": 0,
+   "started_at": "2026-11-04T16:24:51.470315159Z",
+   "state": "running"
+  }
+ ]
+}
