@@ -4,7 +4,7 @@
  # DEALS_TIMEOUT_MS (a landing page slower than that is worse than none).
  DEALS_REFRESH_S=60
  DEALS_TTL_S=600
--DEALS_TIMEOUT_MS=500
+-DEALS_TIMEOUT_MS=250
 +DEALS_TIMEOUT_MS=0
  
  # Sign-ins (sessions in Valkey) last this many seconds.

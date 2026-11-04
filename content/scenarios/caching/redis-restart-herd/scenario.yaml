@@ -1,7 +1,7 @@
 # Spec v1 (ADR 012). Platform restarts Valkey (no persistence) mid-afternoon. The sale landing
 # page (/deals) is cached and refreshed ahead by one request at a time, but with no copy at all
 # every request builds it. Dozens of builds share one database CPU, each takes longer than the
-# 500 ms build limit, all are cancelled, and the copy is never written: a herd that never ends.
+# 250 ms build limit, all are cancelled, and the copy is never written: a herd that never ends.
 schema: devgrill/scenario@1
 slug: redis-restart-herd
 title: Redis restart herd
@@ -57,8 +57,8 @@ load:
   vus: 40
   params:
     HOT_KEYS: "1042,1043,2210,77,9001"
-    # Three in ten shoppers land on the sale page first.
-    DEALS_RATE: "0.3"
+    # Every shopper lands on the sale page first.
+    DEALS_RATE: "1"
 
 deploy_history:
   - message: "landing: sale deals page, refreshed ahead of expiry"
@@ -132,7 +132,7 @@ probes:
 
 hints:
   tier1: "Redis came back in seconds, so why is the site still down? Find which requests fail, and what the database is busy with."
-  tier2: "Every failing request is the sale page, cancelled after 500 ms. Count how many builds of the deals page run at once, and ask what happens when the cache has no copy at all."
+  tier2: "Every failing request is the sale page, cancelled after 250 ms. Count how many builds of the deals page run at once, and ask what happens when the cache has no copy at all."
   tier3: "With no cached copy, every request builds the deals page itself. Forty builds share one database CPU, each takes longer than DEALS_TIMEOUT_MS, all are cancelled, and the copy is never written. On a miss, build only under cache.claim_deals_refresh() and let everyone else poll for that copy."
 
 rubric:
@@ -142,14 +142,14 @@ rubric:
     anchors:
       "0": "No impact stated."
       "1": "The site had errors, without which pages or since when."
-      "2": "From the Redis restart on, most sale-page loads failed after half a second and the rest of the site slowed down; it did not recover on its own."
+      "2": "From the Redis restart on, most sale-page loads failed after a quarter of a second and the rest of the site slowed down; it did not recover on its own."
   - key: root-cause
     max: 4
     description: Explains why a thirty-second restart became an outage.
     anchors:
       "0": "Blames Platform, Redis or Postgres capacity."
       "2": "Says the empty cache overloaded the database, without why it never recovered."
-      "4": "The restart emptied the cache. With no copy, every request built the deals page itself; forty builds shared one database CPU, so each took longer than the 500 ms build limit and was cancelled, and the copy was never written. The overload kept itself going: a stampede that never ends."
+      "4": "The restart emptied the cache. With no copy, every request built the deals page itself; forty builds shared one database CPU, so each took longer than the 250 ms build limit and was cancelled, and the copy was never written. The overload kept itself going: a stampede that never ends."
   - key: rejected-fixes
     max: 2
     description: Explains why restarting things or a bigger database wasn't the fix.
@@ -193,6 +193,6 @@ ai:
     Platform restarted Valkey, which keeps nothing on disk, so the cache came back empty. With no
     cached copy of the sale page (/deals), every request built it: about forty builds, each
     reading the whole reviews table, shared one database CPU, each ran past DEALS_TIMEOUT_MS
-    (500 ms) and was cancelled, so the copy was never written and the overload fed itself.
+    (250 ms) and was cancelled, so the copy was never written and the overload fed itself.
     Building on a miss only under the refresh claim, with everyone else waiting for that copy,
     fixes it; lifting the time limit lets a build finish but keeps the herd.

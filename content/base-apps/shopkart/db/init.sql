@@ -1,4 +1,4 @@
--- ShopKart schema and seed: 18,402 products, 2,000 users, 50,000 orders, 300,000 reviews.
+-- ShopKart schema and seed: 18,402 products, 2,000 users, 150,000 orders, 300,000 reviews.
 -- Runs once when the Postgres container initialises its data directory.
 --
 -- Roles (ADR 015). `postgres` is the platform's superuser: its password is random and never
@@ -71,7 +71,7 @@ SELECT 1 + (g::bigint * 7919) % 2000,
        CASE WHEN g % 50 = 0 THEN 'failed' ELSE 'paid' END,
        now() - (g || ' minutes')::interval,
        now() - (g || ' minutes')::interval
-FROM generate_series(1, 50000) AS g;
+FROM generate_series(1, 150000) AS g;
 
 -- Reviews: the rating summary on a product page aggregates them, which makes a product read
 -- far from free and is why product reads are cached. Sale products are the most reviewed.

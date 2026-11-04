@@ -57,7 +57,7 @@ CACHE_KEY_PREFIX = os.environ.get("CACHE_KEY_PREFIX", "")
 #: limit) before Postgres cancels it.
 DEALS_REFRESH_S = _int("DEALS_REFRESH_S", 60)
 DEALS_TTL_S = _int("DEALS_TTL_S", 600)
-DEALS_TIMEOUT_MS = _int("DEALS_TIMEOUT_MS", 500)
+DEALS_TIMEOUT_MS = _int("DEALS_TIMEOUT_MS", 250)
 
 #: How long a sign-in lasts (seconds). Sessions live in Valkey next to the cache.
 SESSION_TTL_S = _int("SESSION_TTL_S", 3600)

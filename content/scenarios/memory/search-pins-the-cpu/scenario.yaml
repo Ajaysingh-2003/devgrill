@@ -57,13 +57,15 @@ load:
   vus: 30
   params:
     HOT_KEYS: "1042,1043,2210,77,9001"
-    # Shoppers' searches: 38 clean ones and two real queries that end in punctuation.
+    # Shoppers' searches: 38 clean ones and two real queries that end in punctuation, each
+    # listed twice: often enough to keep every worker stalled, even on a fast host.
     SEARCH_TERMS: >-
       Trail,Urban,Studio,Classic,Pro,Lite,Max,Mini,Backpack,Headphones,Kettle,Sneakers,Jacket,
       Lamp,Blender,Notebook,Charger,Tent,Trail Backpack,Urban Sneakers,Studio Headphones,
       Pro Blender,Mini Lamp,Max Tent,Classic Jacket,Lite Charger,Trail Tent,Urban Jacket,
       Studio Lamp,Pro Kettle,Max Backpack,Mini Charger,Classic Notebook,Lite Sneakers,kettle,
-      tent,lamp,jacket,waterproof hiking jackets mens!,lightweight camping kettles!
+      tent,lamp,jacket,waterproof hiking jackets mens!,lightweight camping kettles!,
+      waterproof hiking jackets mens!,lightweight camping kettles!
 
 deploy_history:
   - message: "catalogue: add trail-running category"
