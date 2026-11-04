@@ -102,6 +102,7 @@ export function createDemoSource({ tutorial = false } = {}): WorkspaceSource {
     metrics: ["p99_latency_ms", "error_rate", "cache_hit_rate", "db_qps_product"],
     slo: { p99_latency_ms: { lt: 500 }, error_rate: { lt: 0.01 } },
     deployable: ["api"],
+    host: "shopkart",
     hints_total: 3,
     hints: [],
     extend_minutes: 15,

@@ -354,6 +354,8 @@ class WorkspaceOut(Model):
     slo: dict[str, SloTarget]
     #: Services whose source the player can edit and deploy.
     deployable: list[str]
+    #: The practice system's name, as its shell prompt shows it (oncall@<host>).
+    host: str
     hints_total: int
     hints: list[HintOut]
     extend_minutes: int

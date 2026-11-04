@@ -5431,6 +5431,10 @@
             "title": "Hints Total",
             "type": "integer"
           },
+          "host": {
+            "title": "Host",
+            "type": "string"
+          },
           "idle_minutes": {
             "title": "Idle Minutes",
             "type": "integer"
@@ -5495,6 +5499,7 @@
           "metrics",
           "slo",
           "deployable",
+          "host",
           "hints_total",
           "hints",
           "extend_minutes",

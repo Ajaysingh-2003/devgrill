@@ -181,6 +181,7 @@ async def get_workspace(
         metrics=list(spec.charts) or list(bundle.base_app.metrics),
         slo={k: SloTarget(lt=v.lt, gt=v.gt) for k, v in slo.items()},
         deployable=bundle.base_app.patchable_services,
+        host=bundle.base_app.slug,
         hints_total=3 if spec.hints and attempt.mode is not AttemptMode.ONCALL else 0,
         hints=hints,
         extend_minutes=limits.extend_minutes,

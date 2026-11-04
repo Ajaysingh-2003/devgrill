@@ -231,6 +231,7 @@ def test_anonymous_callers_are_turned_away(api, seeded, fake) -> None:  # type: 
 async def test_unplayable_and_unknown_scenarios(api, seeded, auth, fake) -> None:  # type: ignore[no-untyped-def]
     _, headers = user_headers(auth)
     assert start(api, headers, "no-such-incident").status_code == 404
+    await make_placeholder(seeded, "ghost-reads")
     placeholder = start(api, headers, "ghost-reads")
     assert (placeholder.status_code, placeholder.json()["code"]) == (409, "not_playable")
 
@@ -311,6 +312,18 @@ async def test_scenario_access_is_stored(seeded) -> None:  # type: ignore[no-unt
     assert Scenario.access is not None
 
 
+async def make_placeholder(seeded: AsyncSession, slug: str) -> None:
+    """Every scenario in content is playable now, but the platform still refuses a placeholder."""
+    await seeded.execute(
+        text(
+            "UPDATE app.scenario_versions v SET spec = jsonb_set(v.spec, '{playable}', 'false')"
+            " FROM app.scenarios s WHERE s.slug = :slug AND v.id = s.current_version_id"
+        ),
+        {"slug": slug},
+    )
+    await seeded.commit()
+
+
 def play_check(api: TestClient, headers: dict[str, str], slug: str = "ttl-zero") -> dict:  # type: ignore[type-arg]
     res = api.get(f"/v1/scenarios/{slug}/play", headers=headers)
     assert res.status_code == 200, res.text
@@ -321,6 +334,7 @@ async def test_play_check_says_what_stands_in_the_way(api, seeded, auth, fake) -
     # Not signed in: the tutorial is open, the rest needs an account, placeholders aren't ready.
     assert play_check(api, {})["allowed"] is True
     assert play_check(api, {}, "pool-party")["reason"] == "sign_up_required"
+    await make_placeholder(seeded, "ghost-reads")
     assert play_check(api, {}, "ghost-reads")["reason"] == "not_playable"
     # Signed in on the free plan: free scenarios yes, Pro ones no.
     _, headers = user_headers(auth)

@@ -4,6 +4,7 @@ import dynamic from "next/dynamic";
 import { useEffect, useState } from "react";
 import { PanelFrame } from "@devgrill/ui/components/devgrill/panel-frame";
 import { cn } from "@devgrill/ui/lib/utils";
+import { useSource } from "../context";
 import type { TerminalStatus } from "./terminal-view";
 
 // xterm.js is the heaviest part of the page: it loads with this panel, not with the route.
@@ -24,6 +25,7 @@ const STATUS: Record<TerminalStatus, { text: string; tone: string }> = {
 export const SCREEN_READER_EVENT = "devgrill:terminal-screen-reader";
 
 export function TerminalPanel() {
+  const { info } = useSource();
   const [status, setStatus] = useState<TerminalStatus>("connecting");
   const [screenReader, setScreenReader] = useState(false);
   useEffect(() => {
@@ -37,7 +39,7 @@ export function TerminalPanel() {
       title="Terminal"
       meta={
         <span role="status" className={cn("font-mono", STATUS[status].tone)}>
-          oncall@shopkart: {STATUS[status].text}
+          oncall@{info.host}: {STATUS[status].text}
           {screenReader ? <span className="sr-only">, screen reader mode on</span> : null}
         </span>
       }

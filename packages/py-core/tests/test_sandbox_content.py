@@ -107,11 +107,15 @@ def test_quantile_needs_q() -> None:
         "retry-storm",
         "emails-sent-twice",
         "ghost-reads",
+        "one-celebrity-one-key",
+        "overdrawn-wallets",
+        "transfers-deadlock",
+        "books-dont-balance",
     ],
 )
 def test_playable_scenarios_load_with_their_faults(slug: str) -> None:
     bundle = load_bundle(CONTENT, slug)
-    assert bundle.base_app.slug == "shopkart"
+    assert bundle.base_app.slug in {"shopkart", "ledger"}
     assert set(bundle.faults) == {f.use for f in bundle.scenario.faults}
     assert bundle.scenario.hints is not None
     assert bundle.scenario.probes

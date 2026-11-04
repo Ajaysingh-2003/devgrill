@@ -11,7 +11,7 @@ Phase 7 runs in waves, each tested and committed on its own:
 | 7C | Quick Fire cards and onboarding calibration | Done |
 | 7D | Streak freezes and on-call leave, email digests (Mailpit) | Done |
 | 7E | Admin console: RBAC, audit log, review queue, publish and retire | Done |
-| 7F | Content sprint toward 20 drills, the Ledger app | In progress (15 playable; Ledger and the rest later) |
+| 7F | Content sprint toward 20 drills, the Ledger app | Done (20 playable, on ShopKart and Ledger) |
 | 7G | Case files | |
 
 ## Wave 7A: what was built
@@ -215,9 +215,13 @@ The owner chose four drills first, each tested in real sandboxes and committed o
   10. Evicted at the worst time (caching/eviction).
   11. Retry storm (queues/retries).
   12. Emails sent twice (queues/idempotency).
-- **Still deferred:** "Ghost reads" needs a Postgres replica and "One celebrity, one key" needs
-  Redis shards. Also later: the Ledger app and its drills (concurrency, double-spend), and case
-  files (7G).
+- **Fourth batch (the last five, reaching 20):**
+  13. Ghost reads (databases/replication), with an optional read replica.
+  14. One celebrity, one key (caching/hot-keys).
+  15. Overdrawn wallets (concurrency/double-spend), on the new Ledger app.
+  16. Transfers that deadlock (concurrency/deadlocks), on Ledger.
+  17. The books don't balance (concurrency/race-conditions), on Ledger.
+- **Later:** case files (7G).
 - **Tested in CI, then locally:** WSL stopped starting on this machine for a while (Windows
   refused its VM a logon right), so the drills were first tested in real sandboxes on GitHub's
   runners. `content.yml` now takes a `scenario` input (comma-separated slugs) so one drill can
@@ -698,6 +702,136 @@ approaches gave their declared outcomes.
   reload. With the new service, `devgrill status` prints one more line, and the `echo` scrolled
   past the screenful a reload brings back. The flow now looks for `devgrill status` output,
   the last thing on screen.
+
+### Platform for the last five
+
+- **Optional services:** a base-app service marked `optional` runs only in scenarios that list
+  it under `services:`, so the read replica costs nothing in every other ShopKart sandbox.
+- **`image_from`:** a service runs the image another one built. The replica is the primary's
+  seeded image started as a standby, with no base backup at boot.
+- **Config in deploy history:** a history entry can carry `env`. It is committed and deployed
+  at boot, so a scenario's setup shows in `git log` like any other deploy (ADR 012 records all
+  three).
+- **Terminal header:** it names the practice system (`oncall@<host>`), which the workspace
+  info now carries, instead of always "shopkart".
+
+### Drill 13: Ghost reads (databases/replication, SEV1)
+
+**The incident:** a config deploy sends order pages and order history to `postgres-replica`.
+- That replica is the disaster-recovery copy in another region. It applies changes a minute
+  late (`recovery_min_apply_delay`), and it streams over a Toxiproxy link with 300 ms latency.
+- A shopper's new order answers 404 on its own page for a minute, then appears.
+- Paged on `order_lookup_misses`, the share of order pages that found nothing.
+
+**Fixes:** read your own writes from the primary (full).
+- After an order, a marker in Valkey sends that shopper's reads to the primary for two
+  minutes, and everyone else's stay on the replica.
+- **Not fixes:**
+  - rolling back puts every read back on the primary (fails `replica-offload`, which checks
+    from the replica's own statistics that old orders are still read there);
+  - removing the delay still leaves 300 ms of lag (fails `read-your-writes`).
+- **Cheat:** a "processing" page for missing orders fails `read-your-writes` through the
+  order history.
+
+**Checks (local):** paged in 5 s and stayed broken; the fix mitigated in 0.7 s and passed every
+probe. All four approaches gave their declared outcomes.
+
+### Drill 14: One celebrity, one key (caching/hot-keys, SEV1)
+
+**The incident:** likes became a Valkey list (newest first, for an activity feed), and "liked
+by you?" became `LPOS`, a scan of the whole list.
+- A film star made product 4242 viral, and its list holds 600,000 likes.
+- One scan costs about 21 ms on Valkey's single thread (measured), so the viral traffic pins
+  it. Product pages, sessions and the queue all slow down behind it.
+- `SLOWLOG` points straight at it.
+
+**Fixes:**
+- Full: a set of likers for the button (`SISMEMBER`, `SCARD`), filled from the lists; or a
+  rollback plus that migration.
+- **Not fixes:**
+  - a plain rollback loses every like made since the deploy;
+  - scanning only the newest thousand likes answers wrong for older fans;
+  - both fail `honest-likes`.
+
+**Found by running it:**
+- **First design dropped:** the drill was first designed with three small, CPU-capped cache
+  nodes, and plain GETs. A node at 0.02 CPU still serves about 900 GETs a second, so
+  overloading one would have needed more traffic than the API can serve, and the result would
+  depend on the host. One big, hot key costs the same per view on any machine.
+- **Load:** at 250 iterations a second, the viral page plus its like button was more than the
+  API could serve even after the fix. At 150, the scans still overload Valkey about twice over.
+
+**Checks (local):** all five approaches gave their declared outcomes.
+
+### The Ledger app
+
+**What it is:** a second base app, for the concurrency track.
+- **Data:** wallets, merchants and a house account, in double-entry books. Every transfer
+  writes two entries that sum to zero, and an account's balance is the sum of its entries.
+- **API:** balances, transfers, and card payments. A payment debits the customer into the
+  house's clearing balance and leaves a settlement.
+- **Worker:** pays merchants out in batches, and audits the books every five seconds (wallets
+  below zero, balances off their entries, books off zero).
+- **Load:** a mix of balance reads, payments, transfers and top-ups. `ATTACK_RATE` adds a
+  double tap, two payments at once; `HOT_ACCOUNTS` adds sellers paying each other both ways.
+- **Hidden test:** balances, transfers, refusals, settlement and the books.
+
+**Found by running it:**
+- **The house row:** every payment and top-up locks the house account's row. A settlement
+  batch that debited the house at its first payout held that lock for the whole batch, and
+  payments queued (p99 over a second). The worker now debits the house once, last.
+- **Lock order:** the worker now credits merchants in id order, as transfers lock accounts.
+  Otherwise a batch and a transfer between two merchants deadlocked even after the deadlock
+  drill's fix.
+- **Foreign keys:** foreign keys from the books to `accounts` made every inserted entry take a
+  key-share lock on its account. That conflicts with a payment's row lock on the house, so the
+  books have no foreign keys to accounts (the API checks that accounts exist).
+
+### Drill 15: Overdrawn wallets (concurrency/double-spend, SEV2)
+
+**The incident:** a "perf" deploy drops `FOR UPDATE` from the transfer's balance read.
+- The debit is an atomic `UPDATE`, but the balance check comes before it.
+- Two payments from one wallet at the same moment both pass the check, and the wallet goes
+  below zero.
+- **Paged on new overdrafts,** not on wallets already negative: a fix stops new ones, but can't
+  undo the morning's.
+
+**Fixes:**
+- Full: the row locks back, a conditional debit (`WHERE balance_cents >= amount`), or a
+  rollback.
+- **Not a fix:** a CHECK constraint stops the overdraft, but the race stays, and the losing
+  payment gets a 500 (fails `steady-traffic`).
+- **Cheat:** refusing every payment fails the hidden test.
+
+**Found by running it:** the `no-overdraft` probe first counted a wallet the incident had
+already overdrawn. It now tops each wallet up past zero first.
+
+### Drill 16: Transfers that deadlock (concurrency/deadlocks, SEV2)
+
+**The incident:** a refactor locks the payer, then the payee. Sellers paying each other both
+ways deadlock, and Postgres breaks each deadlock after a second.
+
+**Fixes:** id order, or a rollback (full). Retrying deadlocked transfers fails: the deadlocks,
+and their second-long waits, remain. `deadlocks` in the verify comes from the Postgres
+exporter, not the app.
+
+**Checks (local):** paged in 5 s; the fix mitigated in 0.4 s with no deadlocks in the replay.
+All three approaches gave their declared outcomes.
+
+### Drill 17: The books don't balance (concurrency/race-conditions, SEV1)
+
+**The incident:** a worker deploy runs four consumers that credit each merchant once per batch.
+Each reads the balance, adds the batch in memory and writes the total back, so concurrent
+batches lose each other's credits.
+
+**Fixes:**
+- Full: increments, a row lock on the merchants, or a rollback, each followed by recomputing
+  balances from the entries, with the accounts table locked.
+- **Not a fix:** fixing the code without repairing the balances fails the books probe and the
+  hidden test.
+- **Cheat:** quieting the auditor fails the books probe, which reads Postgres itself.
+
+**Checks (local):** paged in 5 to 11 s; the fix mitigated in 5.5 s and passed every probe.
 
 ## Gate checklist (docs/PLAN.md, Phase 7), so far
 

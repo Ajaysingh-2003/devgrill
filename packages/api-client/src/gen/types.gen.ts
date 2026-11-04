@@ -2759,6 +2759,10 @@ export type WorkspaceOut = {
      */
     hints_total: number;
     /**
+     * Host
+     */
+    host: string;
+    /**
      * Idle Minutes
      */
     idle_minutes: number;

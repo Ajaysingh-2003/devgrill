@@ -436,7 +436,7 @@ def test_cors_only_allows_the_web_origin(api: TestClient) -> None:
 
 
 async def test_daily_rotation_only_has_playable_scenarios(seeded: AsyncSession) -> None:
-    from sqlalchemy import select
+    from sqlalchemy import select, text
 
     from devgrill.infra.models import Scenario
     from devgrill.infra.repositories import challenges
@@ -449,7 +449,6 @@ async def test_daily_rotation_only_has_playable_scenarios(seeded: AsyncSession) 
             )
         ).all()
     )
-    # Placeholders (playable: false) never become the Daily.
     assert slugs == {
         "ttl-zero",
         "pool-party",
@@ -467,7 +466,26 @@ async def test_daily_rotation_only_has_playable_scenarios(seeded: AsyncSession) 
         "retry-storm",
         "emails-sent-twice",
         "ghost-reads",
+        "one-celebrity-one-key",
+        "overdrawn-wallets",
+        "transfers-deadlock",
+        "books-dont-balance",
     }
+
+    # A placeholder (playable: false) never becomes the Daily.
+    await seeded.execute(
+        text(
+            "UPDATE app.scenario_versions v SET spec = jsonb_set(v.spec, '{playable}', 'false')"
+            " FROM app.scenarios s WHERE s.slug = 'ghost-reads' AND v.id = s.current_version_id"
+        )
+    )
+    await seeded.commit()
+    remaining = await seeded.scalars(
+        select(Scenario.slug).where(
+            Scenario.current_version_id.in_(await challenges.rotation(seeded))
+        )
+    )
+    assert "ghost-reads" not in set(remaining.all())
 
 
 async def test_share_card_is_public_and_spoiler_free(api: TestClient, seeded: AsyncSession) -> None:
