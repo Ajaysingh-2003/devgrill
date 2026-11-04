@@ -1,0 +1,67 @@
+# The evidence next to this file is generated: devgrill-content record big-sale-meltdown
+schema: devgrill/case-file@1
+
+captures:
+  - title: Keys the cache has stored
+    run: redis-cli -h redis-db --scan --pattern '*product:*' | head -8; redis-cli -h redis-db dbsize
+  - title: Hits and misses
+    run: redis-cli -h redis-db info stats | grep -E 'keyspace_(hits|misses)'
+  - title: Postgres right now
+    run: >-
+      psql -c "SELECT state, count(*) FROM pg_stat_activity WHERE datname = current_database() GROUP BY state"
+
+clues:
+  - panel: deploys
+    contains: versioned_key
+    note: The key refactor two minutes before the sale changed get() and invalidate(), but not set().
+  - panel: cache
+    contains: "v2:product:"
+    note: The API asks for v2:product:... keys, and none of them exist. What's stored has the old name.
+
+root_cause:
+  options:
+    - key: a
+      text: "A key refactor made the API read v2:product:... but still write product:..., so nothing written is read back"
+    - key: b
+      text: "Sale traffic filled Redis to its memory limit, so product entries were evicted before anybody could read them back"
+    - key: c
+      text: "Product entries expire too soon for sale traffic, so each one is rebuilt from Postgres many times every minute"
+    - key: d
+      text: "Sale traffic outgrew what one Postgres can serve, so every read waits on it whether it's in the cache or not"
+  answer: a
+  explanation: >-
+    The hit rate went to zero right after the refactor. Compare what the app asks for with what's
+    stored: it asks for v2:product:... and finds nothing, because set() still writes product:.... Redis
+    isn't near its memory limit and evictions are zero. Postgres is overloaded because every read now reaches it.
+
+mitigation:
+  options:
+    - key: a
+      text: "Roll back the key refactor, so reads and writes agree on the key again"
+    - key: b
+      text: "Restart Postgres, to clear out the queries that have piled up on it"
+    - key: c
+      text: "Scale Postgres up, so it can carry the sale's reads without the cache"
+    - key: d
+      text: "Flush the cache, so it refills with fresh entries for the sale's traffic"
+  answer: a
+  explanation: >-
+    The sale is live, and the deploy two minutes before it is the obvious suspect: rolling back restores
+    the hit rate at once, without needing to understand it first. A restart or a flush changes nothing
+    (the keys would still disagree), and a bigger database takes too long and treats the symptom.
+
+fix:
+  options:
+    - key: a
+      text: "Make set() write the versioned key too, so get(), set() and invalidate() all use the same key"
+    - key: b
+      text: "Make get() read the plain key again, and leave invalidate() using the versioned key it has now"
+    - key: c
+      text: "Report every lookup as a cache hit and stop counting queries, so the dashboards look healthy"
+    - key: d
+      text: "Answer 503 for product pages during sales, so that Postgres never sees more than it can carry"
+  answer: a
+  explanation: >-
+    All three functions have to agree. Reading the plain key brings the hit rate back, but invalidate()
+    would still delete the versioned key, so a price change stays hidden until the entry expires: that
+    one fails the price check. The last two make the charts or the load look better while serving nothing more.

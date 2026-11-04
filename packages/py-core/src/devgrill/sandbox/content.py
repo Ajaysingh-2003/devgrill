@@ -15,7 +15,14 @@ from pathlib import Path
 import yaml
 
 from devgrill.domain.enums import ProbeKind
-from devgrill.domain.spec import ApproachSpec, FaultApply, FaultSpec, ScenarioSpec
+from devgrill.domain.spec import (
+    ApproachSpec,
+    CaseEvidence,
+    CaseFileSpec,
+    FaultApply,
+    FaultSpec,
+    ScenarioSpec,
+)
 from devgrill.sandbox.baseapp import BaseAppSpec, load_base_app
 
 _TEMPLATE = re.compile(r"\{\{\s*([a-z_][a-z0-9_]*)\s*\}\}")
@@ -261,3 +268,30 @@ VERIFIER_METRICS = frozenset(
         "after_error_rate",
     }
 )
+
+
+# ---------------------------------------------------------------------------- case files
+
+CASE_FOLDER = "case-file"
+
+
+def case_file_path(scenario_dir: Path) -> Path:
+    return scenario_dir / CASE_FOLDER / "case.yaml"
+
+
+def evidence_path(scenario_dir: Path) -> Path:
+    return scenario_dir / CASE_FOLDER / "evidence.json"
+
+
+def load_case_spec(scenario_dir: Path) -> CaseFileSpec:
+    path = case_file_path(scenario_dir)
+    if not path.is_file():
+        raise ContentError(f"{path}: this scenario has no case file")
+    return CaseFileSpec.model_validate(load_yaml(path))
+
+
+def load_evidence(scenario_dir: Path) -> CaseEvidence:
+    path = evidence_path(scenario_dir)
+    if not path.is_file():
+        raise ContentError(f"{path}: not recorded yet (devgrill-content record)")
+    return CaseEvidence.model_validate_json(path.read_bytes())

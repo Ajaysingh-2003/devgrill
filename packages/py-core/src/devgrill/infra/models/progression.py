@@ -78,6 +78,27 @@ class ActivityDay(Base):
     kinds: Mapped[list[str]] = mapped_column(ARRAY(Text), server_default=text("'{}'::text[]"))
 
 
+class CaseFilePlay(Base):
+    """A signed-in player's first answers to a case file (ADR 018): after them the answers are
+    known, so they are the ones that count. The optional write-up and its review live here too."""
+
+    __tablename__ = "case_file_plays"
+    __table_args__ = (
+        UniqueConstraint("user_id", "scenario_id", name="uq_case_file_plays_user_id_scenario_id"),
+        CheckConstraint("score BETWEEN 0 AND 100", name="score_range"),
+    )
+
+    id: Mapped[UuidPk]
+    user_id: Mapped[uuid.UUID] = mapped_column(user_fk())
+    scenario_id: Mapped[uuid.UUID] = mapped_column(fk("scenarios.id"), index=True)
+    choices: Mapped[JsonObject]
+    score: Mapped[int] = mapped_column(Integer)
+    write_up: Mapped[str | None] = mapped_column(Text)
+    review_note: Mapped[str | None] = mapped_column(Text)
+    reviewed_at: Mapped[Timestamp | None]
+    created_at: Mapped[CreatedAt]
+
+
 class LeaveDay(Base):
     """On-call leave the player booked: a neutral day for their streak (never breaks it)."""
 

@@ -40,7 +40,7 @@ from devgrill.infra.models import (
     VerifyRun,
 )
 from devgrill.infra.repositories import attempts as repo
-from devgrill.infra.repositories import catalog
+from devgrill.infra.repositories import casefiles, catalog
 from devgrill.infra.settle import summarise_run
 from devgrill_api.assist import llm_of
 from devgrill_api.deps import GuestJti, OptionalUser, SessionDep
@@ -441,19 +441,6 @@ async def _review(
     )
 
 
-async def _reviews_used(session: Any, user_id: uuid.UUID, since: datetime | None) -> int:
-    stmt = (
-        select(func.count())
-        .select_from(PostmortemGrade)
-        .join(Postmortem, Postmortem.id == PostmortemGrade.postmortem_id)
-        .join(Attempt, Attempt.id == Postmortem.attempt_id)
-        .where(Attempt.user_id == user_id)
-    )
-    if since is not None:
-        stmt = stmt.where(PostmortemGrade.created_at >= since)
-    return int(await session.scalar(stmt) or 0)
-
-
 async def _request_review(request: Request, session: Any, attempt: Attempt) -> None:
     """Ask the worker to grade the postmortem, or record why it won't be."""
 
@@ -469,7 +456,7 @@ async def _request_review(request: Request, session: Any, attempt: Attempt) -> N
     if limits.postmortem_reviews == 0:
         return await note("unavailable", "Write-up reviews aren't part of your plan.")
     since = policy.period_start(datetime.now(UTC), limits.postmortem_reviews_period)
-    if await _reviews_used(session, attempt.user_id, since) >= limits.postmortem_reviews:
+    if await casefiles.reviews_used(session, attempt.user_id, since) >= limits.postmortem_reviews:
         period = {"day": "today", "week": "this week"}.get(limits.postmortem_reviews_period, "")
         return await note(
             "unavailable", f"You've used your {limits.postmortem_reviews} reviews {period}."

@@ -1,0 +1,68 @@
+# The evidence next to this file is generated: devgrill-content record redis-restart-herd
+schema: devgrill/case-file@1
+
+captures:
+  - title: The cache right now
+    run: >-
+      redis-cli -h redis-db info server | grep uptime_in_seconds; redis-cli -h redis-db dbsize;
+      printf 'deals page cached: '; redis-cli -h redis-db exists deals
+  - title: What Postgres is busy with
+    run: >-
+      psql -c "SELECT count(*) AS running, left(query, 72) AS query FROM pg_stat_activity
+      WHERE state = 'active' AND pid <> pg_backend_pid() GROUP BY 2 ORDER BY 1 DESC LIMIT 5"
+
+clues:
+  - panel: logs
+    contains: deals
+    note: Every failing request is the sale page, cancelled when it hits its time limit.
+  - panel: code
+    contains: DEALS_TIMEOUT_MS
+    note: The page is built under a time limit, and on a miss every request builds its own copy.
+
+root_cause:
+  options:
+    - key: a
+      text: "The cache came back empty, so every request builds the deals page at once; all exceed the time limit, so no copy is stored"
+    - key: b
+      text: "The Redis version bump changed how keys are stored, so the API can't read the deals page it wrote there before the restart"
+    - key: c
+      text: "The API's connections to Redis broke during the restart and never reconnected, so every request falls through to Postgres"
+    - key: d
+      text: "The restart interrupted a Postgres query that was holding a lock on reviews, so every deals page has been waiting on that lock"
+  answer: a
+  explanation: >-
+    Valkey keeps nothing on disk, so it came back empty. Product entries refill as usual, but with no copy
+    of the deals page, each of about forty concurrent requests builds it, they share one database CPU, each
+    takes longer than DEALS_TIMEOUT_MS, and each is cancelled before storing the result. It never warms up on its own.
+
+mitigation:
+  options:
+    - key: a
+      text: "Lift the page's time limit (DEALS_TIMEOUT_MS=0), so one build finishes and stores the copy"
+    - key: b
+      text: "Restart the API, so its connections to Redis and Postgres are all fresh after the upgrade"
+    - key: c
+      text: "Restart Postgres, so that the builds running right now are cleared off its one busy CPU"
+    - key: d
+      text: "Wait a few minutes, because the cache warms up by itself once traffic has settled down"
+  answer: a
+  explanation: >-
+    What keeps it broken is that no build ever finishes. Without the limit, the herd is still slow, but
+    after a few seconds one build completes, stores the copy, and everyone is served from it. Restarting
+    anything just brings the same herd back, and waiting doesn't help: it has already been six minutes.
+
+fix:
+  options:
+    - key: a
+      text: "On a miss, only the request holding a claim builds the page, and the rest wait for that copy"
+    - key: b
+      text: "Leave the time limit off for good, so that a build started during a herd can always finish"
+    - key: c
+      text: "When nothing is cached, return an empty deals page, so that no request ever has to build it"
+    - key: d
+      text: "Give the database more CPUs, so that forty builds at once finish within the time limit"
+  answer: a
+  explanation: >-
+    The refresh path already takes a claim with SET NX; a cold miss should use it too. Then one request
+    builds and the rest wait, so a cold cache costs one build rather than forty. Without the limit the
+    herd still happens on every restart. An empty page hides the sale, and more CPU only moves the point where it tips over.

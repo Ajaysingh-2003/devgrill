@@ -38,6 +38,7 @@ from devgrill.infra.models.play import (
 )
 from devgrill.infra.models.progression import (
     ActivityDay,
+    CaseFilePlay,
     Challenge,
     ChallengeEntry,
     Cohort,
@@ -57,6 +58,7 @@ __all__ = [
     "AttemptEvent",
     "AuditLog",
     "BaseApp",
+    "CaseFilePlay",
     "Challenge",
     "ChallengeEntry",
     "CodeChange",

@@ -6,6 +6,7 @@ schema [--out DIR]    JSON Schema for scenario.yaml, fault.yaml, ... (editor aut
 build [slug]          build the base-app and probe images a scenario needs
 up <slug>             boot a scenario locally with its faults and load; Ctrl+C tears it down
 test [slug]           break → fix → verify check (ADR 012); all playable scenarios by default
+record [slug]         capture case-file evidence from a real run (ADR 018); all by default
 publish / seed        load tracks, topics and scenarios into the database
 sandboxes [--sweep]   list sandboxes left on this machine (and remove them)
 """
@@ -54,6 +55,9 @@ def main(argv: list[str] | None = None) -> int:
     test.add_argument(
         "--no-reference", action="store_true", help="skip the reference fix (approaches only)"
     )
+    recording = sub.add_parser("record", help="capture case-file evidence from a real run")
+    recording.add_argument("slug", nargs="?")
+    recording.add_argument("--stale", action="store_true", help="only missing or stale ones")
     sub.add_parser("up").add_argument("slug")
     sub.add_parser("schema").add_argument("--out", type=Path, default=Path("content/.schema"))
     sub.add_parser("sandboxes").add_argument("--sweep", action="store_true")
@@ -94,6 +98,8 @@ def main(argv: list[str] | None = None) -> int:
                     reference=not args.no_reference,
                 )
             )
+        case "record":
+            return asyncio.run(_record(root, args.slug, stale=args.stale))
         case "sandboxes":
             return asyncio.run(_sandboxes(args.sweep))
     return 2
@@ -109,6 +115,7 @@ def validate(root: Path, slug: str | None = None) -> int:
     from devgrill.sandbox.baseapp import load_base_app
     from devgrill.sandbox.content import ContentError, load_approaches, load_bundle, load_yaml
     from devgrill_content.patchcheck import check_fault, check_scenario
+    from devgrill_content.record import check_case_file
     from devgrill_content.scenario_test import load_solution
     from devgrill_content.seed import load_quickfire, load_tracks
 
@@ -170,6 +177,10 @@ def validate(root: Path, slug: str | None = None) -> int:
                             bundle, approach_dir, patches, label=f"approach {approach.key}"
                         )
                     )
+                problems, stale = check_case_file(bundle)
+                errors.extend(f"case file {folder.name}: {p}" for p in problems)
+                if stale:
+                    print(f"note: case file {folder.name}: recorded from an older version")
     if slug and not checked:
         errors.append(f"no scenario {slug!r}")
     for line in errors:
@@ -179,7 +190,14 @@ def validate(root: Path, slug: str | None = None) -> int:
 
 
 def write_schema(out: Path) -> int:
-    from devgrill.domain.spec import ApproachSpec, FaultSpec, ScenarioSpec, SolutionSpec, TracksFile
+    from devgrill.domain.spec import (
+        ApproachSpec,
+        CaseFileSpec,
+        FaultSpec,
+        ScenarioSpec,
+        SolutionSpec,
+        TracksFile,
+    )
     from devgrill.sandbox.baseapp import BaseAppSpec
 
     out.mkdir(parents=True, exist_ok=True)
@@ -188,6 +206,7 @@ def write_schema(out: Path) -> int:
         "fault": FaultSpec,
         "approach": ApproachSpec,
         "solution": SolutionSpec,
+        "case-file": CaseFileSpec,
         "base-app": BaseAppSpec,
         "tracks": TracksFile,
     }
@@ -311,6 +330,33 @@ async def _test(
                 failed.append(name)
     finally:
         await driver.close()
+    return 1 if failed else 0
+
+
+async def _record(root: Path, slug: str | None, *, stale: bool) -> int:
+    from devgrill.sandbox.content import ContentError, load_bundle
+    from devgrill.sandbox.driver import SandboxError
+    from devgrill_content.record import is_stale, record_one
+
+    slugs = _playable(root, slug)
+    if stale:
+        slugs = [name for name in slugs if is_stale(load_bundle(root, name))]
+    if not slugs:
+        print("record: nothing to record")
+        return 0
+    driver = _driver()
+    failed = []
+    try:
+        for name in slugs:
+            print(f"record: {name}")
+            try:
+                await record_one(root, name, driver)
+            except (ContentError, SandboxError, ValueError) as exc:
+                print(f"record: {name} FAIL {exc}", file=sys.stderr)
+                failed.append(name)
+    finally:
+        await driver.close()
+    print(f"record: {len(slugs) - len(failed)} recorded, {len(failed)} failed")
     return 1 if failed else 0
 
 

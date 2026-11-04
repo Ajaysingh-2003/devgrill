@@ -1011,3 +1011,138 @@ class PostmortemOut(Model):
 
 class PostmortemIn(Input):
     sections: dict[PostmortemSection, Annotated[str, Field(max_length=4000)]]
+
+
+# ---------------------------------------------------------------------------- case files
+
+CaseQuestionKey = Literal["root_cause", "mitigation", "fix"]
+CaseOptionKey = Literal["a", "b", "c", "d"]
+
+
+class CaseFileSummary(Model):
+    slug: str
+    title: str
+    summary: str
+    track_slug: str
+    track_title: str
+    difficulty: Difficulty
+    page: PageOut | None
+    #: The caller's score, once they have answered (signed in only).
+    score: int | None
+
+
+class CaseFileList(Model):
+    items: list[CaseFileSummary]
+
+
+class CaseOptionOut(Model):
+    key: CaseOptionKey
+    text: str
+
+
+class CaseQuestionOut(Model):
+    key: CaseQuestionKey
+    prompt: str
+    options: list[CaseOptionOut]
+
+
+class CaseBeatOut(Model):
+    """A teammate's message, so many seconds after the page."""
+
+    at_s: int
+    persona: str
+    say: str
+
+
+class CaseAnswerOut(Model):
+    key: CaseQuestionKey
+    choice: str
+    correct: bool
+    answer: CaseOptionKey
+    explanation_md: str
+
+
+class CaseClueOut(Model):
+    """Where the evidence showed it."""
+
+    panel: Literal["deploys", "logs", "database", "cache", "code", "commands"]
+    note: str
+
+
+class CaseResultOut(Model):
+    score: int
+    answers: list[CaseAnswerOut]
+    clues: list[CaseClueOut]
+    #: Whether the write-up can be reviewed: not by guests, nor when the plan or AI rules it out.
+    review: Literal["available", "sign_in", "off", "done"]
+    write_up: str | None
+    review_note: str | None
+
+
+class CaseFileOut(CaseFileSummary):
+    story: str
+    #: The panels this recording can show.
+    tools: list[str]
+    metrics: list[str]
+    slo: dict[str, SloTarget]
+    deployable: list[str]
+    host: str
+    duration_s: float
+    breached_after_s: float
+    beats: list[CaseBeatOut]
+    questions: list[CaseQuestionOut]
+    #: The caller's result, once they have answered.
+    result: CaseResultOut | None
+
+
+class CaseAnswersIn(Input):
+    root_cause: CaseOptionKey
+    mitigation: CaseOptionKey
+    fix: CaseOptionKey
+
+
+class CaseReviewIn(Input):
+    write_up: str = Field(min_length=20, max_length=2000)
+
+
+class CaseReviewOut(Model):
+    write_up: str
+    note: str
+
+
+class CaseSampleOut(Model):
+    t: float
+    values: dict[str, float | None]
+
+
+class CaseLogLineOut(Model):
+    t: float
+    service: str
+    line: str
+
+
+class CaseCommandOut(Model):
+    title: str
+    service: str
+    command: str
+    output: str
+    ok: bool
+
+
+class CaseEvidenceOut(Model):
+    """The recording. `recorded_at` is when the load started; `t` counts from there. The other
+    shapes are what the workspace's panels get from a live sandbox."""
+
+    recorded_at: float
+    duration_s: float
+    breached_after_s: float
+    samples: list[CaseSampleOut]
+    logs: list[CaseLogLineOut]
+    status: list[ServiceStatus]
+    deploys: dict[str, DeployHistoryOut]
+    changes: dict[str, DeployChangesOut]
+    files: dict[str, dict[str, str]]
+    db: DbInsightsOut | None
+    db_rates: dict[str, float]
+    cache: CacheOut | None
+    commands: list[CaseCommandOut]

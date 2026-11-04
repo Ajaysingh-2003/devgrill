@@ -1,0 +1,67 @@
+# The evidence next to this file is generated: devgrill-content record ghost-reads
+schema: devgrill/case-file@1
+
+captures:
+  - title: Newest order on the primary and on the replica
+    run: >-
+      printf 'primary  '; psql -h postgres-db -Atc "SELECT max(id), now() - max(created_at) FROM orders";
+      printf 'replica  '; psql -h postgres-replica -Atc "SELECT max(id), now() - max(created_at) FROM orders"
+  - title: How the replica is configured
+    run: >-
+      psql -h postgres-replica -c "SHOW recovery_min_apply_delay" -c "SELECT pg_is_in_recovery(), now() - pg_last_xact_replay_timestamp() AS behind"
+
+clues:
+  - panel: deploys
+    contains: READ_DATABASE_URL
+    note: A config deploy pointed order pages at postgres-replica.
+  - panel: commands
+    contains: recovery_min_apply_delay
+    note: The replica applies changes a minute late on purpose, because it's the disaster-recovery copy.
+
+root_cause:
+  options:
+    - key: a
+      text: "Order pages now read from the disaster-recovery replica, which applies changes a minute late, so a new order isn't there yet"
+    - key: b
+      text: "Orders are written to the queue first and only reach Postgres when the worker charges them, so the page can run ahead of the worker"
+    - key: c
+      text: "The order page is served from a cache that's filled before checkout commits, so it keeps a 'not found' for about a minute"
+    - key: d
+      text: "Checkout's transaction takes up to a minute to commit under load, so nobody can see the order until the commit finally lands"
+  answer: a
+  explanation: >-
+    The order is on the primary at once and on the replica a minute later: compare the newest id on each.
+    recovery_min_apply_delay is 60 s by design, since that copy exists to survive a bad write. It was never
+    meant for a shopper's own order page, which is read a moment after the write.
+
+mitigation:
+  options:
+    - key: a
+      text: "Roll back the config, so that every order read goes to the primary again"
+    - key: b
+      text: "Take the delay off the replica, so that orders show up on it far sooner"
+    - key: c
+      text: "Restart the replica, so that it catches up with everything on the primary"
+    - key: d
+      text: "Show 'processing' when a page can't find an order, so that nothing looks lost"
+  answer: a
+  explanation: >-
+    People are ordering twice because the page says their order doesn't exist, so stop that first. Rolling
+    back puts the load back on the primary, which is a problem for later. Without the delay the replica is
+    still 300 ms away, so a page opened straight after checkout still misses, and it costs you the recovery copy.
+
+fix:
+  options:
+    - key: a
+      text: "Read your own writes: send a shopper's reads to the primary for a couple of minutes after an order"
+    - key: b
+      text: "Remove the delay from the replica for good, and let every order read carry on going to the replica"
+    - key: c
+      text: "When the replica can't find an order, answer with a 'processing' page until it can"
+    - key: d
+      text: "Send all reads back to the primary for good, and take the replica out of the read path"
+  answer: a
+  explanation: >-
+    A shopper only needs fresh reads of what they just wrote. A marker in Valkey sends them to the primary
+    for longer than the replica can lag, and everyone else's reads stay on the replica, which keeps the
+    load off the primary. Sending everything to the primary is safe but gives up the offload you wanted.

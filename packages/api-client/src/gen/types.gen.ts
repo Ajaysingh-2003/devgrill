@@ -653,6 +653,414 @@ export type CalibrationAnswer = {
 };
 
 /**
+ * CaseAnswerOut
+ */
+export type CaseAnswerOut = {
+    /**
+     * Answer
+     */
+    answer: 'a' | 'b' | 'c' | 'd';
+    /**
+     * Choice
+     */
+    choice: string;
+    /**
+     * Correct
+     */
+    correct: boolean;
+    /**
+     * Explanation Md
+     */
+    explanation_md: string;
+    /**
+     * Key
+     */
+    key: 'root_cause' | 'mitigation' | 'fix';
+};
+
+/**
+ * CaseAnswersIn
+ */
+export type CaseAnswersIn = {
+    /**
+     * Fix
+     */
+    fix: 'a' | 'b' | 'c' | 'd';
+    /**
+     * Mitigation
+     */
+    mitigation: 'a' | 'b' | 'c' | 'd';
+    /**
+     * Root Cause
+     */
+    root_cause: 'a' | 'b' | 'c' | 'd';
+};
+
+/**
+ * CaseBeatOut
+ *
+ * A teammate's message, so many seconds after the page.
+ */
+export type CaseBeatOut = {
+    /**
+     * At S
+     */
+    at_s: number;
+    /**
+     * Persona
+     */
+    persona: string;
+    /**
+     * Say
+     */
+    say: string;
+};
+
+/**
+ * CaseClueOut
+ *
+ * Where the evidence showed it.
+ */
+export type CaseClueOut = {
+    /**
+     * Note
+     */
+    note: string;
+    /**
+     * Panel
+     */
+    panel: 'deploys' | 'logs' | 'database' | 'cache' | 'code' | 'commands';
+};
+
+/**
+ * CaseCommandOut
+ */
+export type CaseCommandOut = {
+    /**
+     * Command
+     */
+    command: string;
+    /**
+     * Ok
+     */
+    ok: boolean;
+    /**
+     * Output
+     */
+    output: string;
+    /**
+     * Service
+     */
+    service: string;
+    /**
+     * Title
+     */
+    title: string;
+};
+
+/**
+ * CaseEvidenceOut
+ *
+ * The recording. `recorded_at` is when the load started; `t` counts from there. The other
+ * shapes are what the workspace's panels get from a live sandbox.
+ */
+export type CaseEvidenceOut = {
+    /**
+     * Breached After S
+     */
+    breached_after_s: number;
+    cache: CacheOut | null;
+    /**
+     * Changes
+     */
+    changes: {
+        [key: string]: DeployChangesOut;
+    };
+    /**
+     * Commands
+     */
+    commands: Array<CaseCommandOut>;
+    db: DbInsightsOut | null;
+    /**
+     * Db Rates
+     */
+    db_rates: {
+        [key: string]: number;
+    };
+    /**
+     * Deploys
+     */
+    deploys: {
+        [key: string]: DeployHistoryOut;
+    };
+    /**
+     * Duration S
+     */
+    duration_s: number;
+    /**
+     * Files
+     */
+    files: {
+        [key: string]: {
+            [key: string]: string;
+        };
+    };
+    /**
+     * Logs
+     */
+    logs: Array<CaseLogLineOut>;
+    /**
+     * Recorded At
+     */
+    recorded_at: number;
+    /**
+     * Samples
+     */
+    samples: Array<CaseSampleOut>;
+    /**
+     * Status
+     */
+    status: Array<ServiceStatus>;
+};
+
+/**
+ * CaseFileList
+ */
+export type CaseFileList = {
+    /**
+     * Items
+     */
+    items: Array<CaseFileSummary>;
+};
+
+/**
+ * CaseFileOut
+ */
+export type CaseFileOut = {
+    /**
+     * Beats
+     */
+    beats: Array<CaseBeatOut>;
+    /**
+     * Breached After S
+     */
+    breached_after_s: number;
+    /**
+     * Deployable
+     */
+    deployable: Array<string>;
+    difficulty: Difficulty;
+    /**
+     * Duration S
+     */
+    duration_s: number;
+    /**
+     * Host
+     */
+    host: string;
+    /**
+     * Metrics
+     */
+    metrics: Array<string>;
+    page: PageOut | null;
+    /**
+     * Questions
+     */
+    questions: Array<CaseQuestionOut>;
+    result: CaseResultOut | null;
+    /**
+     * Score
+     */
+    score: number | null;
+    /**
+     * Slo
+     */
+    slo: {
+        [key: string]: SloTarget;
+    };
+    /**
+     * Slug
+     */
+    slug: string;
+    /**
+     * Story
+     */
+    story: string;
+    /**
+     * Summary
+     */
+    summary: string;
+    /**
+     * Title
+     */
+    title: string;
+    /**
+     * Tools
+     */
+    tools: Array<string>;
+    /**
+     * Track Slug
+     */
+    track_slug: string;
+    /**
+     * Track Title
+     */
+    track_title: string;
+};
+
+/**
+ * CaseFileSummary
+ */
+export type CaseFileSummary = {
+    difficulty: Difficulty;
+    page: PageOut | null;
+    /**
+     * Score
+     */
+    score: number | null;
+    /**
+     * Slug
+     */
+    slug: string;
+    /**
+     * Summary
+     */
+    summary: string;
+    /**
+     * Title
+     */
+    title: string;
+    /**
+     * Track Slug
+     */
+    track_slug: string;
+    /**
+     * Track Title
+     */
+    track_title: string;
+};
+
+/**
+ * CaseLogLineOut
+ */
+export type CaseLogLineOut = {
+    /**
+     * Line
+     */
+    line: string;
+    /**
+     * Service
+     */
+    service: string;
+    /**
+     * T
+     */
+    t: number;
+};
+
+/**
+ * CaseOptionOut
+ */
+export type CaseOptionOut = {
+    /**
+     * Key
+     */
+    key: 'a' | 'b' | 'c' | 'd';
+    /**
+     * Text
+     */
+    text: string;
+};
+
+/**
+ * CaseQuestionOut
+ */
+export type CaseQuestionOut = {
+    /**
+     * Key
+     */
+    key: 'root_cause' | 'mitigation' | 'fix';
+    /**
+     * Options
+     */
+    options: Array<CaseOptionOut>;
+    /**
+     * Prompt
+     */
+    prompt: string;
+};
+
+/**
+ * CaseResultOut
+ */
+export type CaseResultOut = {
+    /**
+     * Answers
+     */
+    answers: Array<CaseAnswerOut>;
+    /**
+     * Clues
+     */
+    clues: Array<CaseClueOut>;
+    /**
+     * Review
+     */
+    review: 'available' | 'sign_in' | 'off' | 'done';
+    /**
+     * Review Note
+     */
+    review_note: string | null;
+    /**
+     * Score
+     */
+    score: number;
+    /**
+     * Write Up
+     */
+    write_up: string | null;
+};
+
+/**
+ * CaseReviewIn
+ */
+export type CaseReviewIn = {
+    /**
+     * Write Up
+     */
+    write_up: string;
+};
+
+/**
+ * CaseReviewOut
+ */
+export type CaseReviewOut = {
+    /**
+     * Note
+     */
+    note: string;
+    /**
+     * Write Up
+     */
+    write_up: string;
+};
+
+/**
+ * CaseSampleOut
+ */
+export type CaseSampleOut = {
+    /**
+     * T
+     */
+    t: number;
+    /**
+     * Values
+     */
+    values: {
+        [key: string]: number | null;
+    };
+};
+
+/**
  * ChallengeKind
  */
 export type ChallengeKind = 'daily' | 'weekly';
@@ -5924,6 +6332,335 @@ export type CreateWsTicketResponses = {
 };
 
 export type CreateWsTicketResponse = CreateWsTicketResponses[keyof CreateWsTicketResponses];
+
+export type ListCaseFilesData = {
+    body?: never;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+    };
+    path?: never;
+    query?: never;
+    url: '/v1/case-files';
+};
+
+export type ListCaseFilesErrors = {
+    /**
+     * Bad request (e.g. an invalid cursor).
+     */
+    400: Problem;
+    /**
+     * Missing or invalid credentials.
+     */
+    401: Problem;
+    /**
+     * Signed in, but not allowed.
+     */
+    403: Problem;
+    /**
+     * Not found.
+     */
+    404: Problem;
+    /**
+     * Conflict (e.g. a request with this Idempotency-Key is still running).
+     */
+    409: Problem;
+    /**
+     * The request is invalid; see `errors`.
+     */
+    422: Problem;
+    /**
+     * Rate limited; see Retry-After.
+     */
+    429: Problem;
+    /**
+     * Server error.
+     */
+    500: Problem;
+    /**
+     * Temporarily unavailable.
+     */
+    503: Problem;
+};
+
+export type ListCaseFilesError = ListCaseFilesErrors[keyof ListCaseFilesErrors];
+
+export type ListCaseFilesResponses = {
+    /**
+     * Successful Response
+     */
+    200: CaseFileList;
+};
+
+export type ListCaseFilesResponse = ListCaseFilesResponses[keyof ListCaseFilesResponses];
+
+export type GetCaseFileData = {
+    body?: never;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+    };
+    path: {
+        /**
+         * Slug
+         */
+        slug: string;
+    };
+    query?: never;
+    url: '/v1/case-files/{slug}';
+};
+
+export type GetCaseFileErrors = {
+    /**
+     * Bad request (e.g. an invalid cursor).
+     */
+    400: Problem;
+    /**
+     * Missing or invalid credentials.
+     */
+    401: Problem;
+    /**
+     * Signed in, but not allowed.
+     */
+    403: Problem;
+    /**
+     * Not found.
+     */
+    404: Problem;
+    /**
+     * Conflict (e.g. a request with this Idempotency-Key is still running).
+     */
+    409: Problem;
+    /**
+     * The request is invalid; see `errors`.
+     */
+    422: Problem;
+    /**
+     * Rate limited; see Retry-After.
+     */
+    429: Problem;
+    /**
+     * Server error.
+     */
+    500: Problem;
+    /**
+     * Temporarily unavailable.
+     */
+    503: Problem;
+};
+
+export type GetCaseFileError = GetCaseFileErrors[keyof GetCaseFileErrors];
+
+export type GetCaseFileResponses = {
+    /**
+     * Successful Response
+     */
+    200: CaseFileOut;
+};
+
+export type GetCaseFileResponse = GetCaseFileResponses[keyof GetCaseFileResponses];
+
+export type AnswerCaseFileData = {
+    body: CaseAnswersIn;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+    };
+    path: {
+        /**
+         * Slug
+         */
+        slug: string;
+    };
+    query?: never;
+    url: '/v1/case-files/{slug}/answers';
+};
+
+export type AnswerCaseFileErrors = {
+    /**
+     * Bad request (e.g. an invalid cursor).
+     */
+    400: Problem;
+    /**
+     * Missing or invalid credentials.
+     */
+    401: Problem;
+    /**
+     * Signed in, but not allowed.
+     */
+    403: Problem;
+    /**
+     * Not found.
+     */
+    404: Problem;
+    /**
+     * Conflict (e.g. a request with this Idempotency-Key is still running).
+     */
+    409: Problem;
+    /**
+     * The request is invalid; see `errors`.
+     */
+    422: Problem;
+    /**
+     * Rate limited; see Retry-After.
+     */
+    429: Problem;
+    /**
+     * Server error.
+     */
+    500: Problem;
+    /**
+     * Temporarily unavailable.
+     */
+    503: Problem;
+};
+
+export type AnswerCaseFileError = AnswerCaseFileErrors[keyof AnswerCaseFileErrors];
+
+export type AnswerCaseFileResponses = {
+    /**
+     * Successful Response
+     */
+    200: CaseResultOut;
+};
+
+export type AnswerCaseFileResponse = AnswerCaseFileResponses[keyof AnswerCaseFileResponses];
+
+export type GetCaseEvidenceData = {
+    body?: never;
+    path: {
+        /**
+         * Slug
+         */
+        slug: string;
+    };
+    query?: never;
+    url: '/v1/case-files/{slug}/evidence';
+};
+
+export type GetCaseEvidenceErrors = {
+    /**
+     * Bad request (e.g. an invalid cursor).
+     */
+    400: Problem;
+    /**
+     * Missing or invalid credentials.
+     */
+    401: Problem;
+    /**
+     * Signed in, but not allowed.
+     */
+    403: Problem;
+    /**
+     * Not found.
+     */
+    404: Problem;
+    /**
+     * Conflict (e.g. a request with this Idempotency-Key is still running).
+     */
+    409: Problem;
+    /**
+     * The request is invalid; see `errors`.
+     */
+    422: Problem;
+    /**
+     * Rate limited; see Retry-After.
+     */
+    429: Problem;
+    /**
+     * Server error.
+     */
+    500: Problem;
+    /**
+     * Temporarily unavailable.
+     */
+    503: Problem;
+};
+
+export type GetCaseEvidenceError = GetCaseEvidenceErrors[keyof GetCaseEvidenceErrors];
+
+export type GetCaseEvidenceResponses = {
+    /**
+     * Successful Response
+     */
+    200: CaseEvidenceOut;
+};
+
+export type GetCaseEvidenceResponse = GetCaseEvidenceResponses[keyof GetCaseEvidenceResponses];
+
+export type ReviewCaseFileData = {
+    body: CaseReviewIn;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+    };
+    path: {
+        /**
+         * Slug
+         */
+        slug: string;
+    };
+    query?: never;
+    url: '/v1/case-files/{slug}/review';
+};
+
+export type ReviewCaseFileErrors = {
+    /**
+     * Bad request (e.g. an invalid cursor).
+     */
+    400: Problem;
+    /**
+     * Missing or invalid credentials.
+     */
+    401: Problem;
+    /**
+     * Signed in, but not allowed.
+     */
+    403: Problem;
+    /**
+     * Not found.
+     */
+    404: Problem;
+    /**
+     * Conflict (e.g. a request with this Idempotency-Key is still running).
+     */
+    409: Problem;
+    /**
+     * The request is invalid; see `errors`.
+     */
+    422: Problem;
+    /**
+     * Rate limited; see Retry-After.
+     */
+    429: Problem;
+    /**
+     * Server error.
+     */
+    500: Problem;
+    /**
+     * Temporarily unavailable.
+     */
+    503: Problem;
+};
+
+export type ReviewCaseFileError = ReviewCaseFileErrors[keyof ReviewCaseFileErrors];
+
+export type ReviewCaseFileResponses = {
+    /**
+     * Successful Response
+     */
+    200: CaseReviewOut;
+};
+
+export type ReviewCaseFileResponse = ReviewCaseFileResponses[keyof ReviewCaseFileResponses];
 
 export type DailyChallengeData = {
     body?: never;

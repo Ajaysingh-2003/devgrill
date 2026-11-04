@@ -1,0 +1,65 @@
+# The evidence next to this file is generated: devgrill-content record bestsellers-are-down
+schema: devgrill/case-file@1
+
+captures:
+  - title: What the API is told to allow
+    run: grep -n TIMEOUT /workspace/api/config/app.env
+  - title: How long a bestseller's rating summary takes
+    run: >-
+      psql -c "\timing on" -c "SELECT round(avg(rating), 1), count(*) FROM reviews WHERE product_id = 1042"
+      -c "SELECT round(avg(rating), 1), count(*) FROM reviews WHERE product_id = 500"
+
+clues:
+  - panel: deploys
+    contains: DB_STATEMENT_TIMEOUT_MS=1
+    note: The latest deploy set the statement timeout to 1, and the setting is in milliseconds.
+  - panel: logs
+    contains: statement timeout
+    note: Postgres is cancelling these queries because they ran out of time, not because they failed.
+
+root_cause:
+  options:
+    - key: a
+      text: "A config deploy set a statement timeout of 1 ms where a second was meant, so only queries faster than that ever finish"
+    - key: b
+      text: "The bestsellers' cache entries are corrupt, so reading them raises an error and the API answers 503 for those products"
+    - key: c
+      text: "The five bestsellers have outgrown their reviews index, so Postgres has fallen back to scanning them, and those scans time out"
+    - key: d
+      text: "A lock on the featured products is holding up their reads, so those queries wait until the API gives up and cancels them"
+  answer: a
+  explanation: >-
+    "Products nobody buys load fine" is the clue: their queries take a fraction of a millisecond. A bestseller's rating summary aggregates about 30,000 reviews and takes far longer than that, so Postgres
+    cancels it every time and it's never cached. Search takes over a millisecond, so it fails too. Staging's "1" meant one second.
+
+mitigation:
+  options:
+    - key: a
+      text: "Roll back the config deploy, or set the timeout to 1000 and deploy"
+    - key: b
+      text: "Flush the product cache, in case the bestsellers' entries have gone bad"
+    - key: c
+      text: "Restart Postgres, so whatever is slowing these five products is cleared"
+    - key: d
+      text: "Move Postgres to a bigger instance, so these queries finish within limits"
+  answer: a
+  explanation: >-
+    Undo the value and every query finishes again. Nothing bad was ever cached: these queries never finished,
+    so there's nothing to flush. Postgres's CPU is low, so a restart or a bigger instance helps nothing, and
+    no realistic instance reads 30,000 reviews in under a millisecond.
+
+fix:
+  options:
+    - key: a
+      text: "Set it to 1000, the second that was meant, and range-check timeouts in config review"
+    - key: b
+      text: "Keep the 1 ms limit, and warm the bestsellers' entries into the cache at each deploy"
+    - key: c
+      text: "Keep the 1 ms limit, and leave the rating summary out of the bestsellers' product pages"
+    - key: d
+      text: "Keep the 1 ms limit, and flush the cache on every deploy so old entries can't linger"
+  answer: a
+  explanation: >-
+    A statement timeout is a good idea at a sensible value: every real query finishes and a runaway one is
+    still cancelled. The unit was already in the name and the copy from staging still went through, so a
+    range check is what would have caught it. The others keep a limit no real query can meet.

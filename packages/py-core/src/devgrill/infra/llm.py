@@ -46,6 +46,7 @@ _FLAGS: dict[Feature, str] = {
     "nudge": "ai_nudges",
     "selfcheck": "ai_personas",
     "grade": "ai_grading",
+    "case_review": "ai_grading",
     "classify": "ai_classify",
     "embed": "ai_classify",
     "coach": "ai_coach",

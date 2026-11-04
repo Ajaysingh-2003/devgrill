@@ -20,29 +20,35 @@ function Tile({ label, value, tone }: { label: string; value: string; tone?: str
 }
 
 export function DatabasePanel() {
-  const { actions } = useSource();
+  const { actions, kind, recorded } = useSource();
+  const recording = kind === "recording";
   const previous = useRef<{ at: number; calls: Map<string, number> } | null>(null);
-  const [rates, setRates] = useState<Map<string, number>>(new Map());
-  const poll = usePoll(async () => {
-    const data = await actions.db();
-    // Calls per second between two polls: what is busy *now*, not since the start.
-    const now = Date.now();
-    const calls = new Map(data.top.map((t) => [t.query, t.calls]));
-    const prev = previous.current;
-    if (prev) {
-      const seconds = (now - prev.at) / 1000;
-      setRates(
-        new Map(
-          data.top.map((t) => [
-            t.query,
-            Math.max(0, (t.calls - (prev.calls.get(t.query) ?? t.calls)) / seconds),
-          ]),
-        ),
-      );
-    }
-    previous.current = { at: now, calls };
-    return data;
-  }, POLL_MS);
+  const [rates, setRates] = useState<Map<string, number>>(
+    () => new Map(Object.entries(recorded?.dbRates ?? {})),
+  );
+  const poll = usePoll(
+    async () => {
+      const data = await actions.db();
+      // Calls per second between two polls: what is busy *now*, not since the start.
+      const now = Date.now();
+      const calls = new Map(data.top.map((t) => [t.query, t.calls]));
+      const prev = previous.current;
+      if (prev && !recording) {
+        const seconds = (now - prev.at) / 1000;
+        setRates(
+          new Map(
+            data.top.map((t) => [
+              t.query,
+              Math.max(0, (t.calls - (prev.calls.get(t.query) ?? t.calls)) / seconds),
+            ]),
+          ),
+        );
+      }
+      previous.current = { at: now, calls };
+      return data;
+    },
+    recording ? null : POLL_MS,
+  );
   const data: DbInsightsOut | null = poll.data;
   const total = data?.connections.reduce((n, c) => n + c.n, 0) ?? 0;
   const blocked = data?.active.filter((a) => a.blocked_by.length > 0) ?? [];
@@ -52,7 +58,13 @@ export function DatabasePanel() {
       id="tool-panel"
       tab="tool-database"
       title="Database"
-      meta={poll.error ? `Last refresh failed: ${poll.error}` : "Postgres, refreshed every 5 s"}
+      meta={
+        poll.error
+          ? `Last refresh failed: ${poll.error}`
+          : recording
+            ? "Postgres, near the end of the recording"
+            : "Postgres, refreshed every 5 s"
+      }
     >
       {!data ? (
         <EmptyState
@@ -158,7 +170,7 @@ export function DatabasePanel() {
           ) : null}
         </>
       )}
-      <QueryConsole />
+      {recording ? null : <QueryConsole />}
     </PanelFrame>
   );
 }

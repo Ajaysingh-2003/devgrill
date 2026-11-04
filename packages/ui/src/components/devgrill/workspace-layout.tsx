@@ -62,11 +62,14 @@ export function WorkspaceLayout({
   secondary,
   side,
   storageId = "devgrill-workspace-v2",
+  panelNames,
 }: {
   primary: ReactNode;
   secondary: ReactNode;
   side: ReactNode;
   storageId?: string;
+  /** What focus mode calls the panels, where they aren't the terminal and the team chat. */
+  panelNames?: Partial<Record<PanelSlot, string>>;
 }) {
   const columnsRef = useGroupRef();
   const rowsRef = useGroupRef();
@@ -128,7 +131,9 @@ export function WorkspaceLayout({
   // Announce focus mode for screen readers.
   const [announcement, setAnnouncement] = useState("");
   useEffect(() => {
-    setAnnouncement(focused ? `${PANEL_NAMES[focused]} maximised. Press Escape to restore.` : "");
+    setAnnouncement(
+      focused ? `${panelNames?.[focused] ?? PANEL_NAMES[focused]} maximised. Press Escape to restore.` : "",
+    );
   }, [focused]);
 
   const separator = (direction: "columns" | "rows") =>

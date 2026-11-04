@@ -4,6 +4,7 @@ import {
   Accessibility,
   CalendarClock,
   Compass,
+  FolderSearch,
   LogIn,
   LogOut,
   Menu,
@@ -33,6 +34,7 @@ const NAV = [
   { href: "/drills", label: "Drills", icon: Compass },
   { href: "/daily", label: "Daily drill", icon: CalendarClock },
   { href: "/quickfire", label: "Quick Fire", icon: Zap },
+  { href: "/case-files", label: "Case files", icon: FolderSearch },
 ] as const;
 
 /**

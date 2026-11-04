@@ -1,0 +1,67 @@
+# The evidence next to this file is generated: devgrill-content record flag-on-for-everyone
+schema: devgrill/case-file@1
+
+captures:
+  - title: What Postgres spends its time on
+    run: >-
+      psql -c "SELECT calls, round(mean_exec_time::numeric, 1) AS mean_ms, round(total_exec_time::numeric) AS total_ms, left(query, 62) AS query
+      FROM pg_stat_statements ORDER BY total_exec_time DESC LIMIT 4"
+  - title: Sessions by state
+    run: >-
+      psql -c "SELECT state, count(*) FROM pg_stat_activity WHERE datname = current_database() GROUP BY state"
+
+clues:
+  - panel: deploys
+    contains: ALSO_BOUGHT_PERCENT=100
+    note: The launch took the rollout from 5% to 100%.
+  - panel: commands
+    contains: total_ms
+    note: One join over orders takes most of Postgres's time, on every product page that shows the box.
+
+root_cause:
+  options:
+    - key: a
+      text: "The launch took the box from 5% to 100%, so its uncached query over orders runs twenty times as often and saturates Postgres"
+    - key: b
+      text: "The launch brought a wave of new shoppers, so product pages are getting more traffic than the API can currently handle at once"
+    - key: c
+      text: "The flag check itself reads from Postgres on each request, so at 100% it's the flag lookups that are overwhelming the database"
+    - key: d
+      text: "The launch deploy dropped an index on orders, so the box's query, which was fast all week at 5%, now scans the whole table instead"
+  answer: a
+  explanation: >-
+    The box ran quietly for a week at 5%, so the query works and the index is fine: it's the volume. It joins
+    the product's orders with every other order of its customers, with no cache. Twenty times as many pages
+    run it now, Postgres's CPU is pinned, and pooled connections stay busy, so ordinary pages queue as well.
+
+mitigation:
+  options:
+    - key: a
+      text: "Set ALSO_BOUGHT_PERCENT back to 5 or 0 and deploy, or roll the launch back"
+    - key: b
+      text: "Give Postgres a bigger instance, which takes about twenty minutes to do"
+    - key: c
+      text: "Raise the API's connection pool, so the ordinary product pages can get through"
+    - key: d
+      text: "Restart Postgres, so that the box's queries running right now are all cleared"
+  answer: a
+  explanation: >-
+    This is exactly what a flag is for: one value and the load is gone, with no code change. Back to 5% keeps
+    the box live for those users, and 0 is the kill switch. A bigger instance leaves the site slow for twenty
+    minutes, and a bigger pool sends even more of the same query to a database that is already saturated.
+
+fix:
+  options:
+    - key: a
+      text: "Cache each product's list for a few minutes, then ramp the rollout up in steps while watching Postgres"
+    - key: b
+      text: "Stay at 100% and keep the box empty, so the flag still reads 'on' without the query having to run"
+    - key: c
+      text: "Stay at 100% and move Postgres to a bigger instance, so that it can carry the box's query for everyone"
+    - key: d
+      text: "Stay at 100% and stop sharing the pool, so that box queries can't hold up ordinary product pages"
+  answer: a
+  explanation: >-
+    With a cache, each bestseller's list is computed a few times an hour rather than hundreds of times a
+    minute, so a full launch is safe, and ramping up means seeing the next surprise at 25% and not 100%. An
+    empty box fails the check that the box shows real data, and a bigger database only pays for repeated work.

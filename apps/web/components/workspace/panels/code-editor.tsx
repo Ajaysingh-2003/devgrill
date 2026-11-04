@@ -35,12 +35,14 @@ export default function CodeEditor({
   onChange,
   onSave,
   onDeploy,
+  readOnly = false,
 }: {
   path: string;
   value: string;
   onChange: (value: string) => void;
   onSave: () => void;
   onDeploy: () => void;
+  readOnly?: boolean;
 }) {
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
@@ -61,6 +63,7 @@ export default function CodeEditor({
           path.endsWith(".py") ? python() : [],
           syntaxHighlighting(highlight),
           theme,
+          EditorState.readOnly.of(readOnly),
           EditorView.contentAttributes.of({ "aria-label": `Source of ${path}` }),
           // Highest precedence: basicSetup's default keymap binds Mod-Enter to "insert blank line".
           Prec.highest(

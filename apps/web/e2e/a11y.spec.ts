@@ -20,6 +20,8 @@ const ROUTES = [
   "/incident/demo/debrief",
   "/incident/demo/postmortem",
   "/quickfire",
+  "/case-files",
+  "/case-files/big-sale-meltdown",
   "/this-page-does-not-exist",
 ];
 

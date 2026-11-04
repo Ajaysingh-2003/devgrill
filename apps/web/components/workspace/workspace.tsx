@@ -2,21 +2,16 @@
 
 import {
   Accessibility,
-  Code2,
-  Database,
   DoorOpen,
   Eye,
   EyeOff,
   Filter,
-  Gauge,
-  GitBranch,
   Laptop,
   Lightbulb,
   RotateCcw,
   ScrollText,
   ShieldCheck,
   Timer,
-  Zap,
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -25,7 +20,7 @@ import { CommandPalette, type PaletteCommand } from "@devgrill/ui/components/dev
 import { EmptyState } from "@devgrill/ui/components/devgrill/empty-state";
 import { PanelFrame } from "@devgrill/ui/components/devgrill/panel-frame";
 import { SevBadge } from "@devgrill/ui/components/devgrill/sev-badge";
-import { ToolRail, type Tool } from "@devgrill/ui/components/devgrill/tool-rail";
+import { ToolRail } from "@devgrill/ui/components/devgrill/tool-rail";
 import { WorkspaceLayout } from "@devgrill/ui/components/devgrill/workspace-layout";
 import {
   Dialog,
@@ -51,33 +46,10 @@ import {
   VerifyDialog,
   useOverlayShown,
 } from "./overlays";
-import { CachePanel } from "./panels/cache";
-import { CodePanel } from "./panels/code";
-import { DatabasePanel } from "./panels/database";
-import { DeploysPanel } from "./panels/deploys";
-import { LogsPanel } from "./panels/logs";
-import { OverviewPanel } from "./panels/overview";
+import { PANELS, TOOLS } from "./panels";
 import { SCREEN_READER_EVENT, TerminalPanel } from "./panels/terminal";
 import { SidePanel } from "./side-panel";
 import { TutorialTip, useTutorial } from "./tutorial";
-
-const TOOLS: (Tool & { key: string })[] = [
-  { id: "overview", key: "overview", label: "Overview", icon: Gauge },
-  { id: "logs", key: "logs", label: "Logs", icon: ScrollText },
-  { id: "database", key: "database", label: "Database", icon: Database },
-  { id: "cache", key: "cache", label: "Cache", icon: Zap },
-  { id: "code", key: "code", label: "Code", icon: Code2 },
-  { id: "deploys", key: "deploys", label: "Deploys", icon: GitBranch },
-];
-
-const PANELS: Record<string, () => React.ReactNode> = {
-  overview: OverviewPanel,
-  logs: LogsPanel,
-  database: DatabasePanel,
-  cache: CachePanel,
-  code: CodePanel,
-  deploys: DeploysPanel,
-};
 
 const PHASES = ["Look", "Find the cause", "Get it working", "Fix it properly", "Check", "Write up"];
 

@@ -1,6 +1,6 @@
 # Phase 7 QC report: content, progression and onboarding
 
-Date: 2026-10-27 · Result: **IN PROGRESS** (waves 7A to 7E done) · Decision: ADR 017.
+Date: 2026-10-27 · Result: **IN PROGRESS** (waves 7A to 7G done; the gate has owner items left) · Decision: ADR 017.
 
 Phase 7 runs in waves, each tested and committed on its own:
 
@@ -12,7 +12,7 @@ Phase 7 runs in waves, each tested and committed on its own:
 | 7D | Streak freezes and on-call leave, email digests (Mailpit) | Done |
 | 7E | Admin console: RBAC, audit log, review queue, publish and retire | Done |
 | 7F | Content sprint toward 20 drills, the Ledger app | Done (20 playable, on ShopKart and Ledger) |
-| 7G | Case files | |
+| 7G | Case files | Done (20, recorded from real runs) |
 
 ## Wave 7A: what was built
 
@@ -221,7 +221,7 @@ The owner chose four drills first, each tested in real sandboxes and committed o
   15. Overdrawn wallets (concurrency/double-spend), on the new Ledger app.
   16. Transfers that deadlock (concurrency/deadlocks), on Ledger.
   17. The books don't balance (concurrency/race-conditions), on Ledger.
-- **Later:** case files (7G).
+- **Later:** case files (wave 7G, below).
 - **Tested in CI, then locally:** WSL stopped starting on this machine for a while (Windows
   refused its VM a logon right), so the drills were first tested in real sandboxes on GitHub's
   runners. `content.yml` now takes a `scenario` input (comma-separated slugs) so one drill can
@@ -857,10 +857,58 @@ batches lose each other's credits.
 
 **Checks (local):** paged in 5 to 11 s; the fix mitigated in 5.5 s and passed every probe.
 
+## Wave 7G: case files
+
+The free, sandbox-less format from ADR 013. Decisions are in ADR 018.
+
+- **What a player gets:** `/case-files`, free with no sign-in, lists all 20. A case file is the live workspace's panels, read-only and fed from a recording, with the recorded commands where the terminal sits and three questions where the war room sits: the cause, the first move and the durable fix. Answers come back scored, with an explanation of each and where the evidence showed it.
+- **How it's made:** `devgrill-content record <slug>` runs the reference test's first half on a real sandbox and captures what the panels show. `case.yaml` is written by hand; `evidence.json` is generated. All 20 are 5 MB in total.
+- **What's kept:** a signed-in player's first answers (`app.case_file_plays`), which count as the day's activity. Ratings don't move.
+- **The write-up:** optional, signed in, one AI read per case file, sharing the plan's review allowance with postmortems. Prompt `case_review@1`.
+- **Also:** a nav entry, a link from each briefing, and the links shown when a play is refused now point at case files. "Case files and cards are open" is finally true.
+
+### What reading the recordings found
+
+The first pass of 20 recordings all "worked". Reading their output is what found these; a green run wouldn't have.
+
+| Found | Cause | Now |
+|---|---|---|
+| **Retry storm healed itself by about 60 s**, with the queue at 0 while the page says it's climbing | Three recordings ran at once. Under contention the worker's retries fell below the provider's limit, and the storm died out. Recorded alone, the queue climbs to 860 | `validate` and the recorder fail a recording that ends healthy. See "Owed" |
+| The Restarts memory capture was empty, and no worker died in the first 100 s | The metric is `app_memory_bytes`; a worker takes minutes to reach its limit | `hold_s: 180` on that case file: the chart now shows the full sawtooth, three kills and the out-of-memory flag |
+| Emails sent twice: a capture titled "charged more than once" showed orders by status | My query didn't do what its title said | It now asks the provider: orders with 2 and 3 charges |
+| The herd capture asked for a key that doesn't exist | The key is `deals` | Fixed, and it shows the page is never cached. Its explanation also said the cache stays empty, but product entries refill: reworded |
+| 5 clues named strings the evidence doesn't contain | Wrong strings, and one real gap (below). The clue check caught all five | Fixed against what the recordings really show |
+
+Teammate lines and pages are the scenario's own, so they weren't changed here. Explanations and clue notes were corrected where they disagreed with the recordings, for example "thousands of calls a second" where the recording shows about 105.
+
+The new check, `still_broken`, is stricter than the reference test's "stays broken". That one only asks that the target doesn't hold for `for_s` within its window, so a drill healing near the end passes.
+
+### Answer fairness
+
+- Options are shuffled per case and question, with a stable hash.
+- The right option started out longest in 35 of 60 questions, against about 17 by chance. The largest margins are trimmed and a test caps the margin at 12 characters. It's still longest in 30 of 60, but by 4 characters at most, which a reader can't see.
+- Most wrong options come from `approaches/`, so real sandboxes have proved they fail. Some are written by hand for this format.
+- **Nobody but the author has read the questions.** The playtest owed for the live drills should cover these too.
+
+### Checks run (wave 7G)
+
+Local, all on the final code unless noted:
+
+- **Lint, formatting, types:** ruff, Prettier, ESLint, basedpyright, TypeScript: clean. Line endings, raw colours and player copy: clean.
+- **Unit:** 241 Python and 51 web (45 UI, 6 tokens) pass.
+- **Integration:** 158 pass on real Postgres and Valkey, 11 of them new for case files. The known flake in the LLM adapter test didn't show this run. This ran before the last two small fixes (chart order, a label); the 11 new ones ran again after them.
+- **Migration:** upgrade, downgrade, upgrade and `alembic check` on a scratch database.
+- **Content:** `devgrill-content validate`: 20 scenarios, 0 problems.
+- **Browser:** 74 of 76 passed, with one skipped and one failure: a flaky locator in the onboarding test that predates this wave (it matched "Finish" inside a Quick Fire option, "The rollback didn't finish"). Now exact; that spec then passed three times running. New: `case-file.spec.ts` (4 tests) and axe on both new routes, in both themes.
+- **Secrets:** gitleaks over the tree: the only hits are a fake key in a test's name in the git-ignored `.pytest_cache`. The recordings contain only the sandbox's own throwaway credentials, which are in the committed content already.
+- **By eye:** screenshots of the list, the overview, the database panel and the result, which found the wrong chart order and an unlabelled answer. Light theme only by eye; dark is covered by axe, not by looking.
+
+Not run: the `evals` suite for the new prompt and its 2 new injection payloads (it spends real money, and CI runs it when prompts change). So `case_review@1` hasn't met a real model yet: only `FakeLlm`.
+
 ## Gate checklist (docs/PLAN.md, Phase 7), so far
 
 - [ ] All 20 scenarios pass `devgrill-content test` nightly (7F).
-- [ ] Each scenario playtested by someone other than its author (7F).
+- [ ] Each scenario playtested by someone other than its author (7F). Include its case file's questions (7G).
 - [ ] Time-to-first-win on `/try`: the flow is built (7B). It still needs 5 new users, median under 5 minutes.
 - [ ] Daily rollover across time zones; share card with no spoilers; pre-warm pool.
   - Done in 7A: the rollover and the share card.
@@ -887,3 +935,8 @@ batches lose each other's credits.
 - **Share image weight:** the Open Graph image renders in the default OG font, regular weight
   only. Vendoring the Arcade font (Bricolage Grotesque) for share cards is left for the Phase 9
   result cards.
+
+- **Retry storm's margin:** the drill relies on about 105 calls a second against a provider limit of 60, from a worker capped at 0.5 CPU. Three recordings at once took it below that and it healed itself within about 60 s. On a slow or busy machine (this laptop runs about 3x slower on battery) a player could see the same. The reference test doesn't catch it, because the target has to hold for 30 s inside its window. Lowering the provider's limit would widen the margin; left alone here because it changes a drill that's passing.
+- **Pool party's words and its behaviour:** its page says "503 'database busy' errors" and a teammate says logs are full of "pool exhausted", but the recording has a 0% error rate and neither message: p99 is over 2 s with requests queueing. It was recorded alongside two others, so it may differ on a quieter machine. The case file's explanation and clues rest only on what the recording shows.
+- **Stale recordings:** a changed scenario, fault or base app prints a note in `validate`; nothing makes anyone re-record. Base-app code changes without a version bump aren't noticed at all.
+- **Case files on a phone:** they show the same "needs a bigger screen" page as drills.

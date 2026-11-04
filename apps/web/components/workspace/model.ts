@@ -1,5 +1,6 @@
 import type {
   CacheOut,
+  CaseCommandOut,
   DbInsightsOut,
   DeployChangesOut,
   DeployHistoryOut,
@@ -17,7 +18,8 @@ import { useSyncExternalStore } from "react";
  * The incident workspace's data, behind one interface with two implementations:
  * - live: the API (through the same-origin proxy), the SSE event stream and the gateway's
  *   terminal and telemetry WebSockets;
- * - demo: canned data, for the design shell, accessibility and keyboard tests without Docker.
+ * - demo: canned data, for the design shell, accessibility and keyboard tests without Docker;
+ * - recording: a case file's evidence (ADR 018), which the panels show read-only.
  * Panels only ever see this interface.
  */
 
@@ -154,8 +156,10 @@ export interface WorkspaceActions {
 }
 
 export interface WorkspaceSource {
-  kind: "live" | "demo";
+  kind: "live" | "demo" | "recording";
   info: WorkspaceOut;
+  /** Only in a recording: what it captured that a live panel would work out or run itself. */
+  recorded?: { dbRates: Record<string, number>; commands: CaseCommandOut[] };
   incident: Store<IncidentSnapshot>;
   telemetry: Store<TelemetrySnapshot>;
   logs: Store<LogsSnapshot>;

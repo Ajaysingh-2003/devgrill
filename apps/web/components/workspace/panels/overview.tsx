@@ -58,7 +58,7 @@ const CHARTS: Record<string, { title: string; format: (v: number) => string; col
 const MAX_CHARTS = 6;
 
 export function OverviewPanel() {
-  const { info } = useSource();
+  const { info, kind } = useSource();
   const { samples } = useTelemetry();
   const { events, activeAt } = useIncident();
 
@@ -98,7 +98,7 @@ export function OverviewPanel() {
       id="tool-panel"
       tab="tool-overview"
       title="Overview"
-      meta="Sampled every 2 s from the system's own metrics"
+      meta={`Sampled every ${kind === "recording" ? 5 : 2} s from the system's own metrics`}
       actions={
         slos.length ? (
           <StatusPill

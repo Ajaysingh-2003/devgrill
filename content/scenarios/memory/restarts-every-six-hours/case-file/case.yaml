@@ -1,0 +1,69 @@
+# The evidence next to this file is generated: devgrill-content record restarts-every-six-hours
+schema: devgrill/case-file@1
+
+# A worker takes a few minutes to reach its limit: stay for the first kill.
+hold_s: 180
+
+captures:
+  - title: The API's memory, a few seconds apart
+    run: >-
+      for i in 1 2 3; do curl -fsS http://api:8000/metrics | grep -E '^app_memory_bytes'; sleep 5; done
+
+clues:
+  - panel: deploys
+    contains: memoise product lookups
+    note: Last week's deploy added a per-process memo of product lookups.
+  - panel: code
+    contains: _memo
+    note: The memo's key includes the current second, and nothing ever empties it.
+  - panel: logs
+    contains: Child process
+    note: API workers die each time memory reaches about 490 MB, and a new one starts.
+
+root_cause:
+  options:
+    - key: a
+      text: "A deploy added a per-process memo keyed by product and second, never emptied, so memory grows with traffic until workers are killed"
+    - key: b
+      text: "Today's sale simply needs more memory than the API's limit allows, so workers are being killed whenever several big requests overlap"
+    - key: c
+      text: "The API's connection pool opens a connection per request and never closes it, and each one holds on to buffers until the worker dies"
+    - key: d
+      text: "The Python process fragments its heap under heavy load, so memory it has freed never goes back to the OS and only a restart reclaims it"
+  answer: a
+  explanation: >-
+    The line only climbs, and it climbs with traffic, which is why it used to take six hours and now takes
+    two minutes. That points at something that keeps every response. The deploy history has last week's
+    "memoise product lookups": a dict keyed by (product, current second), so every second adds entries and none leave.
+
+mitigation:
+  options:
+    - key: a
+      text: "Roll back the memoise deploy, so memory stays flat again"
+    - key: b
+      text: "Raise the API's memory limit to 2 GB, to buy some more time"
+    - key: c
+      text: "Add a timed restart of the workers, before they hit the limit"
+    - key: d
+      text: "Restart Postgres, in case it's what is slowing down the workers"
+  answer: a
+  explanation: >-
+    Rolling back removes the leak, and Redis keeps serving repeat reads as it did before. A bigger limit just
+    takes longer to hit, and at sale traffic that's not long. Timed restarts still drop the requests each
+    worker was serving, and they hide the signal that told you something was wrong.
+
+fix:
+  options:
+    - key: a
+      text: "Remove the memo (Redis already caches products), or cap its size if it must stay"
+    - key: b
+      text: "Keep the memo, and raise the memory limit far enough to get through the whole sale"
+    - key: c
+      text: "Keep the memo, and restart each worker on a timer before it reaches the memory limit"
+    - key: d
+      text: "Keep the memo, and stop reporting memory growth so that the page stops going off"
+  answer: a
+  explanation: >-
+    A key with the current second in it never hits twice, so the memo does nothing useful: it only grows. A
+    cache in a process needs a bound, and this one duplicates what Redis already does for every worker. The check
+    measures memory from outside the container, so a quiet metric doesn't pass.

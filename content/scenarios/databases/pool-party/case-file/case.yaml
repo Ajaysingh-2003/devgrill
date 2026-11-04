@@ -1,0 +1,72 @@
+# The evidence next to this file is generated: devgrill-content record pool-party
+schema: devgrill/case-file@1
+
+captures:
+  - title: Postgres right now
+    run: >-
+      psql -c "SELECT state, count(*) FROM pg_stat_activity WHERE datname = current_database() GROUP BY state"
+      -c "SELECT calls, round(mean_exec_time::numeric, 1) AS mean_ms, left(query, 60) AS query
+      FROM pg_stat_statements WHERE query ILIKE '%products%' ORDER BY calls DESC LIMIT 3"
+  - title: One round trip to each endpoint
+    run: >-
+      echo in-region; psql -h postgres-db -p 5432 -c "\timing on" -c "SELECT 1" | grep Time;
+      echo postgres-dr; psql -h postgres-dr -p 5433 -c "\timing on" -c "SELECT 1" | grep Time
+
+clues:
+  - panel: deploys
+    contains: postgres-dr
+    note: The last config deploy pointed DATABASE_URL at postgres-dr, a cross-region endpoint.
+  - panel: logs
+    contains: slow or failed request
+    note: Requests take seconds in the API's logs, while Postgres's sessions sit idle in transaction.
+  - panel: commands
+    contains: "Time: "
+    note: One round trip to postgres-dr takes about 300 ms longer than to the in-region primary.
+
+root_cause:
+  options:
+    - key: a
+      text: "A config deploy pointed the API at a cross-region endpoint, so every query holds its connection about 300 ms longer and the pool runs out"
+    - key: b
+      text: "Connections are leaking: a code path takes one from the pool and never returns it, so the pool empties itself a little more every minute"
+    - key: c
+      text: "Postgres has reached max_connections, so the API's pool can't open the connections it needs and its requests queue up waiting for them"
+    - key: d
+      text: "Traffic has grown past what the pool was sized for, so at this request rate there simply aren't enough connections to go around"
+  answer: a
+  explanation: >-
+    Little's law: connections needed = requests per second x time each one holds a connection. Traffic didn't
+    change and Postgres is bored, so the time must have. The deploy added about 300 ms to every round trip,
+    so the same traffic now needs far more connections than the pool has.
+
+mitigation:
+  options:
+    - key: a
+      text: "Roll back the config deploy, so that the API talks to the in-region primary"
+    - key: b
+      text: "Raise DB_POOL_MAX to 50, so that requests stop waiting on a free connection"
+    - key: c
+      text: "Move Postgres to a bigger instance, so that each of the queries finishes sooner"
+    - key: d
+      text: "Restart the API's workers, so that all of the pool's connections are opened fresh"
+  answer: a
+  explanation: >-
+    Undo the change that made every query slow. A bigger pool shrinks the queue, but each query still pays
+    the cross-region round trip, so p99 stays over target. A bigger database is the teammate's suggestion and
+    helps nothing: Postgres is at 20% CPU, and the time is being spent on the network.
+
+fix:
+  options:
+    - key: a
+      text: "Point DATABASE_URL back at the in-region primary, the endpoint it should have had"
+    - key: b
+      text: "Keep the new endpoint and raise DB_POOL_MAX to match the longer round trips"
+    - key: c
+      text: "Keep the new endpoint and scale Postgres up, until it stops being the bottleneck"
+    - key: d
+      text: "Keep the new endpoint and answer 503 when the pool is full, so nothing queues"
+  answer: a
+  explanation: >-
+    The endpoint is the bug: a request shouldn't cross regions for every query. The check replays normal traffic
+    and measures p99, so a bigger pool still fails it, because each query is still 300 ms slower. Scaling
+    Postgres doesn't shorten a network path, and shedding load just turns slow pages into error pages.

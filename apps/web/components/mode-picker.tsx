@@ -53,7 +53,7 @@ function blockedBy(check: PlayCheckOut, signIn: string): { icon: typeof Lock; ne
     case "sign_up_required":
       return { icon: Lock, next: { href: signIn, label: "Sign in with GitHub" } };
     case "upgrade_required":
-      return { icon: Sparkles, next: { href: "/drills", label: "See the free drills" } };
+      return { icon: Sparkles, next: { href: "/case-files", label: "Read the free case files" } };
     case "active_attempt_exists":
       return {
         icon: Clock,
@@ -65,7 +65,7 @@ function blockedBy(check: PlayCheckOut, signIn: string): { icon: typeof Lock; ne
       return { icon: Clock };
     default:
       // Out of plays or time, or everyone's busy: something else to do meanwhile.
-      return { icon: Clock, next: { href: "/quickfire", label: "Play Quick Fire meanwhile" } };
+      return { icon: Clock, next: { href: "/case-files", label: "Read a case file meanwhile" } };
   }
 }
 

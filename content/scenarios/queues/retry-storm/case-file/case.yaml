@@ -1,0 +1,68 @@
+# The evidence next to this file is generated: devgrill-content record retry-storm
+schema: devgrill/case-file@1
+
+captures:
+  - title: The queue
+    run: >-
+      printf 'pending '; redis-cli -h redis-db llen orders:pending; printf 'dead    '; redis-cli -h redis-db llen orders:dead
+  - title: The worker's config
+    run: cat /workspace/worker/config/worker.env
+
+clues:
+  - panel: deploys
+    contains: RETRY_BACKOFF_S=0
+    note: A worker deploy went to eight consumers with no pause between retries.
+  - panel: commands
+    contains: CONSUMERS=8
+    note: Eight consumers retrying with no pause keep the provider's limit full.
+  - panel: logs
+    contains: "429"
+    note: Almost every call is refused with 429, and it's retried straight away.
+
+root_cause:
+  options:
+    - key: a
+      text: "Eight consumers retry refused charges instantly, and refused calls count against the provider's limit, so the limit never empties"
+    - key: b
+      text: "The provider is still partly down despite what its status page says, so most charges are being refused and the queue is backing up"
+    - key: c
+      text: "The outage left orders in a bad state, so the worker keeps failing on the same orders and every other order has to wait behind them"
+    - key: d
+      text: "The provider lowered our rate limit after the outage, so a normal rate of charges is now over it and most of them are being refused"
+  answer: a
+  explanation: >-
+    The provider did recover: it's the retries keeping it refused. It counts refused calls against its 60-a-second
+    limit, and with RETRY_BACKOFF_S=0 every 429 is retried at once by all eight consumers. The system holds
+    itself in failure with nothing left wrong, and it will stay that way until the retries slow down.
+
+mitigation:
+  options:
+    - key: a
+      text: "Roll the worker back to one consumer with a pause, so the limit drains"
+    - key: b
+      text: "Restart the worker, so that it starts fresh and its retries are cleared"
+    - key: c
+      text: "Ask the provider to raise our limit, so that more of the calls get through"
+    - key: d
+      text: "Dead-letter each order the provider refuses, so that the queue empties out"
+  answer: a
+  explanation: >-
+    A few calls a second stay well under the limit, so it drains and charges go through. A restart resumes the
+    same hammering within seconds. No limit keeps up with thousands of instant retries. Dead-lettering looks
+    healthy because the queue empties, but those real orders are never charged.
+
+fix:
+  options:
+    - key: a
+      text: "Back off exponentially with jitter on provider errors, so calls drop below the limit and spread out"
+    - key: b
+      text: "Set aside each order the provider refuses onto a dead-letter list, so the queue always keeps moving"
+    - key: c
+      text: "Keep retrying instantly, and ask the provider to stop counting refused calls against our limit"
+    - key: d
+      text: "Sleep one second after every error, for all consumers at once, so that they all retry together"
+  answer: a
+  explanation: >-
+    Each error in a row makes a consumer wait longer, up to a cap, times a random factor. Backing off drops
+    the calls below the limit, and the jitter stops all eight retrying in step, which is what a fixed sleep
+    does. The check replays an outage and checks that the system recovers afterwards with every order charged.

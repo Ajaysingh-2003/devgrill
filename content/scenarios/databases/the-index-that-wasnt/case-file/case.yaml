@@ -1,0 +1,69 @@
+# The evidence next to this file is generated: devgrill-content record the-index-that-wasnt
+schema: devgrill/case-file@1
+
+captures:
+  - title: "\\d reviews"
+    run: psql -c "\d reviews"
+  - title: How Postgres reads one product's reviews
+    run: >-
+      psql -c "EXPLAIN SELECT round(avg(rating), 1), count(*) FROM reviews WHERE product_id = 1042"
+  - title: What Postgres is busy with
+    run: >-
+      psql -c "SELECT calls, round(mean_exec_time::numeric, 1) AS mean_ms, left(query, 66) AS query
+      FROM pg_stat_statements ORDER BY total_exec_time DESC LIMIT 3"
+
+clues:
+  - panel: commands
+    contains: INVALID
+    note: The covering index exists, but it's marked INVALID, so the planner can't use it.
+  - panel: commands
+    contains: Seq Scan
+    note: Each rating summary now scans all 300,000 reviews.
+
+root_cause:
+  options:
+    - key: a
+      text: "The migration dropped the old index, and its replacement's build was cancelled, leaving an INVALID index the planner can't use"
+    - key: b
+      text: "The migration built the new index with the wrong column order, so Postgres can't use it for lookups of a product's reviews"
+    - key: c
+      text: "The planner's statistics went stale after the migration, so it wrongly decided that a table scan is cheaper than the new index"
+    - key: d
+      text: "The migration is still running, and its CREATE INDEX holds a lock on reviews that every product page has to wait behind"
+  answer: a
+  explanation: >-
+    \d reviews lists the index, which is why everyone thinks it's fine, but it's marked INVALID. CREATE INDEX
+    CONCURRENTLY was cancelled by the runner's watchdog while it waited for a report's old snapshot, and it
+    only logged a warning. The old index was already gone, so every uncached page now scans all the reviews.
+
+mitigation:
+  options:
+    - key: a
+      text: "Run REINDEX INDEX CONCURRENTLY on the invalid index, so it's rebuilt without blocking writes"
+    - key: b
+      text: "Move Postgres to an instance twice the size, so that it can carry the table scans for now"
+    - key: c
+      text: "Raise CACHE_TTL_SECONDS to an hour, so that far fewer product pages have to reach Postgres"
+    - key: d
+      text: "Restart Postgres, so that the query plans it has cached are thrown away and made afresh"
+  answer: a
+  explanation: >-
+    Rebuilding the index removes the scans, and the planner uses it as soon as it's valid. Creating the old
+    index again, concurrently, also works. A longer cache doesn't help because the long tail of products is
+    read once each and still scans. A bigger instance takes fifteen minutes and just pays for the scans.
+
+fix:
+  options:
+    - key: a
+      text: "Build the new index before dropping the old one, and fail the migration if it isn't valid"
+    - key: b
+      text: "Keep the migration's order, and raise the runner's watchdog so that builds aren't cancelled"
+    - key: c
+      text: "Stop computing rating summaries on product pages, so product reads don't touch reviews"
+    - key: d
+      text: "Cache every product for an hour, so a missing index can't hurt the pages that are popular"
+  answer: a
+  explanation: >-
+    Two mistakes made this an outage: nothing protected reads while the new index was being built, and the
+    failure only reached a log line. With the old index in place until the new one proves valid (check
+    pg_index.indisvalid), a cancelled build is a failed deploy and not an incident.
