@@ -1,0 +1,21 @@
+--- app/db.py
++++ app/db.py
+@@ -86,11 +86,15 @@
+         " VALUES (%s, %s, %s), (%s, %s, %s)",
+         (transfer["id"], to_id, amount, transfer["id"], from_id, -amount),
+     )
++    # Debit only if the money is there at the moment of the debit: the check and the debit are
++    # one statement, so two payments can't both pass it.
+     debited = conn.execute(
+-        "UPDATE accounts SET balance_cents = balance_cents - %s, updated_at = now() WHERE id = %s"
+-        " RETURNING kind, balance_cents",
+-        (amount, from_id),
++        "UPDATE accounts SET balance_cents = balance_cents - %s, updated_at = now()"
++        " WHERE id = %s AND (kind = 'house' OR balance_cents >= %s) RETURNING kind, balance_cents",
++        (amount, from_id, amount),
+     ).fetchone()
++    if debited is None:
++        raise InsufficientFunds()
+     if debited and debited["kind"] != "house" and debited["balance_cents"] < 0:
+         OVERDRAFTS.inc()
+         log.error(

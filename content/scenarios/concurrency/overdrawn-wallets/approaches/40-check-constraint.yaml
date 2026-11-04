@@ -1,0 +1,18 @@
+schema: devgrill/approach@1
+key: check-constraint
+name: Make Postgres refuse negative balances
+outcome: partial
+idea: >-
+  ALTER TABLE accounts ADD CONSTRAINT ... CHECK (kind = 'house' OR balance_cents >= 0) NOT
+  VALID. The second of two racing payments now fails instead of overdrawing the wallet, but as
+  an unhandled error: the customer gets a 500, not "insufficient funds".
+steps:
+  - run: psql -c "ALTER TABLE accounts ADD CONSTRAINT no_overdraft CHECK (kind = 'house' OR balance_cents >= 0) NOT VALID"
+    service: tools
+pros:
+  - A last line of defence that no code path can get around
+cons:
+  - "The race is still there: the loser fails with a server error"
+fails_probes: [steady-traffic]
+match:
+  diff: "CHECK"

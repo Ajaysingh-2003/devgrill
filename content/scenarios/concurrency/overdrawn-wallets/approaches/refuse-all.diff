@@ -1,0 +1,11 @@
+--- app/db.py
++++ app/db.py
+@@ -72,7 +72,7 @@
+     if from_id not in accounts or to_id not in accounts:
+         raise LookupError("account")
+     payer = accounts[from_id]
+-    if payer["kind"] != "house" and payer["balance_cents"] < amount:
++    if payer["kind"] != "house":
+         raise InsufficientFunds()
+     transfer = conn.execute(
+         "INSERT INTO transfers (from_account, to_account, amount_cents, kind)"

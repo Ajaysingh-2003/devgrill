@@ -1,0 +1,19 @@
+schema: devgrill/approach@1
+key: conditional-debit
+name: Debit only if the money is there
+outcome: full
+idea: >-
+  Make the check part of the debit: UPDATE ... SET balance_cents = balance_cents - amount WHERE
+  id = payer AND balance_cents >= amount, and refuse the payment if no row was updated. Postgres
+  runs it row by row with the row locked, so two payments can't both pass.
+steps:
+  - patch: conditional-debit.diff
+    service: api
+    message: "transfers: debit only if the balance covers it, in one statement"
+pros:
+  - No separate lock to remember
+  - Short transactions, so peak traffic queues less
+cons:
+  - The earlier balance read is now only a hint; anything else that relies on it is still racy
+match:
+  diff: 'balance_cents\s*>=|rowcount'

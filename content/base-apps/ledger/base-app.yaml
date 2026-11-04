@@ -1,0 +1,148 @@
+# Ledger v1: the payments base app (docs/PLAN.md §11.1, ADR 012). Wallets, transfers and card
+# payments in double-entry books, where the money always has to add up. Teaches concurrency:
+# locks, deadlocks, races and lost updates.
+schema: devgrill/base-app@1
+slug: ledger
+name: Ledger
+version: 1
+
+services:
+  postgres-db:
+    # Postgres 18 with the seed (db/init.sql) baked in at build time: no init on boot.
+    build: db
+    command:
+      [
+        "postgres",
+        "-c",
+        "shared_preload_libraries=pg_stat_statements",
+        "-c",
+        "max_connections=100",
+        "-c",
+        "client_connection_check_interval=1000",
+      ]
+    healthcheck: ["pg_isready", "-U", "ledger", "-d", "ledger", "-h", "127.0.0.1"]
+    sql: { user: ledger, database: ledger }
+    cpus: 1.0
+    memory_mb: 512
+
+  api:
+    build: api
+    env:
+      SERVICE_NAME: ledger-api
+    # The player edits this source in tools:/workspace/api and deploys it.
+    source:
+      dest: /srv/app
+      paths: [app, config]
+      config_file: config/app.env
+    port: 8000
+    metrics: /metrics
+    healthcheck: ["curl", "-fsS", "http://127.0.0.1:8000/readyz"]
+    depends_on: [postgres-db]
+    cpus: 2.0
+    memory_mb: 512
+
+  worker:
+    build: worker
+    env:
+      DATABASE_URL: postgresql://ledger:ledger@postgres-db:5432/ledger
+    # The player edits this source in tools:/workspace/worker and deploys it, like the API.
+    source:
+      dest: /srv/worker
+      paths: [worker.py, config]
+      config_file: config/worker.env
+    metrics_port: 9100
+    depends_on: [postgres-db]
+    cpus: 0.5
+    memory_mb: 256
+
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:v0.20.1
+    env:
+      DATA_SOURCE_NAME: postgresql://ledger:ledger@postgres-db:5432/ledger?sslmode=disable
+    logs: false
+    metrics_port: 9187
+    depends_on: [postgres-db]
+    cpus: 0.25
+    memory_mb: 64
+
+  tools:
+    build: tools
+    shell: true
+    logs: false
+    # `psql` just works: the app's own credentials, as on any on-call box.
+    env:
+      PGHOST: postgres-db
+      PGUSER: ledger
+      PGPASSWORD: ledger
+      PGDATABASE: ledger
+    depends_on: [api]
+    cpus: 1.0
+    memory_mb: 512
+
+slo:
+  p99_latency_ms: 500
+  error_rate: 0.01
+
+load:
+  script: load/ledger.js
+  target: http://api:8000
+
+metrics:
+  p99_latency_ms:
+    type: quantile
+    job: api
+    metric: http_request_duration_seconds
+    q: 0.99
+    scale: 1000
+  error_rate:
+    type: ratio
+    job: api
+    metric: http_requests_total
+    labels: { status: "5.." }
+  request_rate:
+    type: rate
+    job: api
+    metric: http_requests_total
+  # Payments and transfers refused for insufficient funds, per second.
+  refused_rate:
+    type: rate
+    job: api
+    metric: ledger_movements_total
+    labels: { result: insufficient }
+  db_pool_in_use:
+    type: gauge
+    job: api
+    metric: db_pool_in_use
+  db_connections:
+    type: gauge
+    job: postgres-exporter
+    metric: pg_stat_activity_count
+    labels: { datname: ledger }
+  # Deadlocks Postgres broke per second (measured by the exporter, not the app).
+  deadlocks:
+    type: rate
+    job: postgres-exporter
+    metric: pg_stat_database_deadlocks
+    labels: { datname: ledger }
+  # Debits that took a customer's wallet below zero, per second.
+  overdrafts:
+    type: rate
+    job: api
+    metric: ledger_overdrafts_total
+  # The worker's audit of the books (it is the worker reporting: fine for paging, not verify).
+  negative_balances:
+    type: gauge
+    job: worker
+    metric: ledger_negative_balances
+  accounts_off:
+    type: gauge
+    job: worker
+    metric: ledger_accounts_off
+  books_off_cents:
+    type: gauge
+    job: worker
+    metric: ledger_books_off_cents
+  settlements_pending:
+    type: gauge
+    job: worker
+    metric: settlements_pending

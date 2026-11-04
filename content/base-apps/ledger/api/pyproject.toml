@@ -1,0 +1,11 @@
+[project]
+name = "ledger-api"
+version = "1.0.0"
+description = "Ledger payments API"
+requires-python = ">=3.14"
+dependencies = [
+    "fastapi==0.143.3",
+    "uvicorn==0.54.0",
+    "psycopg[binary,pool]==3.3.6",
+    "prometheus-client==0.26.0",
+]

@@ -1,0 +1,16 @@
+--- app/db.py
++++ app/db.py
+@@ -62,10 +62,10 @@
+     conn: Connection[dict[str, Any]], from_id: int, to_id: int, amount: int, kind: str
+ ) -> dict[str, Any]:
+     """Moves `amount` from one account to another inside the caller's transaction."""
+-    # No row locks: the debit below is a single atomic UPDATE, so the balance can't be
+-    # corrupted, and transfers no longer queue behind each other at peak.
++    # Lock both accounts, always in id order: the balance read here can't change before the
++    # debit below (no double spend), and two opposite transfers can't deadlock.
+     rows = conn.execute(
+-        "SELECT id, kind, balance_cents FROM accounts WHERE id = ANY(%s)",
++        "SELECT id, kind, balance_cents FROM accounts WHERE id = ANY(%s) ORDER BY id FOR UPDATE",
+         ([from_id, to_id],),
+     ).fetchall()
+     accounts = {row["id"]: row for row in rows}

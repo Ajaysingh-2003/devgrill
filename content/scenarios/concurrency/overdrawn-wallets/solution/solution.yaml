@@ -1,0 +1,9 @@
+schema: devgrill/solution@1
+summary: >-
+  The deploy dropped FOR UPDATE from the transfer's balance read. Two payments from one wallet
+  at the same moment both read the full balance, both passed the check, and both were debited.
+  Lock both accounts again, in id order, before checking the balance.
+steps:
+  - patch: row-locks.diff
+    service: api
+    message: "transfers: lock both accounts before checking the balance, again"

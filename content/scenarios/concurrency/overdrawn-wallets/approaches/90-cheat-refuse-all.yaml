@@ -1,0 +1,11 @@
+schema: devgrill/approach@1
+key: cheat-refuse-all
+name: Refuse every customer payment
+outcome: fails
+cheat: true
+idea: Answer "insufficient funds" to every customer, so nothing is ever overdrawn.
+steps:
+  - patch: refuse-all.diff
+    service: api
+    message: "payments: refuse customer payments"
+fails_probes: [correctness]

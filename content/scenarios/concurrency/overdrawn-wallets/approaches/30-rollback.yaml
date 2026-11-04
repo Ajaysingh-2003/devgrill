@@ -1,0 +1,14 @@
+schema: devgrill/approach@1
+key: rollback
+name: Roll back the "no row locks" deploy
+outcome: full
+idea: Deploy the commit before "no row locks on transfers". The locks are back.
+steps:
+  - rollback_to: "payments: show the merchant name on receipts"
+    service: api
+pros:
+  - One step back to code that was right
+cons:
+  - The lock waits the deploy wanted to remove come back with it
+match:
+  rollback: true

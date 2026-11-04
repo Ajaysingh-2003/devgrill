@@ -248,6 +248,7 @@ VERIFIER_METRICS = frozenset(
         "product_p99_ms",
         "product_error_rate",
         "shoppers_signed_out",
+        "double_spends",
         "requests",
         "db_scans_per_s",
         "db_scans_per_request",

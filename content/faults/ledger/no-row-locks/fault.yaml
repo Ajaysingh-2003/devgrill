@@ -1,0 +1,15 @@
+schema: devgrill/fault@1
+name: ledger/no-row-locks
+kind: code_patch
+summary: A deploy drops the row locks from transfers to cut lock waits; two payments from one wallet at once both see enough money, and both are taken.
+base_apps: [ledger]
+params: {}
+apply:
+  patch: patch.diff
+  service: api
+deploy_message: "perf: no row locks on transfers (lock waits at peak)"
+symptom:
+  metric: overdrafts
+  op: gt
+  value: 0
+  within_s: 90

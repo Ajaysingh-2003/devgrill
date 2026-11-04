@@ -1,0 +1,18 @@
+schema: devgrill/approach@1
+key: row-locks
+name: Lock the accounts before checking the balance
+outcome: full
+idea: >-
+  SELECT ... FOR UPDATE on both accounts, in id order, before the balance check. The second
+  payment waits for the first to commit, then sees what is really left.
+steps:
+  - patch: row-locks.diff
+    service: api
+    message: "transfers: lock both accounts before checking the balance, again"
+pros:
+  - The check and the debit see the same balance
+  - Id order keeps opposite transfers from deadlocking
+cons:
+  - Payments from one wallet queue behind each other, which was the deploy's complaint
+match:
+  diff: "FOR UPDATE"

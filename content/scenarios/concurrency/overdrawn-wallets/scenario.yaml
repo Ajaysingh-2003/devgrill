@@ -1,0 +1,190 @@
+# Spec v1 (ADR 012). A "perf" deploy drops FOR UPDATE from the transfer's balance read: the
+# debit is an atomic UPDATE, so the author thought the lock only cost waiting time. But the
+# balance CHECK happens before the debit. Two payments from one wallet at the same moment (a
+# double tap, two tabs) both see the full balance, both pass, both are debited: wallets go
+# below zero and the money has already gone to merchants.
+schema: devgrill/scenario@1
+slug: overdrawn-wallets
+title: Overdrawn wallets
+track: concurrency
+topic: double-spend
+difficulty: sev2
+est_minutes: 25
+status: published
+summary: Wallets go below zero, and the money is already gone
+tags:
+  - postgres
+  - locking
+  - payments
+base_app: ledger
+briefing:
+  story: Finance noticed customer wallets with negative balances this morning. Wallets can't go below
+    zero. The payments were real, and the merchants have been paid.
+  system:
+    - kind: lb
+      name: load-gen
+      note: customers paying
+      role: path
+    - kind: api
+      name: ledger-api
+      note: Python, 4 workers
+      role: path
+    - kind: db
+      name: postgres
+      note: accounts, entries
+      role: path
+    - kind: worker
+      name: settlement-worker
+      note: pays merchants, audits the books
+      role: side
+  goals:
+    - title: Stop the overdrafts
+      detail: Two payments at once can never spend the same money twice.
+    - title: Keep payments flowing
+      detail: Customers still pay quickly, and a refusal is a clean "insufficient funds".
+
+page:
+  severity: SEV2
+  title: "ledger-audit: customer wallets below zero"
+
+charts: [overdrafts, negative_balances, refused_rate, request_rate]
+
+faults:
+  - use: ledger/no-row-locks
+    at: T-240m
+
+load:
+  script: ledger.js
+  vus: 10
+  params:
+    # Customers who tap "pay" twice, or pay from two tabs at once.
+    ATTACK_RATE: "0.2"
+
+deploy_history:
+  - message: "accounts: show the last 20 entries on the statement"
+    minutes_before: 4320
+    service: api
+  - message: "payments: show the merchant name on receipts"
+    minutes_before: 1440
+    service: api
+  - message: "perf: no row locks on transfers (lock waits at peak)"
+    minutes_before: 240
+    from_fault: ledger/no-row-locks
+
+beats:
+  - persona: priya
+    at: T+20s
+    say: "Finance found wallets with negative balances. Every one of them made two payments within a second of each other. How did both go through?"
+  - persona: arjun
+    at: T+3m
+    say: "Could we just add a CHECK constraint so balances can't go negative? That's one line of SQL."
+  - persona: arjun
+    when: "state:mitigated"
+    say: "No new negative wallets. What about the ones that already went negative this morning?"
+  - persona: priya
+    when: "state:resolved"
+    say: "Verified: two payments at once from one wallet can't both go through any more, and customers get a clean refusal. Thanks. Finance needs the list of overdrawn wallets for the write-up."
+
+constraints:
+  no_scale_up: [postgres-db]
+
+# Paged on debits that take a wallet below zero (the wallets already overdrawn stay on the
+# chart until someone settles them). Latency and errors stay healthy throughout.
+slo:
+  p99_latency_ms: 500
+  error_rate: 0.01
+  thresholds:
+    overdrafts: { lt: 0.01 }
+  for_s: 30
+
+probes:
+  - key: steady-traffic
+    kind: load
+    title: Customers keep paying
+    how: Replays payments, double taps included, for 45 seconds; p99 under 500 ms, under 1% errors, no double spends.
+    target:
+      p99_ms: { lt: 500 }
+      error_rate: { lt: 0.01 }
+      double_spends: { lt: 0.01 }
+  - key: no-overdraft
+    kind: invariant
+    title: Two payments, one balance
+    how: Fires two payments at once for 70% of a wallet's balance, 20 times; at most one goes through.
+    script: attack.py
+    target:
+      double_spends: { lt: 1 }
+      overdrawn: { lt: 1 }
+  - key: correctness
+    kind: hidden_test
+    title: Still correct
+    how: Balances, transfers, refusals, card payments and settlements all work, and the books add up.
+    script: base/correctness.py
+  - key: budget
+    kind: budget
+    title: Within budget
+    how: No bigger database.
+    weight: 0.5
+
+hints:
+  tier1: "Every overdrawn wallet made two payments within a second. Read how a transfer checks the balance and debits it: what stops two of them from overlapping?"
+  tier2: "The balance check reads the row and the debit updates it later, in the same transaction. Look at the last deploy to transfers: what did it take out of that read?"
+  tier3: "The 'no row locks' deploy removed FOR UPDATE from the balance read, so two transactions read the same balance and both pass. Lock both accounts again (SELECT ... ORDER BY id FOR UPDATE), or make the debit conditional (UPDATE ... WHERE balance_cents >= amount) and refuse when no row changes."
+
+rubric:
+  - key: impact
+    max: 2
+    description: States what customers and the business saw, and since when.
+    anchors:
+      "0": "No impact stated."
+      "1": "Balances went negative, without how or since when."
+      "2": "Since the no-row-locks deploy, customers who paid twice at once were charged for both even without the money; wallets went below zero and the merchants were paid from the house."
+  - key: root-cause
+    max: 4
+    description: Explains how both payments went through.
+    anchors:
+      "0": "Blames load, Postgres or the customers."
+      "2": "Names a race, without where it is."
+      "4": "The transfer reads the payer's balance, checks it, then debits it. The deploy removed FOR UPDATE from that read, so two concurrent payments both read the full balance before either debited, both passed the check, and the atomic debits took the wallet below zero. The atomic UPDATE protects the arithmetic, not the check."
+  - key: rejected-fixes
+    max: 2
+    description: Explains why a CHECK constraint alone isn't the fix.
+    anchors:
+      "0": "Recommends a CHECK constraint as the whole fix."
+      "1": "Rejects it without saying why."
+      "2": "A CHECK constraint is a good last line of defence, but the race stays: the losing payment fails with a server error instead of a clean refusal. The check and the debit have to agree, by locking the row or by a conditional debit."
+  - key: prevention
+    max: 2
+    description: Proposes guards against double spends.
+    anchors:
+      "0": "No action items."
+      "1": "One vague action."
+      "2": "A concurrent-payments test; conditional debits or row locks for every check-then-act on money; a CHECK constraint as a backstop; an audit alert on negative balances; a review rule for removing locks."
+
+ttl_minutes: 35
+par_minutes: 10
+
+replay:
+  - when: deploy.viewed
+    match: "api"
+    mark: clue
+    note: The "no row locks" deploy is where FOR UPDATE went.
+  - when: api.restarted
+    mark: lost
+    note: A restart runs the same lock-free code.
+  - when: api.rolledback
+    mark: clue
+    note: Rolling back puts the row locks back.
+
+ai:
+  spoilers:
+    - "FOR UPDATE"
+    - "row lock"
+    - "check[- ]then[- ]act"
+    - "both (read|see) the (same|full) balance"
+    - "conditional (debit|update)"
+  root_cause: >-
+    A perf deploy removed FOR UPDATE from the transfer's balance read, reasoning that the debit
+    is an atomic UPDATE. But the balance check comes before the debit: two payments from one
+    wallet at the same moment both read the full balance, both passed the check, and both were
+    debited, taking the wallet below zero. Locking both accounts (in id order) before the
+    check, or a conditional debit that refuses when the balance doesn't cover it, fixes it.
