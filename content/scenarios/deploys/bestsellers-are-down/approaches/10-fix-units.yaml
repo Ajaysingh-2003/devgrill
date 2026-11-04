@@ -3,12 +3,12 @@ key: fix-units
 name: Set the timeout in milliseconds
 outcome: full
 idea: >-
-  Set DB_STATEMENT_TIMEOUT_MS=2000, the two seconds that were meant, and deploy. Every real
+  Set DB_STATEMENT_TIMEOUT_MS=1000, the one second that was meant, and deploy. Every real
   query finishes, and a runaway one is still cancelled.
 steps:
   - patch: units.diff
     service: api
-    message: "config: statement timeout is in milliseconds: 2000"
+    message: "config: statement timeout is in milliseconds: 1000"
 pros:
   - Keeps the guard the deploy wanted to add
 cons:

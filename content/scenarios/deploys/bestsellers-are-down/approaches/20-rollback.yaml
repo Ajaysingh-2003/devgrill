@@ -3,7 +3,7 @@ key: rollback
 name: Roll back the config deploy
 outcome: full
 idea: >-
-  Deploy the commit before "add a 2 s statement timeout". The limit goes, and with it the
+  Deploy the commit before "add a 1 s statement timeout". The limit goes, and with it the
   cancelled queries.
 steps:
   - rollback_to: "product page: show stock badge"

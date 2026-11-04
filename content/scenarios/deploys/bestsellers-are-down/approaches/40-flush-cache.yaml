@@ -11,5 +11,5 @@ steps:
 pros:
   - Quick, and harmless to try
 cons:
-  - "Changes nothing: the 2 ms limit is still in the config"
+  - "Changes nothing: the 1 ms limit is still in the config"
 fails_probes: [steady-traffic]

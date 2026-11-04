@@ -1,10 +1,10 @@
 schema: devgrill/solution@1
 summary: >-
-  The config deploy set DB_STATEMENT_TIMEOUT_MS=2, meaning two seconds, in a setting measured in
-  milliseconds. Postgres cancels every bestseller's rating summary (tens of milliseconds) and search
-  (about 2.5 ms). Set the timeout to 2000 and deploy: real queries finish, runaway ones are
+  The config deploy set DB_STATEMENT_TIMEOUT_MS=1, meaning one second, in a setting measured in
+  milliseconds. Postgres cancels every bestseller's rating summary (several milliseconds) and search
+  (about 2.5 ms). Set the timeout to 1000 and deploy: real queries finish, runaway ones are
   still cut off.
 steps:
   - patch: units.diff
     service: api
-    message: "config: statement timeout is in milliseconds: 2000"
+    message: "config: statement timeout is in milliseconds: 1000"

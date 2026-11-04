@@ -13,7 +13,7 @@ also:
   service: tools
 deploy_message: "likes: keep them in order, for the activity feed"
 symptom:
-  metric: cache_cpu
+  metric: api_p99_ms
   op: gt
-  value: 0.3
+  value: 500
   within_s: 90

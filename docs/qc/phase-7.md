@@ -422,14 +422,14 @@ retested with all its approaches.
 
 ### Drill 5: Bestsellers are down (deploys/bad-config, SEV2)
 
-**The incident:** a config deploy adds `DB_STATEMENT_TIMEOUT_MS=2`, copied from staging, where
-"2" meant seconds.
-- Small products' queries finish within 2 ms. A bestseller's rating summary aggregates 30,000
-  reviews and needs tens of milliseconds, so Postgres cancels it every time, and it is never
+**The incident:** a config deploy adds `DB_STATEMENT_TIMEOUT_MS=1`, copied from staging, where
+"1" meant seconds.
+- Small products' queries finish within 1 ms. A bestseller's rating summary aggregates 30,000
+  reviews and needs several milliseconds, so Postgres cancels it every time, and it is never
   cached.
 - The five featured products and search return 503, while obscure products load.
 
-**Fixes:** set 2000, roll back, or turn the timeout off. Flushing the cache changes nothing.
+**Fixes:** set 1000, roll back, or turn the timeout off. Flushing the cache changes nothing.
 
 **Base-app work (ShopKart):** a `DB_STATEMENT_TIMEOUT_MS` setting (default 0, so no other drill
 changes), and a 503 with a "query cancelled" log line when it fires. The table-lock drill's
@@ -439,9 +439,14 @@ config patches gained the new trailing lines as context.
 query takes about 185 ms only on a cold read; warm, it fits under 20 ms. That approach was
 replaced by the flush, which fails deterministically.
 
+**Found later, on CI:** the fault was first a 2 ms limit. On one fast runner, errors fell to zero
+by themselves after about 55 s, and the flush approach passed, because bestsellers had started
+finishing inside the limit (one success caches a page for five minutes). A 1 ms limit leaves no
+room for that: no executor reads 30,000 rows in a millisecond.
+
 **Checks:** in Docker, the break paged within 6 s and stayed broken, and the reference fix
 mitigated in 1 s and passed every probe. The approaches gave their declared outcomes:
-- set 2000, roll back, turn it off: all full;
+- set the right value, roll back, turn it off: all full;
 - flush the cache: fails;
 - the cheat that leaves ratings out: fails on correctness.
 
@@ -703,6 +708,22 @@ approaches gave their declared outcomes.
   past the screenful a reload brings back. The flow now looks for `devgrill status` output,
   the last thing on screen.
 
+### Margins on fast and slow machines
+
+**Fast runners:** nightly and push runs showed drills that held on most machines failing on a
+fast one, each a thin margin, not a broken drill. Each now has more:
+- **Redis restart herd:** a build slipped through and the copy was written. Every shopper now
+  lands on the sale page, and the build limit is 250 ms.
+- **Search pins the CPU:** product p99 stayed just under 500 ms. The bad queries now arrive twice
+  as often, enough to keep every worker stalled.
+- **Flag on for everyone:** it never paged, because the box's scan of 50,000 orders fit in the
+  database's CPU. The seed now has 150,000 orders.
+- **Bestsellers are down:** see its section.
+
+**Slow machines:** on battery, this laptop runs about three times slower. That made a healthy
+Ledger miss its latency target (the house row's lock queue). Ledger's drills now run 10 virtual
+users, and the races don't depend on total traffic: they passed on the throttled CPU.
+
 ### Platform for the last five
 
 - **Optional services:** a base-app service marked `optional` runs only in scenarios that list
@@ -760,6 +781,9 @@ by you?" became `LPOS`, a scan of the whole list.
   depend on the host. One big, hot key costs the same per view on any machine.
 - **Load:** at 250 iterations a second, the viral page plus its like button was more than the
   API could serve even after the fix. At 150, the scans still overload Valkey about twice over.
+
+- **Symptom:** it was first Valkey's CPU, from the exporter, whose scrapes time out while Valkey
+  is pinned. It is now all-route latency.
 
 **Checks (local):** all five approaches gave their declared outcomes.
 
