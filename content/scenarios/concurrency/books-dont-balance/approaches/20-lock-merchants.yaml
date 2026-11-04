@@ -1,0 +1,20 @@
+schema: devgrill/approach@1
+key: lock-merchants
+name: Lock the merchants before reading them, then restore the balances
+outcome: full
+idea: >-
+  SELECT ... FOR UPDATE on the batch's merchants (in id order) before reading their balances:
+  another consumer's batch for the same merchant waits until this one commits. Then recompute
+  every balance from the entries.
+steps:
+  - patch: lock-merchants.diff
+    service: worker
+    message: "settlements: lock merchants before reading their balances"
+  - run: 'psql -c "BEGIN; LOCK TABLE accounts IN EXCLUSIVE MODE; UPDATE accounts a SET balance_cents = e.total, updated_at = now() FROM (SELECT account_id, sum(amount_cents) AS total FROM entries GROUP BY account_id) e WHERE e.account_id = a.id AND a.balance_cents <> e.total; COMMIT;"'
+    service: tools
+pros:
+  - A small change to the code that broke
+cons:
+  - "Batches for the same merchants now take turns"
+match:
+  diff: "FOR UPDATE"

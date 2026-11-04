@@ -1,0 +1,15 @@
+--- worker.py
++++ worker.py
+@@ -121,9 +121,11 @@
+         # One write per merchant instead of one per settlement: read each merchant's balance
+         # once, add the batch's credits, write it back.
+         merchants = sorted({settlement[1] for settlement in batch})
++        # Lock the merchants (in id order) before reading them: another consumer's batch waits
++        # until this one commits, then reads the balance it left.
+         balances = {
+             merchant_id: conn.execute(
+-                "SELECT balance_cents FROM accounts WHERE id = %s", (merchant_id,)
++                "SELECT balance_cents FROM accounts WHERE id = %s FOR UPDATE", (merchant_id,)
+             ).fetchone()[0]
+             for merchant_id in merchants
+         }

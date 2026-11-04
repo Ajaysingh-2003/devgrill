@@ -1,0 +1,18 @@
+schema: devgrill/approach@1
+key: rollback-and-repair
+name: Roll the worker back, then restore the balances
+outcome: full
+idea: >-
+  Deploy the worker commit before "4 consumers": one consumer, crediting each settlement with an
+  increment. Then recompute the balances from the entries.
+steps:
+  - rollback_to: "worker: audit the books every 5 seconds"
+    service: worker
+  - run: 'psql -c "BEGIN; LOCK TABLE accounts IN EXCLUSIVE MODE; UPDATE accounts a SET balance_cents = e.total, updated_at = now() FROM (SELECT account_id, sum(amount_cents) AS total FROM entries GROUP BY account_id) e WHERE e.account_id = a.id AND a.balance_cents <> e.total; COMMIT;"'
+    service: tools
+pros:
+  - Back to code that was right
+cons:
+  - One consumer again
+match:
+  rollback: true

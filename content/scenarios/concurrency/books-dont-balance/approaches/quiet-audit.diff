@@ -1,0 +1,17 @@
+--- worker.py
++++ worker.py
+@@ -183,11 +183,11 @@
+                     assert row is not None
+                     negative, off, books, pending, oldest = row
+                     NEGATIVE.set(negative)
+-                    ACCOUNTS_OFF.set(off)
+-                    BOOKS_OFF.set(abs(books))
++                    ACCOUNTS_OFF.set(0)
++                    BOOKS_OFF.set(0)
+                     PENDING.set(pending)
+                     OLDEST.set(float(oldest))
+-                    if negative or off or books:
++                    if negative:
+                         log.error(
+                             "books don't balance",
+                             extra={

@@ -1,0 +1,186 @@
+# Spec v1 (ADR 012). A worker deploy runs four settlement consumers and, to cut writes, credits
+# each merchant once per batch: read the balance, add the batch's settlements in memory, write
+# the total back. Two consumers' batches for the same merchant both read the same balance, and
+# the second write overwrites the first: a lost update. The entries are all there, so each
+# merchant's balance drifts below the sum of its entries, and the books stop adding up.
+schema: devgrill/scenario@1
+slug: books-dont-balance
+title: The books don't balance
+track: concurrency
+topic: race-conditions
+difficulty: sev1
+est_minutes: 35
+status: published
+summary: Merchants are paid less than they earned, and nobody can say where it went
+tags:
+  - postgres
+  - race-condition
+  - lost-update
+base_app: ledger
+briefing:
+  story: The ledger audit fired this morning. Merchant balances are below the sum of their own entries,
+    and two merchants have already asked why their payouts are short.
+  system:
+    - kind: lb
+      name: load-gen
+      note: customers paying
+      role: path
+    - kind: api
+      name: ledger-api
+      note: Python, 4 workers
+      role: path
+    - kind: db
+      name: postgres
+      note: accounts, entries, settlements
+      role: path
+    - kind: worker
+      name: settlement-worker
+      note: 4 consumers, pays merchants
+      role: path
+  goals:
+    - title: Stop losing money
+      detail: Every settlement lands on its merchant's balance.
+    - title: Put the books right
+      detail: Every balance equals the sum of its entries again, and all balances add up to zero.
+
+page:
+  severity: SEV1
+  title: "ledger-audit: merchant balances don't match their entries"
+
+charts: [accounts_off, books_off_cents, settlements_pending, request_rate]
+
+faults:
+  - use: ledger/batched-credits
+    at: T-60m
+
+load:
+  script: ledger.js
+  vus: 10
+
+deploy_history:
+  - message: "accounts: show the last 20 entries on the statement"
+    minutes_before: 4320
+    service: api
+  - message: "worker: audit the books every 5 seconds"
+    minutes_before: 1440
+    service: worker
+  - message: "settlements: 4 consumers, one balance write per merchant per batch"
+    minutes_before: 60
+    from_fault: ledger/batched-credits
+
+beats:
+  - persona: priya
+    at: T+20s
+    say: "Finance is on the phone: the audit says merchant balances are short, and two merchants have asked about their payouts. Is money missing?"
+  - persona: arjun
+    at: T+3m
+    say: "The entries look right to me, it's the balances that are off. Should I just run a job that recomputes the balances from the entries?"
+  - persona: arjun
+    when: "state:mitigated"
+    say: "The audit's quiet. Did we fix the cause, or just repair the numbers?"
+  - persona: priya
+    when: "state:resolved"
+    say: "Verified: settlements land in full, and every balance matches its entries again. Thanks. Finance will want the postmortem and the list of merchants who were short."
+
+constraints:
+  no_scale_up: [worker]
+
+# Paged on the audit: balances that aren't the sum of their entries.
+slo:
+  p99_latency_ms: 500
+  error_rate: 0.01
+  thresholds:
+    accounts_off: { lt: 1 }
+  for_s: 30
+
+probes:
+  - key: steady-traffic
+    kind: load
+    title: Customers keep paying
+    how: Replays payments for 45 seconds, settled by the worker; p99 under 500 ms and under 1% errors.
+    target:
+      p99_ms: { lt: 500 }
+      error_rate: { lt: 0.01 }
+  - key: books
+    kind: invariant
+    title: The books balance
+    how: After the replay, every balance is the sum of its entries, and all balances add up to zero.
+    script: books.py
+    target:
+      accounts_off: { lt: 1 }
+      books_off_cents: { lt: 1 }
+  - key: correctness
+    kind: hidden_test
+    title: Still correct
+    how: Balances, transfers, refusals, card payments and settlements all work, and the books add up.
+    script: base/correctness.py
+  - key: budget
+    kind: budget
+    title: Within budget
+    how: No bigger worker.
+    weight: 0.5
+
+hints:
+  tier1: "The entries are right and the balances are short. Which code writes merchant balances, and what happens when two copies of it run at once?"
+  tier2: "The worker's latest deploy runs four consumers and credits each merchant once per batch. Read how it computes the new balance: where does the number it writes come from?"
+  tier3: "Each consumer reads a merchant's balance, adds its batch in memory and writes the total back; two batches for one merchant read the same balance and the second write wipes the first. Credit with an increment (balance_cents = balance_cents + credit), deploy the worker, then recompute every balance from the entries with the accounts table locked."
+
+rubric:
+  - key: impact
+    max: 2
+    description: States what merchants and the business saw, and since when.
+    anchors:
+      "0": "No impact stated."
+      "1": "Balances were wrong, without whose or since when."
+      "2": "Since the four-consumer deploy, some settlements never reached their merchant's balance: merchants were paid out less than they earned, and the books no longer added up."
+  - key: root-cause
+    max: 4
+    description: Explains how credits were lost.
+    anchors:
+      "0": "Blames the auditor, Postgres or load."
+      "2": "Says concurrent consumers clashed, without how."
+      "4": "Each batch read the merchant's balance, added its settlements in memory and wrote the absolute total back. With four consumers, two batches for the same merchant read the same balance; the second write overwrote the first, losing its credit (a lost update). The entries were written correctly, so balances drifted below them."
+  - key: rejected-fixes
+    max: 2
+    description: Explains why repairing the balances alone, or the code alone, isn't enough.
+    anchors:
+      "0": "Recommends only recomputing balances, or only the code fix."
+      "1": "Says both are needed without why."
+      "2": "Recomputing the balances fixes today's numbers but the race keeps losing credits; fixing the code stops new losses but the merchants already short stay short. Both, in that order, with the table locked during the repair."
+  - key: prevention
+    max: 2
+    description: Proposes guards against lost updates.
+    anchors:
+      "0": "No action items."
+      "1": "One vague action."
+      "2": "Increments or row locks for every read-modify-write of money; a test with several consumers and few merchants; the audit alert kept and paged on; balances derived from (or checked against) entries."
+
+ttl_minutes: 45
+par_minutes: 12
+
+replay:
+  - when: deploy.viewed
+    match: "worker"
+    mark: clue
+    note: The worker's latest deploy is where the read-and-write-back credits came from.
+  - when: worker.restarted
+    mark: lost
+    note: A restart runs the same four racing consumers.
+  - when: worker.rolledback
+    mark: clue
+    note: Rolling back restores one consumer crediting with increments; the balances still need repair.
+
+ai:
+  spoilers:
+    - "lost update"
+    - "read[- ]modify[- ]write"
+    - "balance_cents \\+"
+    - "overwrit"
+    - "increment"
+  root_cause: >-
+    A worker deploy ran four settlement consumers and credited each merchant once per batch by
+    reading its balance, adding the batch in memory and writing the total back. Two batches for
+    the same merchant read the same balance and the second write overwrote the first: a lost
+    update. The entries were correct, so balances fell below them and the books stopped adding
+    up. Crediting with an increment (or locking the merchant row first) stops it; recomputing
+    balances from the entries, with the table locked, repairs the damage.

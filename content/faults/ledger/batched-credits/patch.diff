@@ -1,0 +1,48 @@
+--- worker.py
++++ worker.py
+@@ -101,10 +101,6 @@
+         (transfer_id, merchant_id, amount, transfer_id, HOUSE_ACCOUNT, -amount),
+     )
+     conn.execute(
+-        "UPDATE accounts SET balance_cents = balance_cents + %s, updated_at = now() WHERE id = %s",
+-        (amount, merchant_id),
+-    )
+-    conn.execute(
+         "UPDATE settlements SET status = 'settled', transfer_id = %s, settled_at = now()"
+         " WHERE id = %s",
+         (transfer_id, settlement_id),
+@@ -122,8 +118,23 @@
+         # Credit merchants in id order, as transfers lock accounts: a batch and a transfer
+         # between two merchants never take the same two locks in opposite orders.
+         batch.sort(key=lambda settlement: settlement[1])
++        # One write per merchant instead of one per settlement: read each merchant's balance
++        # once, add the batch's credits, write it back.
++        merchants = sorted({settlement[1] for settlement in batch})
++        balances = {
++            merchant_id: conn.execute(
++                "SELECT balance_cents FROM accounts WHERE id = %s", (merchant_id,)
++            ).fetchone()[0]
++            for merchant_id in merchants
++        }
+         for settlement in batch:
+             pay_out(conn, settlement)
++            balances[settlement[1]] += settlement[2]
++        for merchant_id in merchants:
++            conn.execute(
++                "UPDATE accounts SET balance_cents = %s, updated_at = now() WHERE id = %s",
++                (balances[merchant_id], merchant_id),
++            )
+         if batch:
+             # Every payment locks the house's row too: debit it once, last, so the batch
+             # holds that lock for a moment instead of for the whole batch.
+--- config/worker.env
++++ config/worker.env
+@@ -1,7 +1,7 @@
+ # ledger worker runtime config. Ships with every deploy (`devgrill deploy worker`).
+ 
+ # Settlement consumers (threads), and how many settlements each pays out per transaction.
+-CONSUMERS=1
++CONSUMERS=4
+ BATCH=20
+ # Seconds a consumer waits when there is nothing to settle.
+ POLL_S=0.2

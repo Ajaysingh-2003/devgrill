@@ -1,0 +1,11 @@
+schema: devgrill/approach@1
+key: cheat-quiet-audit
+name: Stop the audit from reporting
+outcome: fails
+cheat: true
+idea: Make the auditor report zero, so the page clears.
+steps:
+  - patch: quiet-audit.diff
+    service: worker
+    message: "audit: report only negative balances"
+fails_probes: [books]

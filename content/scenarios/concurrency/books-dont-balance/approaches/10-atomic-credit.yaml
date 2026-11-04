@@ -1,0 +1,21 @@
+schema: devgrill/approach@1
+key: atomic-credit
+name: Credit with an increment, then restore the balances
+outcome: full
+idea: >-
+  UPDATE accounts SET balance_cents = balance_cents + credit: Postgres adds to the balance as it
+  is when it writes the row, so concurrent batches can't overwrite each other. Then recompute
+  every balance from the entries (with the table locked, so no settlement lands mid-repair).
+steps:
+  - patch: atomic-credit.diff
+    service: worker
+    message: "settlements: credit merchants with an increment, not a read-and-write"
+  - run: 'psql -c "BEGIN; LOCK TABLE accounts IN EXCLUSIVE MODE; UPDATE accounts a SET balance_cents = e.total, updated_at = now() FROM (SELECT account_id, sum(amount_cents) AS total FROM entries GROUP BY account_id) e WHERE e.account_id = a.id AND a.balance_cents <> e.total; COMMIT;"'
+    service: tools
+pros:
+  - Keeps four consumers and one write per merchant per batch
+  - The entries were never wrong, so the repair is exact
+cons:
+  - The repair locks the accounts table for a moment
+match:
+  diff: 'balance_cents\s*\+\s*%s'

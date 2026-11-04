@@ -1,0 +1,15 @@
+schema: devgrill/fault@1
+name: ledger/batched-credits
+kind: code_patch
+summary: A worker deploy runs four settlement consumers that read each merchant's balance, add the batch in memory and write it back; two batches for one merchant overwrite each other's credit.
+base_apps: [ledger]
+params: {}
+apply:
+  patch: patch.diff
+  service: worker
+deploy_message: "settlements: 4 consumers, one balance write per merchant per batch"
+symptom:
+  metric: accounts_off
+  op: gt
+  value: 0
+  within_s: 120

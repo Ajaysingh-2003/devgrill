@@ -1,0 +1,14 @@
+schema: devgrill/approach@1
+key: fix-without-repair
+name: Fix the code, leave the balances
+outcome: partial
+idea: Credit with an increment, but don't restore the balances the race already got wrong.
+steps:
+  - patch: atomic-credit.diff
+    service: worker
+    message: "settlements: credit merchants with an increment, not a read-and-write"
+pros:
+  - No new money goes missing
+cons:
+  - "Merchants are still short whatever the race already lost"
+fails_probes: [books, correctness]

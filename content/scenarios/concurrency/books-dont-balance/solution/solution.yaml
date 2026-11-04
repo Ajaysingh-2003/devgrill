@@ -1,0 +1,12 @@
+schema: devgrill/solution@1
+summary: >-
+  Four settlement consumers each read a merchant's balance, added their batch in memory and
+  wrote the total back. Two batches for the same merchant overwrote each other's credit. Credit
+  with an increment (balance_cents = balance_cents + amount), then restore every balance from
+  the entries, which were right all along.
+steps:
+  - patch: atomic-credit.diff
+    service: worker
+    message: "settlements: credit merchants with an increment, not a read-and-write"
+  - run: 'psql -c "BEGIN; LOCK TABLE accounts IN EXCLUSIVE MODE; UPDATE accounts a SET balance_cents = e.total, updated_at = now() FROM (SELECT account_id, sum(amount_cents) AS total FROM entries GROUP BY account_id) e WHERE e.account_id = a.id AND a.balance_cents <> e.total; COMMIT;"'
+    service: tools

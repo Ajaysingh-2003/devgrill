@@ -1,0 +1,33 @@
+--- worker.py
++++ worker.py
+@@ -118,22 +118,17 @@
+         # Credit merchants in id order, as transfers lock accounts: a batch and a transfer
+         # between two merchants never take the same two locks in opposite orders.
+         batch.sort(key=lambda settlement: settlement[1])
+-        # One write per merchant instead of one per settlement: read each merchant's balance
+-        # once, add the batch's credits, write it back.
+-        merchants = sorted({settlement[1] for settlement in batch})
+-        balances = {
+-            merchant_id: conn.execute(
+-                "SELECT balance_cents FROM accounts WHERE id = %s", (merchant_id,)
+-            ).fetchone()[0]
+-            for merchant_id in merchants
+-        }
++        # One write per merchant per batch, as an increment: Postgres adds to the balance as it
++        # is when the row is written, so another consumer's credit can't be overwritten.
++        credits: dict[int, int] = {}
+         for settlement in batch:
+             pay_out(conn, settlement)
+-            balances[settlement[1]] += settlement[2]
+-        for merchant_id in merchants:
++            credits[settlement[1]] = credits.get(settlement[1], 0) + settlement[2]
++        for merchant_id in sorted(credits):
+             conn.execute(
+-                "UPDATE accounts SET balance_cents = %s, updated_at = now() WHERE id = %s",
+-                (balances[merchant_id], merchant_id),
++                "UPDATE accounts SET balance_cents = balance_cents + %s, updated_at = now()"
++                " WHERE id = %s",
++                (credits[merchant_id], merchant_id),
+             )
+         if batch:
+             # Every payment locks the house's row too: debit it once, last, so the batch
